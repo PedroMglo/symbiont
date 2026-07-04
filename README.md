@@ -77,3 +77,5 @@ Para configurar fontes pessoais do RAG sem editar TOML manualmente:
 ```bash
 make rag ARGS="--vault-dir ~/Obsidian/Vault --repo-path ~/src"
 ```
+
+<!-- private-intake smoke test 2026-07-04T13:25:32Z -->
