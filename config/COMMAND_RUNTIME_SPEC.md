@@ -2,7 +2,7 @@
 
 Data: 2026-06-15.
 
-## Ownership
+## Ownership.
 
 `config/` owns user-facing command runtime knobs and host capability inference.
 `features/workspace_execution` owns sandbox behavior and Docker runner
