@@ -148,7 +148,7 @@ services:
       args:
         AI_LOCAL_GIT_URL_INSTEAD_OF: ${AI_LOCAL_GIT_URL_INSTEAD_OF:-}
     container_name: orc-rag-temporal-worker
-    command: ["python", "-m", "obsidian_rag.workflows.worker"]
+    command: ["python", "-m", "workflows.worker"]
     logging: *logging
     labels:
       !!merge <<: *common-labels
@@ -167,7 +167,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "from pathlib import Path; import sys; sys.exit(0 if b'obsidian_rag.workflows.worker' in Path('/proc/1/cmdline').read_bytes() else 1)",
+          "from pathlib import Path; import sys; sys.exit(0 if b'workflows.worker' in Path('/proc/1/cmdline').read_bytes() else 1)",
         ]
       interval: 30s
       timeout: 5s

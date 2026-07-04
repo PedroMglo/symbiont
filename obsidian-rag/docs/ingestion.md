@@ -34,7 +34,7 @@ flowchart LR
 
 ## Pipeline Bounded
 
-`obsidian_rag/pipeline/ingest.py` implementa quatro etapas ligadas por filas limitadas:
+`pipeline/ingest.py` implementa quatro etapas ligadas por filas limitadas:
 
 ```mermaid
 sequenceDiagram

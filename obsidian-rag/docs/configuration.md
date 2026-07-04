@@ -1,6 +1,6 @@
 # Configuracao
 
-A configuracao e carregada por `obsidian_rag/config.py`.
+A configuracao e carregada por `rag_config.py`.
 
 Prioridade, da mais forte para a mais fraca:
 
@@ -40,7 +40,7 @@ Exemplo em `user.toml`:
 vault_dirs = ["~/Obsidian/Vault"]
 ```
 
-`data_dir` e derivado por `obsidian_rag.config`/storage env e pode ser
+`data_dir` e derivado por `rag_config`/storage env e pode ser
 sobrescrito com `RAG_PATHS_DATA_DIR`.
 
 No Docker do mono-repo, `RAG_DATA_DIR` monta o diretorio host em `/app/data`.
@@ -172,7 +172,7 @@ Os packs eager sao regenerados apos sync local e no target admin `cag`.
 
 ## Performance
 
-Os valores finais podem ser auto-tuned em `config.py`/`tuning.py`.
+Os valores finais podem ser auto-tuned em `rag_config.py`/`tuning.py`.
 
 Variaveis frequentes no compose:
 

@@ -63,7 +63,7 @@ python -m pip install --upgrade pip --quiet
 python -m pip install -e . -e storage_guardian/ --quiet
 ok "Installed ai-local and storage_guardian"
 
-if [ -d obsidian-rag/obsidian_rag ]; then
+if [ -f obsidian-rag/pyproject.toml ]; then
     python -m pip install -e obsidian-rag/ --quiet
     ok "Installed obsidian-rag"
 else

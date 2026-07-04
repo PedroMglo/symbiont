@@ -3,7 +3,7 @@
 # Todas as opções podem ser overridden via env vars com prefixo RAG_
 # Ex: RAG_RETRIEVAL_TOP_K=15 sobrepõe [retrieval] top_k
 
-# Data/cache paths are inferred by obsidian_rag.config and generated storage
+# Data/cache paths are inferred by rag_config and generated storage
 # env. Override only with RAG_PATHS_DATA_DIR when needed.
 
 [sync]
@@ -21,13 +21,13 @@ embedding_cache_size = 128
 # Graph context: max vizinhos por nó e max comunidades no contexto
 graph_max_neighbors = 5
 graph_max_communities = 3
-# Score thresholds are inferred by obsidian_rag.config.
+# Score thresholds are inferred by rag_config.
 
 [router]
 # Timeout is inferred by config.rag and passed as RAG_ROUTER_TIMEOUT.
 
 [reranker]
-# Candidate budgets are inferred by obsidian_rag.config.
+# Candidate budgets are inferred by rag_config.
 # Score mínimo do reranker (0.0–1.0)
 min_score = 0.3
 # Cross-encoder model (sentence-transformers) — fast batch reranking
@@ -58,7 +58,7 @@ dask_scheduler = ""
 [performance]
 auto_tune = true
 # CPU/memory/swap/job/batch/timeout values are inferred by config.rag and
-# obsidian_rag.config, then emitted as RAG_PERFORMANCE_* env vars.
+# rag_config, then emitted as RAG_PERFORMANCE_* env vars.
 
 # =============================================================================
 # CAG — Cached Augmented Generation
@@ -68,7 +68,7 @@ enabled = true
 response_cache_enabled = false
 max_pack_tokens = 2000
 generate_on_sync = true
-# CAG db path and TTLs are inferred by obsidian_rag.config.
+# CAG db path and TTLs are inferred by rag_config.
 
 # =============================================================================
 # WORKFLOWS — execução durável de jobs longos
@@ -80,7 +80,7 @@ backend = "temporal"
 temporal_address = "localhost:7233"
 temporal_namespace = "default"
 temporal_task_queue = "rag-reprocess"
-# Job store path and Temporal timeout are inferred by obsidian_rag.config.
+# Job store path and Temporal timeout are inferred by rag_config.
 
 # =============================================================================
 # VECTOR STORE — backend de armazenamento vectorial
@@ -106,7 +106,7 @@ contextual_prefix = true
 # =============================================================================
 [graphify]
 # Output/cache paths and prefilter thresholds are inferred by
-# obsidian_rag.config.
+# rag_config.
 
 # Runtime graph query backend behind the RAG API:
 #   json     — read Graphify graph.json directly (default, no extra service)
@@ -195,4 +195,4 @@ clickhouse_password_env = "CLICKHOUSE_PASSWORD"
 queue_max_size = 10000
 fail_silent = true
 resource_sampling = true
-# Batch, flush, retention and sample interval are inferred by obsidian_rag.config.
+# Batch, flush, retention and sample interval are inferred by rag_config.
