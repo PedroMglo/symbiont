@@ -1,0 +1,46 @@
+name: public-merge-gate
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-merge-gate-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  allow-generated-public-merge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require private-generated public export branch
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref || github.ref_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          BASE_REPO: ${{ github.repository }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "Manual merge-gate probe passed."
+            exit 0
+          fi
+
+          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            echo "::error::Public contribution PRs from forks are intake-only. Keep the PR open until local-ai-sys imports it into a private PR."
+            exit 1
+          fi
+
+          case "$HEAD_REF" in
+            public-export/*)
+              echo "Generated public export branch accepted for symbiont/main merge."
+              ;;
+            *)
+              echo "::error::Public contribution PRs are intake-only. Do not merge this PR into symbiont/main; local-ai-sys must import it through the private intake workflow."
+              exit 1
+              ;;
+          esac
