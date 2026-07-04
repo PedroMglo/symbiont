@@ -1,0 +1,178 @@
+# AI Symbiont — Agents & Execution Configuration
+
+# ---------------------------------------------------------------------------
+# Agentic Mode — ReAct loop for tool-calling queries
+# ---------------------------------------------------------------------------
+
+[agentic]
+enabled = true
+# Iteration/tool/time/token budgets are inferred by orchestrator.config and can
+# be overridden with ORC_AGENTIC_* env vars.
+
+# ---------------------------------------------------------------------------
+# Agentic Runtime — persistent shadow ledger, policy audit and future autonomy
+# ---------------------------------------------------------------------------
+
+[agentic_runtime]
+enabled = true
+shadow_ledger_enabled = true
+default_mode = "supervised"
+autonomous_safe_enabled = true
+policy_mode = "enforce"  # "audit" | "enforce"
+recover_on_startup = true
+runner_enabled = true
+runner_execute_proposals = false
+event_loop_enabled = true
+event_loop_vllm_unhealthy_enabled = true
+autonomous_maintenance_enabled = true
+governed_improvement_enabled = true
+actuator_enabled = true
+actuator_auto_apply_runtime_flags = true
+actuator_closed_loop_enabled = true
+actuator_auto_rollback_missing_flags = true
+actuator_renew_enforced_flags = true
+actuator_escalation_ladder_enabled = true
+actuator_escalation_policy_router_enabled = true
+actuator_escalation_create_proposals = true
+actuator_escalation_policy_router_create_proposals = true
+preapproval_windows_enabled = true
+preapproval_window_allowed_actions = "agentic.actuator.set_runtime_flag,model.prewarm,storage.scan,storage.plan,rag.admin.reprocess.local,rag.admin.reprocess.cag"
+command_tool_enabled = true
+command_tool_backend = "workspace_execution"
+command_tool_default_context_profile = "project_context"
+command_tool_sandbox_image = "ai-local-command-sandbox:latest"
+# Command-tool runtime limits are inferred by config.command_runtime and emitted
+# as ORC_AGENTIC_RUNTIME_COMMAND_TOOL_* in .env.services.generated.
+command_tool_allow_user_context_ro = false
+command_tool_allow_host_context_ro = false
+# Agentic runtime DB path, TTLs, thresholds and polling intervals are inferred by
+# orchestrator.config and can be overridden with ORC_AGENTIC_RUNTIME_* env vars.
+
+# ---------------------------------------------------------------------------
+# Classification & Routing Confidence — heuristic intent + history-aware routing
+# ---------------------------------------------------------------------------
+
+[classify]
+# Numeric classification thresholds are inferred by orchestrator.config and can
+# be overridden with ORC_CLASSIFY_* env vars.
+# Single-token anaphoric signals (matched against the query's word set). PT + EN.
+anaphora_words = [
+    "isso", "isto", "aquilo", "esse", "essa", "este", "esta", "aquele", "aquela",
+    "disso", "disto", "nele", "nela", "ele", "ela", "eles", "elas", "anterior",
+    "acima", "antes", "continua", "mais", "that", "this", "it", "those", "these",
+    "above", "previous", "earlier", "continue",
+]
+# Multi-word anaphoric phrases (substring match against the lowercased query). PT + EN.
+anaphora_patterns = [
+    "referia-me", "referia me", "como assim", "explica melhor", "explica isso",
+    "esse ponto", "o ponto", "o anterior", "a anterior", "mais sobre isso",
+    "mais sobre isto", "e depois", "o mesmo", "a mesma", "tell me more",
+    "more about", "the previous", "the same", "go on", "explain that",
+    "what about", "and then",
+]
+
+# ---------------------------------------------------------------------------
+# Dynamic Routing — enables reasoning_and_response decomposition + peer review for COMPLEX queries
+# ---------------------------------------------------------------------------
+
+[dynamic_routing]
+mode = "dynamic"          # "static" | "dynamic" | "ab_test"
+routing_model = ""        # Model for routing decisions (empty = use fast)
+synthesis_model = ""      # Model for result synthesis (empty = use default)
+fallback_on_error = true
+decomposition_enabled = true
+negotiation_enabled = true
+peer_review_enabled = false
+
+# ---------------------------------------------------------------------------
+# Agent Collaboration
+# ---------------------------------------------------------------------------
+
+[agents.collaboration]
+enabled = true
+
+# ---------------------------------------------------------------------------
+# Dispatch — token budgets, timeouts and context-source routing
+# ---------------------------------------------------------------------------
+
+[context_governor]
+enabled = true
+mode = "observe"
+default_context_window_tokens = 8192
+prompt_budget_ratio = 0.75
+reserved_response_ratio = 0.15
+minimum_reserved_response_tokens = 256
+max_reserved_response_tokens = 2048
+warning_pressure_threshold = 0.75
+block_pressure_threshold = 1.0
+
+[context_governor.phase.chat]
+prompt_budget_ratio = 0.75
+
+[context_governor.phase.streaming]
+prompt_budget_ratio = 0.70
+
+[dispatch]
+# Operational budgets, timeouts and parallelism are inferred by
+# `python -m config.resolver` and delivered through `.env.services.generated`.
+
+# HTTP invocation endpoint per agent service (used by AgentClient.invoke)
+[dispatch.agent_endpoints]
+reasoning_and_response = { method = "POST", path = "/v1/reasoning/respond" }
+audio_transcribe = { method = "POST", path = "/v1/transcribe" }
+
+[dispatch.streaming]
+temperature = 0.7
+# Priority assigned to context sources not listed in [dispatch.streaming.source_priority]
+unranked_source_priority = 5
+
+# Lower number = higher priority when packing context into the prompt
+[dispatch.streaming.source_priority]
+extrator = 0
+storage = 0
+system = 0
+personal_context = 0
+rag = 1
+cag = 1
+local_evidence = 2
+graph = 2
+repo = 2
+data = 2
+sql = 2
+bash = 2
+logs = 2
+incident = 2
+compose = 2
+security = 2
+git = 2
+research = 3
+
+# Maps a logical context source -> feature service endpoint
+[dispatch.source_map]
+rag = { feature = "research", method = "POST", path = "/v1/research/search", policy_action = "rag.query" }
+cag = { feature = "research", method = "GET", path = "/v1/research/cag", policy_action = "cag.explain" }
+graph = { feature = "local_evidence_operator", method = "POST", path = "/v1/code/analyze" }
+repo = { feature = "local_evidence_operator", method = "GET", path = "/v1/code/repo-status" }
+data = { feature = "local_evidence_operator", method = "POST", path = "/v1/data/drift" }
+sql = { feature = "local_evidence_operator", method = "POST", path = "/v1/data/sqlite/reconcile" }
+bash = { feature = "execution_policy_operator", method = "POST", path = "/v1/bash/static-safety" }
+logs = { feature = "local_evidence_operator", method = "POST", path = "/v1/ops/log-performance" }
+incident = { feature = "local_evidence_operator", method = "POST", path = "/v1/ops/incident-timeline" }
+compose = { feature = "local_evidence_operator", method = "POST", path = "/v1/ops/compose-diagnostics" }
+security = { feature = "local_evidence_operator", method = "POST", path = "/v1/security/cache-correlation" }
+git = { feature = "local_evidence_operator", method = "POST", path = "/v1/code/git-regression" }
+storage = { feature = "storage_guardian", method = "POST", path = "/internal/storage/query" }
+calendar = { feature = "personal_context", method = "GET", path = "/v1/personal/calendar" }
+email = { feature = "personal_context", method = "GET", path = "/v1/personal/email" }
+rss = { feature = "personal_context", method = "GET", path = "/v1/personal/feeds" }
+extrator = { feature = "extrator", method = "POST", path = "/v1/extrator/query" }
+
+# Primary query endpoint per feature service (used by FeatureClient.query)
+[dispatch.feature_endpoints]
+research = { method = "POST", path = "/v1/research/search", policy_action = "rag.query" }
+local_evidence_operator = { method = "POST", path = "/v1/code/analyze", policy_action = "local_evidence.read" }
+execution_policy_operator = { method = "POST", path = "/v1/bash/static-safety", policy_action = "shell.safety.review" }
+storage_guardian = { method = "POST", path = "/internal/storage/query", auth_profile = "storage_guardian_internal_token", tls_alias_profile = "storage_guardian_compose", policy_action = "storage.status" }
+material_execution_kernel = { method = "POST", path = "/v1/material-execution/sessions", policy_action = "material_execution.session" }
+personal_context = { method = "GET", path = "/v1/personal/calendar" }
+extrator = { method = "POST", path = "/v1/extrator/query" }

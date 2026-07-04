@@ -1,0 +1,60 @@
+# ai-local central configuration.
+#
+# Edit only high-level intent here. Derived paths, ports, workers, batch sizes,
+# timeouts, and hardware choices are resolved by `python -m config.resolver`.
+
+version: 1
+mode: dev
+
+hardware:
+  profile: auto
+
+storage:
+  external_root: auto
+  expected_filesystem: auto
+  require_external: true
+  allow_local_heavy_fallback: true
+
+llm:
+  preferred_backend: auto
+  quality_latency: balanced
+  privacy_policy: local_only
+
+limits:
+  max_workers: auto
+  cpu_budget_fraction: 0.50
+  memory_budget_fraction: 0.70
+
+ports:
+  bind_host: 127.0.0.1
+  base_port: 8000
+
+privacy:
+  record_prompts: false
+  record_responses: false
+  redact_paths: true
+  redact_secrets: true
+
+runtime:
+  probe: true
+  docker_probe: true
+
+docker:
+  compose_parallel_limit: auto
+  buildkit: true
+  build_cache_max: auto
+  up_no_build: true
+  up_wait: true
+  up_wait_timeout_seconds: 120
+  remove_orphans: false
+
+material:
+  dependency_policy:
+    package_install: disabled
+    network: none
+    lockfile_required: false
+    native_builds: deny
+    dependency_cache_profile: null
+
+compatibility:
+  read_env_storage_generated: true

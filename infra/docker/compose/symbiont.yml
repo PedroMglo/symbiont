@@ -1,0 +1,1352 @@
+# =============================================================================
+# ai-symbiont — Docker Compose
+# =============================================================================
+# Usage (from ai-local repo root):
+#   docker compose --profile core up -d       — Start symbiont gateway
+#   docker compose --profile agents up -d     — Start agent services
+#   docker compose --profile features up -d   — Start feature services
+#
+# Profiles:
+#   core          — symbiont gateway + lifecycle docker proxy
+#   agents        — reasoning-and-response, local-evidence-operator,
+#                   execution-policy-operator, material-builder
+#   material      — material-builder, material-execution-kernel,
+#                   workspace-execution, execution-policy-operator
+#   features      — research, workspace-execution, execution-policy-operator,
+#                   material-builder, material-execution-kernel,
+#                   personal-context, extrator
+#   heavy         — audio-transcribe (GPU)
+#
+# Security:
+#   API keys are passed as Docker secrets (mounted at /run/secrets/).
+#   Secrets are local files stored in infra/docker/secrets/ by default.
+#   Services refuse to start without valid secrets.
+#
+# Ollama:
+#   Runs natively on host. Containers access it through the internal TLS proxy.
+# =============================================================================
+
+# --- Shared configuration fragments ---
+x-common-env: &common-env
+  OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-https://ollama-proxy:11434}
+  AI_LOCAL_TLS_DIR: /run/ai-local-tls
+  SSL_CERT_FILE: /run/ai-local-tls/ca-bundle.crt
+  REQUESTS_CA_BUNDLE: /run/ai-local-tls/ca-bundle.crt
+  CURL_CA_BUNDLE: /run/ai-local-tls/ca-bundle.crt
+  LOG_FORMAT: json
+  PYTHONUNBUFFERED: "1"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+x-secure-service: &secure-service
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  stop_grace_period: 30s
+x-gpu-service: &gpu-service
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  stop_grace_period: 60s
+x-clickhouse-service: &clickhouse-service
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  stop_grace_period: 60s
+x-common-labels: &common-labels
+  ai.local.managed: "true"
+x-tls-volume: &tls-volume ${AI_LOCAL_TLS_DIR_HOST:-../../../.local/tls}:/run/ai-local-tls:z
+# --- Secrets (local files managed in infra/docker/secrets/) ---
+secrets:
+  orc_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/orc_api_key
+  ollama_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/ollama_api_key
+  rag_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/rag_api_key
+  qdrant_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/qdrant_api_key
+  audio_transcribe_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/audio_transcribe_api_key
+  internal_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/internal_api_key
+  github_token:
+    environment: GITHUB_TOKEN
+# --- Network ---
+networks:
+  ai-local:
+    driver: bridge
+    name: ai-local-net
+# =============================================================================
+services:
+  ollama-proxy:
+    !!merge <<: *secure-service
+    build:
+      context: ../../..
+      dockerfile: infra/docker/images/symbiont/base/Dockerfile.base
+      ssh:
+        - default
+      secrets:
+        - github_token
+      args:
+        AI_LOCAL_GIT_URL_INSTEAD_OF: ${AI_LOCAL_GIT_URL_INSTEAD_OF:-}
+    image: ai-local-base:${AI_LOCAL_BASE_TAG:-dev}
+    container_name: orc-ollama-proxy
+    profiles: ["core"]
+    restart: unless-stopped
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: ollama-proxy
+      ai.local.service_class: internal
+      ai.local.exposure_class: internal
+      ai.local.component: core
+      ai.local.profile: core
+      ai.local.owner: symbiont
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "11434"
+    environment:
+      SERVICE_NAME: ollama-proxy
+      AI_LOCAL_TLS_DIR: /run/ai-local-tls
+      AI_LOCAL_TLS_DNS_NAMES: ollama-proxy,orc-ollama-proxy,localhost
+      OLLAMA_PROXY_LISTEN_HOST: "0.0.0.0"
+      OLLAMA_PROXY_LISTEN_PORT: "11434"
+      OLLAMA_PROXY_UPSTREAM_HOST: ${OLLAMA_PROXY_UPSTREAM_HOST:-host.docker.internal}
+      OLLAMA_PROXY_UPSTREAM_PORT: "${OLLAMA_PROXY_UPSTREAM_PORT:-11434}"
+      SSL_CERT_FILE: /run/ai-local-tls/ca-bundle.crt
+      REQUESTS_CA_BUNDLE: /run/ai-local-tls/ca-bundle.crt
+      CURL_CA_BUNDLE: /run/ai-local-tls/ca-bundle.crt
+    command: ["python", "/app/ollama_tls_proxy.py"]
+    volumes:
+      - ../../../infra/docker/ollama_tls_proxy.py:/app/ollama_tls_proxy.py:ro,z
+      - *tls-volume
+    networks:
+      - ai-local
+
+    deploy:
+      resources:
+        limits:
+          memory: ${OLLAMA_PROXY_MEM_LIMIT:-128m}
+          cpus: "${OLLAMA_PROXY_CPUS:-0.25}"
+          pids: ${OLLAMA_PROXY_PIDS_LIMIT:-128}
+        reservations:
+          memory: ${OLLAMA_PROXY_MEM_RESERVATION:-32m}
+
+    healthcheck:
+      test:
+        ["CMD-SHELL", "curl -skf https://localhost:11434/api/tags >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
+  # ===========================================================================
+  # CORE PROFILE — Minimum functional stack
+  # ===========================================================================
+  symbiont:
+    !!merge <<: *secure-service
+    build:
+      context: ../../..
+      dockerfile: infra/docker/images/symbiont/services/symbiont.Dockerfile
+      args:
+        AI_LOCAL_BASE_TAG: ${AI_LOCAL_BASE_TAG:-dev}
+    image: ai-local-symbiont:${AI_LOCAL_IMAGE_TAG:-dev}
+    container_name: orc-symbiont
+    profiles: ["core"]
+    restart: unless-stopped
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: symbiont
+      ai.local.service_class: gateway-public
+      ai.local.exposure_class: gateway-public
+      ai.local.component: core
+      ai.local.profile: core
+      ai.local.owner: symbiont
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${AI_LOCAL_BIND:-127.0.0.1}:${ORC_PORT_SYMBIONT:-8586}:8585"
+    environment:
+      !!merge <<: *common-env
+      SERVICE_NAME: symbiont
+      ORC_API_HOST: "0.0.0.0"
+      ORC_API_PORT: "8585"
+      ORC_SESSION_DB_PATH: /app/data/symbiont/sessions.db
+      AI_ORC_SETTINGS_DIR: /app/config/orc
+      ORC_SYMBIONT_API_KEY_FILE: /run/secrets/orc_api_key
+      ORC_RAG_URL: ${ORC_SERVICES_RAG_URL:-https://rag:8484}
+      ORC_OLLAMA_BASE_URL: ${ORC_OLLAMA_BASE_URL:-https://ollama-proxy:11434}
+      ORC_LLM_BACKEND_OLLAMA_ENABLED: ${ORC_LLM_BACKEND_OLLAMA_ENABLED:-true}
+      ORC_LLM_BACKEND_OLLAMA_ACCELERATOR: ${ORC_LLM_BACKEND_OLLAMA_ACCELERATOR:-cpu}
+      ORC_LLM_BACKEND_LLAMA_CPP_AUX_ENABLED: ${ORC_LLM_BACKEND_LLAMA_CPP_AUX_ENABLED:-false}
+      ORC_LLM_BACKEND_LLAMA_CPP_FAST_ENABLED: ${ORC_LLM_BACKEND_LLAMA_CPP_FAST_ENABLED:-false}
+      ORC_LLM_BACKEND_VLLM_ENABLED: ${ORC_LLM_BACKEND_VLLM_ENABLED:-false}
+      ORC_SERVICES_LLAMA_CPP_AUX_URL: ${ORC_SERVICES_LLAMA_CPP_AUX_URL:-https://llama-cpp-aux:8080}
+      ORC_SERVICES_LLAMA_CPP_FAST_URL: ${ORC_SERVICES_LLAMA_CPP_FAST_URL:-https://llama-cpp-fast:8080}
+      ORC_SERVICES_VLLM_URL: ${ORC_SERVICES_VLLM_URL:-https://vllm:8000}
+      ORC_SERVICES_REASONING_AND_RESPONSE_URL: ${ORC_SERVICES_REASONING_AND_RESPONSE_URL:-https://reasoning-and-response:8000}
+      ORC_SERVICES_RESEARCH_URL: ${ORC_SERVICES_RESEARCH_URL:-https://research:8000}
+      ORC_SERVICES_PERSONAL_CONTEXT_URL: ${ORC_SERVICES_PERSONAL_CONTEXT_URL:-https://personal-context:8000}
+      ORC_SERVICES_LOCAL_EVIDENCE_OPERATOR_URL: ${ORC_SERVICES_LOCAL_EVIDENCE_OPERATOR_URL:-https://local-evidence-operator:8000}
+      ORC_SERVICES_EXECUTION_POLICY_OPERATOR_URL: ${ORC_SERVICES_EXECUTION_POLICY_OPERATOR_URL:-https://execution-policy-operator:8000}
+      ORC_SERVICES_MATERIAL_BUILDER_URL: ${ORC_SERVICES_MATERIAL_BUILDER_URL:-https://material-builder:8000}
+      ORC_SERVICES_MATERIAL_EXECUTION_KERNEL_URL: ${ORC_SERVICES_MATERIAL_EXECUTION_KERNEL_URL:-https://material-execution-kernel:8000}
+      ORC_SERVICES_EXTRATOR_URL: ${ORC_SERVICES_EXTRATOR_URL:-https://extrator:8000}
+      ORC_SERVICES_AUDIO_TRANSCRIBE_URL: ${ORC_SERVICES_AUDIO_TRANSCRIBE_URL:-https://audio-transcribe:8080}
+      ORC_SERVICES_AUDIO_STREAMING_URL: ${ORC_SERVICES_AUDIO_STREAMING_URL:-https://audio-streaming:8087}
+      ORC_SERVICES_STORAGE_GUARDIAN_URL: ${ORC_SERVICES_STORAGE_GUARDIAN_URL:-https://storage-guardian:8730}
+      AI_LOCAL_STORAGE_MODE: ${AI_LOCAL_STORAGE_MODE:-}
+      AI_LOCAL_STORAGE_ROOT: ${AI_LOCAL_STORAGE_ROOT:-}
+      AI_STORAGE_EXTERNAL_ROOT: ${AI_STORAGE_EXTERNAL_ROOT:-}
+      AI_STORAGE_HOST_BIND_ROOT: ${AI_STORAGE_HOST_BIND_ROOT:-}
+      AI_STORAGE_CONTAINER_BIND_ROOT: ${AI_STORAGE_CONTAINER_BIND_ROOT:-}
+      AI_STORAGE_REQUIRE_EXTERNAL: ${AI_STORAGE_REQUIRE_EXTERNAL:-false}
+      AI_STORAGE_ALLOW_LOCAL_HEAVY_FALLBACK: ${AI_STORAGE_ALLOW_LOCAL_HEAVY_FALLBACK:-false}
+      # The host bind source is still `${SYMBIONT_DATA_DIR}` in `volumes`.
+      # Inside the container, Symbiont must write through the mounted runtime
+      # path instead of the host path, which may also be mounted read-only for
+      # evidence acquisition.
+      SYMBIONT_DATA_DIR: /app/data
+      SYMBIONT_LOGS_DIR: /app/logs
+      EXTRATOR_DATA_DIR: ${EXTRATOR_DATA_DIR:-}
+      LOCAL_EVIDENCE_OPERATOR_DATA_DIR: ${LOCAL_EVIDENCE_OPERATOR_DATA_DIR:-}
+      EXECUTION_POLICY_OPERATOR_DATA_DIR: ${EXECUTION_POLICY_OPERATOR_DATA_DIR:-}
+      AUDIO_TRANSCRIBE_DATA_DIR: ${AUDIO_TRANSCRIBE_DATA_DIR:-}
+      RAG_DATA_DIR: ${RAG_DATA_DIR:-}
+      QDRANT_DATA_DIR: ${QDRANT_DATA_DIR:-}
+      REDIS_DATA_DIR: ${REDIS_DATA_DIR:-}
+      STORAGE_GUARDIAN_DATA_DIR: ${STORAGE_GUARDIAN_DATA_DIR:-}
+      ORC_SERVICES_TRANSLATION_URL: ${ORC_SERVICES_TRANSLATION_URL:-https://translation:8590}
+      ORC_SERVICES_LANGFUSE_URL: ${ORC_SERVICES_LANGFUSE_URL:-https://langfuse:3000}
+      ORC_SERVICES_CLICKHOUSE_URL: ${ORC_SERVICES_CLICKHOUSE_URL:-https://clickhouse:8123}
+      ORC_SERVICES_OTEL_ENDPOINT: ${ORC_SERVICES_OTEL_ENDPOINT:-https://otel-collector:4318}
+      OLLAMA_API_KEY_FILE: /run/secrets/ollama_api_key
+      AI_MODELS_REGISTRY: /app/config/models/orc.config.json
+      RAG_API_KEY_FILE: /run/secrets/rag_api_key
+      QDRANT_API_KEY_FILE: /run/secrets/qdrant_api_key
+      INTERNAL_API_KEY_FILE: /run/secrets/internal_api_key
+      STORAGE_GUARDIAN_INTERNAL_TOKEN_FILE: /run/secrets/internal_api_key
+      AUDIO_TRANSCRIBE_API_KEY_FILE: /run/secrets/audio_transcribe_api_key
+      AI_RESOURCE_GOVERNOR_CONFIG_PATH: /app/config/resource_governor.yaml
+      AI_RESOURCE_GOVERNOR_POLICY_SNAPSHOT_PATH: /app/config/generated/resource_governor_policy.json
+      HOST_HOME_PREFIX: ${HOST_HOME_PREFIX:-${AI_LOCAL_HOST_ALLOWED_ROOT:-${HOME}}}
+      CLICKHOUSE_URL: ${ORC_SERVICES_CLICKHOUSE_URL:-https://clickhouse:8123}
+      # Docker CLI uses tcp:// plus TLS envs; the lifecycle SDK still uses
+      # https://docker-proxy:2375 from lifecycle.toml.
+      DOCKER_HOST: tcp://docker-proxy:2375
+      DOCKER_TLS_VERIFY: "1"
+      DOCKER_CERT_PATH: /run/ai-local-tls/services/symbiont
+      AI_LOCAL_HOST_HOME: ${AI_LOCAL_HOST_HOME:-${AI_LOCAL_HOST_ALLOWED_ROOT:-${HOME}}}
+      AI_LOCAL_HOST_PROJECT_ROOT: ${AI_LOCAL_HOST_PROJECT_ROOT:-${PWD}}
+      ORC_LIFECYCLE_COMPOSE_PROJECT_DIR: ${ORC_LIFECYCLE_COMPOSE_PROJECT_DIR:-${AI_LOCAL_HOST_PROJECT_ROOT:-${PWD}}}
+      ORC_DISPATCH_CONTEXT_BUDGET_TOKENS: ${ORC_DISPATCH_CONTEXT_BUDGET_TOKENS:-6000}
+      ORC_DISPATCH_CONTEXT_TIMEOUT_PER_SOURCE: ${ORC_DISPATCH_CONTEXT_TIMEOUT_PER_SOURCE:-10.0}
+      ORC_DISPATCH_FEATURE_BUDGET_TOKENS: ${ORC_DISPATCH_FEATURE_BUDGET_TOKENS:-2000}
+      ORC_DISPATCH_FEATURE_TIMEOUT_SECONDS: ${ORC_DISPATCH_FEATURE_TIMEOUT_SECONDS:-10.0}
+      ORC_DISPATCH_CONTEXT_PARALLEL_MAX_WORKERS: ${ORC_DISPATCH_CONTEXT_PARALLEL_MAX_WORKERS:-8}
+      ORC_DISPATCH_AGENT_BUDGET_TOKENS: ${ORC_DISPATCH_AGENT_BUDGET_TOKENS:-2000}
+      ORC_DISPATCH_AGENT_TIMEOUT_SECONDS: ${ORC_DISPATCH_AGENT_TIMEOUT_SECONDS:-120.0}
+      ORC_DISPATCH_AGENT_TIMEOUT_REASONING_AND_RESPONSE: ${ORC_DISPATCH_AGENT_TIMEOUT_REASONING_AND_RESPONSE:-30.0}
+      MATERIAL_EXECUTION_KERNEL_SESSION_BUDGET_SECONDS: ${MATERIAL_EXECUTION_KERNEL_SESSION_BUDGET_SECONDS:-870}
+      MATERIAL_EXECUTION_KERNEL_NO_PROGRESS_WATCHDOG_SECONDS: ${MATERIAL_EXECUTION_KERNEL_NO_PROGRESS_WATCHDOG_SECONDS:-120}
+      MATERIAL_EXECUTION_KERNEL_BUILDER_TIMEOUT_SECONDS: ${MATERIAL_EXECUTION_KERNEL_BUILDER_TIMEOUT_SECONDS:-870}
+      MATERIAL_EXECUTION_KERNEL_WORKSPACE_TIMEOUT_SECONDS: ${MATERIAL_EXECUTION_KERNEL_WORKSPACE_TIMEOUT_SECONDS:-180}
+      ORC_DISPATCH_AGENT_TIMEOUT_REASONING_AND_RESPONSE_DIRECT: ${ORC_DISPATCH_AGENT_TIMEOUT_REASONING_AND_RESPONSE_DIRECT:-150.0}
+      ORC_DISPATCH_AGENT_TIMEOUT_AUDIO_TRANSCRIBE: ${ORC_DISPATCH_AGENT_TIMEOUT_AUDIO_TRANSCRIBE:-120.0}
+      ORC_DISPATCH_STREAMING_MAX_CONTEXT_BUDGET_TOKENS: ${ORC_DISPATCH_STREAMING_MAX_CONTEXT_BUDGET_TOKENS:-600}
+      ORC_DISPATCH_STREAMING_MAX_TOKENS: ${ORC_DISPATCH_STREAMING_MAX_TOKENS:-1020}
+      ORC_DISPATCH_STREAMING_TIMEOUT_SECONDS: ${ORC_DISPATCH_STREAMING_TIMEOUT_SECONDS:-120.0}
+      ORC_DYNAMIC_ROUTING_ROUTING_TIMEOUT: ${ORC_DYNAMIC_ROUTING_ROUTING_TIMEOUT:-5.0}
+      ORC_DYNAMIC_ROUTING_MAX_AGENTS_PER_REQUEST: ${ORC_DYNAMIC_ROUTING_MAX_AGENTS_PER_REQUEST:-4}
+      ORC_DYNAMIC_ROUTING_PER_AGENT_TIMEOUT: ${ORC_DYNAMIC_ROUTING_PER_AGENT_TIMEOUT:-120.0}
+      ORC_DYNAMIC_ROUTING_TOTAL_BUDGET_TOKENS: ${ORC_DYNAMIC_ROUTING_TOTAL_BUDGET_TOKENS:-15000}
+      ORC_DYNAMIC_ROUTING_DECOMPOSITION_TIMEOUT: ${ORC_DYNAMIC_ROUTING_DECOMPOSITION_TIMEOUT:-5.0}
+      ORC_DYNAMIC_ROUTING_NEGOTIATION_TIMEOUT: ${ORC_DYNAMIC_ROUTING_NEGOTIATION_TIMEOUT:-1.0}
+      ORC_DYNAMIC_ROUTING_MAX_SUBTASKS: ${ORC_DYNAMIC_ROUTING_MAX_SUBTASKS:-5}
+      ORC_AGENTS_COLLABORATION_MAX_ROUNDS: ${ORC_AGENTS_COLLABORATION_MAX_ROUNDS:-2}
+      ORC_AGENTS_COLLABORATION_ROUND_TIMEOUT_SECONDS: ${ORC_AGENTS_COLLABORATION_ROUND_TIMEOUT_SECONDS:-5.0}
+      ORC_AGENTS_COLLABORATION_MAX_MEMORY_ENTRIES: ${ORC_AGENTS_COLLABORATION_MAX_MEMORY_ENTRIES:-10}
+      ORC_AGENTS_COLLABORATION_MEMORY_TTL_SECONDS: ${ORC_AGENTS_COLLABORATION_MEMORY_TTL_SECONDS:-300}
+      ORC_AGENTIC_RUNTIME_TASK_DEFAULT_TIMEOUT_SECONDS: ${ORC_AGENTIC_RUNTIME_TASK_DEFAULT_TIMEOUT_SECONDS:-1200}
+      ORC_AGENTIC_RUNTIME_MATERIAL_DECISION_TIMEOUT_SECONDS: ${ORC_AGENTIC_RUNTIME_MATERIAL_DECISION_TIMEOUT_SECONDS:-600}
+      ORC_AGENTIC_RUNTIME_COMMAND_TOOL_BACKEND: ${ORC_AGENTIC_RUNTIME_COMMAND_TOOL_BACKEND:-workspace_execution}
+      ORC_AGENTIC_RUNTIME_COMMAND_TOOL_TIMEOUT_SECONDS: ${ORC_AGENTIC_RUNTIME_COMMAND_TOOL_TIMEOUT_SECONDS:-120}
+      ORC_AGENTIC_RUNTIME_COMMAND_TOOL_MAX_OUTPUT_BYTES: ${ORC_AGENTIC_RUNTIME_COMMAND_TOOL_MAX_OUTPUT_BYTES:-64000}
+    secrets:
+      - orc_api_key
+      - ollama_api_key
+      - rag_api_key
+      - qdrant_api_key
+      - internal_api_key
+      - audio_transcribe_api_key
+    volumes:
+      - ${ORC_MODELS_CONFIG:-../../../config/models/orc.config.json}:/app/config/models/orc.config.json:ro,z
+      - ${AI_ORC_SETTINGS_DIR_HOST:-../../../config/orc}:/app/config/orc:ro,z
+      - ${AI_RESOURCE_GOVERNOR_CONFIG_HOST:-../../../config/resource_governor.yaml}:/app/config/resource_governor.yaml:ro,z
+      - ${AI_RESOURCE_GOVERNOR_GENERATED_HOST:-../../../.local/generated}:/app/config/generated:ro,z
+      - ${SYMBIONT_DATA_DIR:-../../../.local/data/symbiont}:/app/data:z
+      - ${AI_LOCAL_LOGS_ROOT:-../../../.local/logs}/symbiont:/app/logs:z
+      - ${AI_LOCAL_HOST_ALLOWED_ROOT:-${HOME}}:/host_home:ro,z
+      - ${AUDIO_TRANSCRIBE_DATA_DIR:-../../../.local/data/audio}/input:/app/audio_input:z
+      - ${AI_LOCAL_HOST_PROJECT_ROOT:-${PWD}}:/project:ro,z
+      - ${AI_LOCAL_HOST_PROJECT_ROOT:-${PWD}}:${AI_LOCAL_HOST_PROJECT_ROOT:-${PWD}}:ro,z
+      - ${ORC_LIFECYCLE_HOST_PROJECT_ROOT:-.}:${ORC_LIFECYCLE_PROJECT_DIR:-/workspace/project}:ro,z
+      - *tls-volume
+    networks:
+      - ai-local
+    depends_on:
+      ollama-proxy:
+        condition: service_healthy
+      docker-proxy:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: ${SYMBIONT_MEM_LIMIT:-1g}
+          cpus: "${SYMBIONT_CPUS_LIMIT:-2.0}"
+          pids: ${SYMBIONT_PIDS_LIMIT:-512}
+        reservations:
+          memory: ${SYMBIONT_MEM_RESERVATION:-256m}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -skf https://localhost:8585${SYMBIONT_HEALTHCHECK_PATH:-/live}",
+        ]
+      interval: 15s
+      timeout: ${SYMBIONT_HEALTHCHECK_TIMEOUT:-5s}
+      start_period: 30s
+      retries: 3
+  # --- Docker Socket Proxy (container lifecycle management) ---
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:${DOCKER_SOCKET_PROXY_IMAGE_TAG:-v0.4.2}
+    container_name: orc-docker-proxy
+    profiles: ["core"]
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cat /run/ai-local-tls/services/docker-proxy/tls.crt /run/ai-local-tls/services/docker-proxy/tls.key > /tmp/docker-proxy.pem
+        sed 's|$${BIND_CONFIG}|[::]:2375 v4v6 ssl crt /tmp/docker-proxy.pem alpn http/1.1|g' /usr/local/etc/haproxy/haproxy.cfg.template > /tmp/haproxy.cfg
+        exec haproxy -W -db -f /tmp/haproxy.cfg
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: docker-proxy
+      ai.local.service_class: internal
+      ai.local.exposure_class: internal
+      ai.local.component: core
+      ai.local.profile: core
+      ai.local.owner: symbiont
+    environment:
+      # Allow lifecycle manager to manage containers via compose
+      CONTAINERS: 1
+      SERVICES: 1
+      TASKS: 1
+      NETWORKS: 1
+      NODES: 0
+      BUILD: 0
+      COMMIT: 0
+      CONFIGS: 0
+      DISTRIBUTION: 0
+      EXEC: 0
+      GRPC: 0
+      IMAGES: 1
+      INFO: 1
+      PLUGINS: 0
+      POST: 1
+      SECRETS: 0
+      SWARM: 0
+      SYSTEM: 0
+      VOLUMES: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - *tls-volume
+    networks:
+      - ai-local
+    deploy:
+      resources:
+        limits:
+          memory: ${DOCKER_PROXY_MEM_LIMIT:-64m}
+          cpus: "${DOCKER_PROXY_CPUS_LIMIT:-0.25}"
+          pids: ${DOCKER_PROXY_PIDS_LIMIT:-64}
+        reservations:
+          memory: ${DOCKER_PROXY_MEM_RESERVATION:-16m}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --no-check-certificate --spider -q https://localhost:2375/version || exit 1",
+        ]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 2
+  # ===========================================================================
+  # AGENTS PROFILE — Specialized LLM agents (persistent)
+  # ===========================================================================
+  reasoning-and-response:
+    !!merge <<: *secure-service
+    build:
+      context: ../../..
+      dockerfile: infra/docker/images/symbiont/services/reasoning-and-response.Dockerfile
+      args:
+        AI_LOCAL_BASE_TAG: ${AI_LOCAL_BASE_TAG:-dev}
+    image: ai-local-reasoning-and-response:${AI_LOCAL_IMAGE_TAG:-dev}
+    container_name: orc-reasoning-and-response
+    profiles: ["agents"]
+    restart: unless-stopped
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: reasoning-and-response
+      ai.local.service_class: internal
+      ai.local.exposure_class: internal
+      ai.local.component: agent
+      ai.local.profile: agents
+      ai.local.owner: agents
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      docker-proxy:
+        condition: service_healthy
+    expose:
+      - "8000"
+    environment:
+      !!merge <<: *common-env
+      SERVICE_NAME: reasoning-and-response
+      REASONING_AND_RESPONSE_PORT: ${REASONING_AND_RESPONSE_SERVER_PORT:-8000}
+      REASONING_AND_RESPONSE_SERVER_HOST: ${REASONING_AND_RESPONSE_SERVER_HOST:-0.0.0.0}
+      REASONING_AND_RESPONSE_SERVER_PORT: ${REASONING_AND_RESPONSE_SERVER_PORT:-8000}
+      REASONING_AND_RESPONSE_SERVER_WORKERS: ${REASONING_AND_RESPONSE_SERVER_WORKERS:-1}
+      REASONING_AND_RESPONSE_CONFIG: /app/config.toml
+      REASONING_AND_RESPONSE_LLM_BASE_URL: ${REASONING_AND_RESPONSE_LLM_BASE_URL:-https://vllm:8000/v1}
+      REASONING_AND_RESPONSE_LLM_MODEL: ${REASONING_AND_RESPONSE_LLM_MODEL:-qwen3:8b}
+      REASONING_AND_RESPONSE_LLM_TEMPERATURE: ${REASONING_AND_RESPONSE_LLM_TEMPERATURE:-0.3}
+      REASONING_AND_RESPONSE_LLM_MAX_TOKENS: ${REASONING_AND_RESPONSE_LLM_MAX_TOKENS:-2048}
+      REASONING_AND_RESPONSE_LLM_MAX_OUTPUT_TOKENS: ${REASONING_AND_RESPONSE_LLM_MAX_OUTPUT_TOKENS:-2048}
+      REASONING_AND_RESPONSE_LLM_TIMEOUT_SECONDS: ${REASONING_AND_RESPONSE_LLM_TIMEOUT_SECONDS:-180}
+      API_KEY_FILE: /run/secrets/internal_api_key
+    secrets:
+      - internal_api_key
+    volumes:
+      - *tls-volume
+    networks:
+      - ai-local
+    deploy:
+      resources:
+        limits:
+          memory: ${REASONING_AND_RESPONSE_MEM_LIMIT:-512m}
+          cpus: "${REASONING_AND_RESPONSE_CPUS_LIMIT:-1.0}"
+          pids: ${REASONING_AND_RESPONSE_PIDS_LIMIT:-512}
+        reservations:
+          memory: ${REASONING_AND_RESPONSE_MEM_RESERVATION:-128m}
+    healthcheck:
+      test: ["CMD", "curl", "-skf", "https://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+  # ===========================================================================
+  # FEATURES PROFILE — Context providers (persistent)
+  # ===========================================================================
+  research:
+    !!merge <<: *secure-service
+    build:
+      context: ../../..
+      dockerfile: infra/docker/images/symbiont/services/research.Dockerfile
+      args:
+        AI_LOCAL_BASE_TAG: ${AI_LOCAL_BASE_TAG:-dev}
+    image: ai-local-research:${AI_LOCAL_IMAGE_TAG:-dev}
+    container_name: orc-research
+    profiles: ["features"]
+    restart: unless-stopped
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: research
+      ai.local.service_class: internal
+      ai.local.exposure_class: internal
+      ai.local.component: feature
+      ai.local.profile: features
+      ai.local.owner: features
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8000"
+    environment:
+      !!merge <<: *common-env
+      SERVICE_NAME: research
+      RESEARCH_PORT: ${RESEARCH_SERVER_PORT:-8000}
+      RESEARCH_SERVER_HOST: ${RESEARCH_SERVER_HOST:-0.0.0.0}
+      RESEARCH_SERVER_PORT: ${RESEARCH_SERVER_PORT:-8000}
+      RESEARCH_SERVER_WORKERS: ${RESEARCH_SERVER_WORKERS:-1}
+      RESEARCH_CONFIG: /app/config.toml
+      RESEARCH_RAG_URL: ${RESEARCH_RAG_URL:-https://rag:8484}
+      RESEARCH_RAG_API_KEY_FILE: /run/secrets/rag_api_key
+      API_KEY_FILE: /run/secrets/internal_api_key
+    secrets:
+      - rag_api_key
+      - internal_api_key
+    volumes:
+      - *tls-volume
+    networks:
+      - ai-local
+    deploy:
+      resources:
+        limits:
+          memory: ${RESEARCH_MEM_LIMIT:-512m}
+          cpus: "${RESEARCH_CPUS_LIMIT:-1.0}"
+          pids: ${RESEARCH_PIDS_LIMIT:-512}
+        reservations:
+          memory: ${RESEARCH_MEM_RESERVATION:-128m}
+    healthcheck:
+      test: ["CMD", "curl", "-skf", "https://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+  local-evidence-operator:
+    !!merge <<: *secure-service
+    build:
+      context: ../../..
+      dockerfile: infra/docker/images/symbiont/services/local-evidence-operator.Dockerfile
+      args:
+        AI_LOCAL_BASE_TAG: ${AI_LOCAL_BASE_TAG:-dev}
+    image: ai-local-local-evidence-operator:${AI_LOCAL_IMAGE_TAG:-dev}
+    container_name: orc-local-evidence-operator
+    profiles: ["agents"]
+    restart: unless-stopped
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: local-evidence-operator
+      ai.local.service_class: internal
+      ai.local.exposure_class: internal
+      ai.local.component: agent
+      ai.local.profile: agents
+      ai.local.owner: agents
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8000"
+    environment:
+      !!merge <<: *common-env
+      SERVICE_NAME: local-evidence-operator
+      LOCAL_EVIDENCE_OPERATOR_PORT: ${LOCAL_EVIDENCE_OPERATOR_SERVER_PORT:-8000}
+      LOCAL_EVIDENCE_OPERATOR_SERVER_HOST: ${LOCAL_EVIDENCE_OPERATOR_SERVER_HOST:-0.0.0.0}
+      LOCAL_EVIDENCE_OPERATOR_SERVER_PORT: ${LOCAL_EVIDENCE_OPERATOR_SERVER_PORT:-8000}
+      LOCAL_EVIDENCE_OPERATOR_SERVER_WORKERS: ${LOCAL_EVIDENCE_OPERATOR_SERVER_WORKERS:-1}
+      LOCAL_EVIDENCE_OPERATOR_DATA_DIR: ${LOCAL_EVIDENCE_OPERATOR_DATA_DIR:-/temp/local_evidence_operator}
+      CODE_ANALYSIS_CONFIG: /app/config/code_analysis.toml
+      CODE_ANALYSIS_SERVER_HOST: ${CODE_ANALYSIS_SERVER_HOST:-0.0.0.0}
+      CODE_ANALYSIS_SERVER_PORT: ${LOCAL_EVIDENCE_OPERATOR_SERVER_PORT:-8000}
+      CODE_ANALYSIS_SERVER_WORKERS: ${LOCAL_EVIDENCE_OPERATOR_SERVER_WORKERS:-1}
+      CODE_ANALYSIS_GRAPH_RAG_URL: ${LOCAL_EVIDENCE_GRAPH_RAG_URL:-https://rag:8484}
+      CODE_ANALYSIS_GRAPH_API_KEY_FILE: /run/secrets/rag_api_key
+      CODE_ANALYSIS_REPO_SCAN_PATHS: '["/projects"]'
+      DATA_ANALYSIS_CONFIG: /app/config/data_analysis.toml
+      DATA_ANALYSIS_SERVER_HOST: ${DATA_ANALYSIS_SERVER_HOST:-0.0.0.0}
+      DATA_ANALYSIS_SERVER_PORT: ${LOCAL_EVIDENCE_OPERATOR_SERVER_PORT:-8000}
+      DATA_ANALYSIS_SERVER_WORKERS: ${LOCAL_EVIDENCE_OPERATOR_SERVER_WORKERS:-1}
+      DATA_ANALYSIS_DATA_DIR: ${LOCAL_EVIDENCE_OPERATOR_DATA_DIR:-/temp/local_evidence_operator}
+      DATA_ANALYSIS_WORKSPACE_SCAN_PATHS: '["/projects","/host_home"]'
+      OPS_DIAGNOSTICS_CONFIG: /app/config/ops_diagnostics.toml
+      OPS_DIAGNOSTICS_SERVER_HOST: ${OPS_DIAGNOSTICS_SERVER_HOST:-0.0.0.0}
+      OPS_DIAGNOSTICS_SERVER_PORT: ${LOCAL_EVIDENCE_OPERATOR_SERVER_PORT:-8000}
+      OPS_DIAGNOSTICS_SERVER_WORKERS: ${LOCAL_EVIDENCE_OPERATOR_SERVER_WORKERS:-1}
+      OPS_DIAGNOSTICS_DATA_DIR: ${LOCAL_EVIDENCE_OPERATOR_DATA_DIR:-/temp/local_evidence_operator}
+      OPS_DIAGNOSTICS_WORKSPACE_SCAN_PATHS: '["/projects","/host_home"]'
+      SECURITY_ANALYSIS_CONFIG: /app/config/security_analysis.toml
+      SECURITY_ANALYSIS_SERVER_HOST: ${SECURITY_ANALYSIS_SERVER_HOST:-0.0.0.0}
+      SECURITY_ANALYSIS_SERVER_PORT: ${LOCAL_EVIDENCE_OPERATOR_SERVER_PORT:-8000}
+      SECURITY_ANALYSIS_SERVER_WORKERS: ${LOCAL_EVIDENCE_OPERATOR_SERVER_WORKERS:-1}
+      SECURITY_ANALYSIS_DATA_DIR: ${LOCAL_EVIDENCE_OPERATOR_DATA_DIR:-/temp/local_evidence_operator}
+      SECURITY_ANALYSIS_WORKSPACE_SCAN_PATHS: '["/projects","/host_home"]'
+      API_KEY_FILE: /run/secrets/internal_api_key
+    secrets:
+      - rag_api_key
+      - internal_api_key
+    volumes:
+      - ${PROJECTS_DIR:-${HOME}/_projects}:/projects:ro,z
+      - ${AI_LOCAL_HOST_ALLOWED_ROOT:-${HOME}}:/host_home:ro,z
+      - *tls-volume
+    tmpfs:
+      - /temp:rw,noexec,nosuid,nodev,size=512m
+    networks:
+      - ai-local
+    deploy:
+      resources:
+        limits:
+          memory: ${LOCAL_EVIDENCE_OPERATOR_MEM_LIMIT:-1g}
+          cpus: "${LOCAL_EVIDENCE_OPERATOR_CPUS_LIMIT:-1.5}"
+          pids: ${LOCAL_EVIDENCE_OPERATOR_PIDS_LIMIT:-768}
+        reservations:
+          memory: ${LOCAL_EVIDENCE_OPERATOR_MEM_RESERVATION:-128m}
+    healthcheck:
+      test: ["CMD", "curl", "-skf", "https://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+  execution-policy-operator:
+    !!merge <<: *secure-service
+    build:
+      context: ../../..
+      dockerfile: infra/docker/images/symbiont/services/execution-policy-operator.Dockerfile
+      args:
+        AI_LOCAL_BASE_TAG: ${AI_LOCAL_BASE_TAG:-dev}
+    image: ai-local-execution-policy-operator:${AI_LOCAL_IMAGE_TAG:-dev}
+    container_name: orc-execution-policy-operator
+    profiles: ["agents", "features", "material"]
+    restart: unless-stopped
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: execution-policy-operator
+      ai.local.service_class: internal
+      ai.local.exposure_class: internal
+      ai.local.component: agent
+      ai.local.profile: agents
+      ai.local.owner: agents
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8000"
+    environment:
+      !!merge <<: *common-env
+      SERVICE_NAME: execution-policy-operator
+      EXECUTION_POLICY_OPERATOR_PORT: ${EXECUTION_POLICY_OPERATOR_SERVER_PORT:-8000}
+      EXECUTION_POLICY_OPERATOR_SERVER_HOST: ${EXECUTION_POLICY_OPERATOR_SERVER_HOST:-0.0.0.0}
+      EXECUTION_POLICY_OPERATOR_SERVER_PORT: ${EXECUTION_POLICY_OPERATOR_SERVER_PORT:-8000}
+      EXECUTION_POLICY_OPERATOR_SERVER_WORKERS: ${EXECUTION_POLICY_OPERATOR_SERVER_WORKERS:-1}
+      EXECUTION_POLICY_OPERATOR_DATA_DIR: ${EXECUTION_POLICY_OPERATOR_DATA_DIR:-/temp/execution_policy_operator}
+      BASH_SAFETY_SERVER_HOST: ${BASH_SAFETY_SERVER_HOST:-0.0.0.0}
+      BASH_SAFETY_SERVER_PORT: ${EXECUTION_POLICY_OPERATOR_SERVER_PORT:-8000}
+      BASH_SAFETY_SERVER_WORKERS: ${EXECUTION_POLICY_OPERATOR_SERVER_WORKERS:-1}
+      BASH_SAFETY_CONFIG: /app/config/bash_safety.toml
+      BASH_SAFETY_DATA_DIR: ${EXECUTION_POLICY_OPERATOR_DATA_DIR:-/temp/execution_policy_operator}
+      BASH_SAFETY_WORKSPACE_SCAN_PATHS: '["/projects","/host_home"]'
+      API_KEY_FILE: /run/secrets/internal_api_key
+    secrets:
+      - internal_api_key
+    volumes:
+      - ${PROJECTS_DIR:-${HOME}/_projects}:/projects:ro,z
+      - ${AI_LOCAL_HOST_ALLOWED_ROOT:-${HOME}}:/host_home:ro,z
+      - *tls-volume
+    tmpfs:
+      - /temp:rw,noexec,nosuid,nodev,size=128m
+    networks:
+      - ai-local
+    deploy:
+      resources:
+        limits:
+          memory: ${EXECUTION_POLICY_OPERATOR_MEM_LIMIT:-512m}
+          cpus: "${EXECUTION_POLICY_OPERATOR_CPUS_LIMIT:-1.0}"
+          pids: ${EXECUTION_POLICY_OPERATOR_PIDS_LIMIT:-512}
+        reservations:
+          memory: ${EXECUTION_POLICY_OPERATOR_MEM_RESERVATION:-64m}
+    healthcheck:
+      test: ["CMD", "curl", "-skf", "https://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+  material-builder:
+    !!merge <<: *secure-service
+    build:
+      context: ../../..
+      dockerfile: infra/docker/images/symbiont/services/material-builder.Dockerfile
+      args:
+        AI_LOCAL_BASE_TAG: ${AI_LOCAL_BASE_TAG:-dev}
+    image: ai-local-material-builder:${AI_LOCAL_IMAGE_TAG:-dev}
+    container_name: orc-material-builder
+    profiles: ["agents", "features", "material"]
+    restart: unless-stopped
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: material-builder
+      ai.local.service_class: internal
+      ai.local.exposure_class: internal
+      ai.local.component: agent
+      ai.local.profile: agents
+      ai.local.owner: agents
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8000"
+    environment:
+      !!merge <<: *common-env
+      SERVICE_NAME: material-builder
+      MATERIAL_BUILDER_SERVER_HOST: ${MATERIAL_BUILDER_SERVER_HOST:-0.0.0.0}
+      MATERIAL_BUILDER_SERVER_PORT: ${MATERIAL_BUILDER_SERVER_PORT:-8000}
+      MATERIAL_BUILDER_MAX_FILES: ${MATERIAL_BUILDER_MAX_FILES:-18}
+      MATERIAL_BUILDER_FILE_TARGET_SECONDS: ${MATERIAL_BUILDER_FILE_TARGET_SECONDS:-14}
+      MATERIAL_BUILDER_LLM_BASE_URL: ${MATERIAL_BUILDER_LLM_BASE_URL:-https://ollama-proxy:11434}
+      MATERIAL_BUILDER_LLM_MODEL: ${MATERIAL_BUILDER_LLM_MODEL:-qwen3:8b}
+      MATERIAL_BUILDER_LLM_TEMPERATURE: ${MATERIAL_BUILDER_LLM_TEMPERATURE:-0.2}
+      MATERIAL_BUILDER_LLM_MAX_TOKENS: ${MATERIAL_BUILDER_LLM_MAX_TOKENS:-4096}
+      MATERIAL_BUILDER_LLM_TIMEOUT_SECONDS: ${MATERIAL_BUILDER_LLM_TIMEOUT_SECONDS:-600}
+      MATERIAL_BUILDER_LLM_CALL_MAX_TIMEOUT_SECONDS: ${MATERIAL_BUILDER_LLM_CALL_MAX_TIMEOUT_SECONDS:-600}
+      MATERIAL_BUILDER_LLM_NO_PROGRESS_TIMEOUT_SECONDS: ${MATERIAL_BUILDER_LLM_NO_PROGRESS_TIMEOUT_SECONDS:-120}
+      MATERIAL_BUILDER_LLM_WALL_BUDGET_SECONDS: ${MATERIAL_BUILDER_LLM_WALL_BUDGET_SECONDS:-870}
+      MATERIAL_BUILDER_PLAN_LLM_BASE_URL: ${MATERIAL_BUILDER_PLAN_LLM_BASE_URL:-https://ollama-proxy:11434}
+      MATERIAL_BUILDER_PLAN_LLM_MODEL: ${MATERIAL_BUILDER_PLAN_LLM_MODEL:-qwen3:8b}
+      MATERIAL_BUILDER_PLAN_LLM_TEMPERATURE: ${MATERIAL_BUILDER_PLAN_LLM_TEMPERATURE:-0.1}
+      MATERIAL_BUILDER_PLAN_LLM_MAX_TOKENS: ${MATERIAL_BUILDER_PLAN_LLM_MAX_TOKENS:-4096}
+      MATERIAL_BUILDER_PLAN_LLM_TIMEOUT_SECONDS: ${MATERIAL_BUILDER_PLAN_LLM_TIMEOUT_SECONDS:-600}
+      MATERIAL_BUILDER_PLAN_LLM_NO_PROGRESS_TIMEOUT_SECONDS: ${MATERIAL_BUILDER_PLAN_LLM_NO_PROGRESS_TIMEOUT_SECONDS:-120}
+      MATERIAL_BUILDER_PLAN_LLM_WALL_BUDGET_SECONDS: ${MATERIAL_BUILDER_PLAN_LLM_WALL_BUDGET_SECONDS:-870}
+      MATERIAL_BUILDER_FILE_LLM_BASE_URL: ${MATERIAL_BUILDER_FILE_LLM_BASE_URL:-https://ollama-proxy:11434}
+      MATERIAL_BUILDER_FILE_LLM_MODEL: ${MATERIAL_BUILDER_FILE_LLM_MODEL:-qwen2.5-coder:7b}
+      MATERIAL_BUILDER_FILE_LLM_TEMPERATURE: ${MATERIAL_BUILDER_FILE_LLM_TEMPERATURE:-0.15}
+      MATERIAL_BUILDER_FILE_LLM_MAX_TOKENS: ${MATERIAL_BUILDER_FILE_LLM_MAX_TOKENS:-8192}
+      MATERIAL_BUILDER_FILE_LLM_TIMEOUT_SECONDS: ${MATERIAL_BUILDER_FILE_LLM_TIMEOUT_SECONDS:-900}
+      MATERIAL_BUILDER_FILE_LLM_NO_PROGRESS_TIMEOUT_SECONDS: ${MATERIAL_BUILDER_FILE_LLM_NO_PROGRESS_TIMEOUT_SECONDS:-120}
+      MATERIAL_BUILDER_FILE_LLM_WALL_BUDGET_SECONDS: ${MATERIAL_BUILDER_FILE_LLM_WALL_BUDGET_SECONDS:-870}
+      MATERIAL_BUILDER_PATCH_LLM_BASE_URL: ${MATERIAL_BUILDER_PATCH_LLM_BASE_URL:-https://ollama-proxy:11434}
+      MATERIAL_BUILDER_PATCH_LLM_MODEL: ${MATERIAL_BUILDER_PATCH_LLM_MODEL:-qwen2.5-coder:7b}
+      MATERIAL_BUILDER_PATCH_LLM_TEMPERATURE: ${MATERIAL_BUILDER_PATCH_LLM_TEMPERATURE:-0.1}
+      MATERIAL_BUILDER_PATCH_LLM_MAX_TOKENS: ${MATERIAL_BUILDER_PATCH_LLM_MAX_TOKENS:-4096}
+      MATERIAL_BUILDER_PATCH_LLM_TIMEOUT_SECONDS: ${MATERIAL_BUILDER_PATCH_LLM_TIMEOUT_SECONDS:-600}
+      MATERIAL_BUILDER_PATCH_LLM_NO_PROGRESS_TIMEOUT_SECONDS: ${MATERIAL_BUILDER_PATCH_LLM_NO_PROGRESS_TIMEOUT_SECONDS:-120}
+      MATERIAL_BUILDER_PATCH_LLM_WALL_BUDGET_SECONDS: ${MATERIAL_BUILDER_PATCH_LLM_WALL_BUDGET_SECONDS:-870}
+      MATERIAL_BUILDER_REPAIR_LLM_BASE_URL: ${MATERIAL_BUILDER_REPAIR_LLM_BASE_URL:-https://ollama-proxy:11434}
+      MATERIAL_BUILDER_REPAIR_LLM_MODEL: ${MATERIAL_BUILDER_REPAIR_LLM_MODEL:-qwen3:8b}
+      MATERIAL_BUILDER_REPAIR_LLM_TEMPERATURE: ${MATERIAL_BUILDER_REPAIR_LLM_TEMPERATURE:-0.1}
+      MATERIAL_BUILDER_REPAIR_LLM_MAX_TOKENS: ${MATERIAL_BUILDER_REPAIR_LLM_MAX_TOKENS:-4096}
+      MATERIAL_BUILDER_REPAIR_LLM_TIMEOUT_SECONDS: ${MATERIAL_BUILDER_REPAIR_LLM_TIMEOUT_SECONDS:-600}
+      MATERIAL_BUILDER_REPAIR_LLM_NO_PROGRESS_TIMEOUT_SECONDS: ${MATERIAL_BUILDER_REPAIR_LLM_NO_PROGRESS_TIMEOUT_SECONDS:-120}
+      MATERIAL_BUILDER_REPAIR_LLM_WALL_BUDGET_SECONDS: ${MATERIAL_BUILDER_REPAIR_LLM_WALL_BUDGET_SECONDS:-870}
+      MATERIAL_BUILDER_CRITIC_LLM_BASE_URL: ${MATERIAL_BUILDER_CRITIC_LLM_BASE_URL:-https://ollama-proxy:11434}
+      MATERIAL_BUILDER_CRITIC_LLM_MODEL: ${MATERIAL_BUILDER_CRITIC_LLM_MODEL:-atla/selene-mini:latest}
+      MATERIAL_BUILDER_CRITIC_LLM_TEMPERATURE: ${MATERIAL_BUILDER_CRITIC_LLM_TEMPERATURE:-0.0}
+      MATERIAL_BUILDER_CRITIC_LLM_MAX_TOKENS: ${MATERIAL_BUILDER_CRITIC_LLM_MAX_TOKENS:-2048}
+      MATERIAL_BUILDER_CRITIC_LLM_TIMEOUT_SECONDS: ${MATERIAL_BUILDER_CRITIC_LLM_TIMEOUT_SECONDS:-360}
+      MATERIAL_BUILDER_CRITIC_LLM_NO_PROGRESS_TIMEOUT_SECONDS: ${MATERIAL_BUILDER_CRITIC_LLM_NO_PROGRESS_TIMEOUT_SECONDS:-120}
+      MATERIAL_BUILDER_CRITIC_LLM_WALL_BUDGET_SECONDS: ${MATERIAL_BUILDER_CRITIC_LLM_WALL_BUDGET_SECONDS:-870}
+      API_KEY_FILE: /run/secrets/internal_api_key
+    secrets:
+      - internal_api_key
+    volumes:
+      - *tls-volume
+    networks:
+      - ai-local
+    deploy:
+      resources:
+        limits:
+          memory: ${MATERIAL_BUILDER_MEM_LIMIT:-512m}
+          cpus: "${MATERIAL_BUILDER_CPUS_LIMIT:-1.0}"
+          pids: ${MATERIAL_BUILDER_PIDS_LIMIT:-512}
+        reservations:
+          memory: ${MATERIAL_BUILDER_MEM_RESERVATION:-128m}
+    healthcheck:
+      test: ["CMD", "curl", "-skf", "https://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+  workspace-execution:
+    !!merge <<: *secure-service
+    build:
+      context: ../../..
+      dockerfile: infra/docker/images/symbiont/services/workspace-execution.Dockerfile
+      args:
+        AI_LOCAL_BASE_TAG: ${AI_LOCAL_BASE_TAG:-dev}
+    image: ai-local-workspace-execution:${AI_LOCAL_IMAGE_TAG:-dev}
+    container_name: orc-workspace-execution
+    profiles: ["features", "material"]
+    restart: unless-stopped
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: workspace-execution
+      ai.local.service_class: internal
+      ai.local.exposure_class: internal
+      ai.local.component: feature
+      ai.local.profile: features
+      ai.local.owner: features
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8000"
+    environment:
+      !!merge <<: *common-env
+      SERVICE_NAME: workspace-execution
+      WORKSPACE_EXECUTION_PORT: ${WORKSPACE_EXECUTION_SERVER_PORT:-8000}
+      WORKSPACE_EXECUTION_SERVER_HOST: ${WORKSPACE_EXECUTION_SERVER_HOST:-0.0.0.0}
+      WORKSPACE_EXECUTION_SERVER_PORT: ${WORKSPACE_EXECUTION_SERVER_PORT:-8000}
+      WORKSPACE_EXECUTION_SERVER_WORKERS: ${WORKSPACE_EXECUTION_SERVER_WORKERS:-1}
+      WORKSPACE_EXECUTION_SCRATCH_ROOT: ${WORKSPACE_EXECUTION_SCRATCH_ROOT:-/temp/workspace_execution}
+      WORKSPACE_EXECUTION_SOURCE_ROOTS: '${WORKSPACE_EXECUTION_SOURCE_ROOTS:-{"ai-local":"/projects/ai-local"}}'
+      WORKSPACE_EXECUTION_HOST_READ_HOST_ROOT: ${AI_LOCAL_HOST_ALLOWED_ROOT:-${HOME}}
+      WORKSPACE_EXECUTION_HOST_READ_CONTAINER_ROOT: /host_home
+      WORKSPACE_EXECUTION_SESSION_TTL_SECONDS: ${WORKSPACE_EXECUTION_SESSION_TTL_SECONDS:-3600}
+      WORKSPACE_EXECUTION_COMMAND_TIMEOUT_SECONDS: ${WORKSPACE_EXECUTION_COMMAND_TIMEOUT_SECONDS:-120}
+      WORKSPACE_EXECUTION_MAX_OUTPUT_BYTES: ${WORKSPACE_EXECUTION_MAX_OUTPUT_BYTES:-20000}
+      WORKSPACE_EXECUTION_RUNNER_BACKEND: ${WORKSPACE_EXECUTION_RUNNER_BACKEND:-docker_ephemeral}
+      WORKSPACE_EXECUTION_RUNNER_IMAGE: ${WORKSPACE_EXECUTION_RUNNER_IMAGE:-ai-local-command-sandbox:latest}
+      WORKSPACE_EXECUTION_RUNNER_NETWORK_DEFAULT: ${WORKSPACE_EXECUTION_RUNNER_NETWORK_DEFAULT:-disabled}
+      WORKSPACE_EXECUTION_RUNNER_PROFILES: ${WORKSPACE_EXECUTION_RUNNER_PROFILES:-standard,test,destructive}
+      WORKSPACE_EXECUTION_RUNNER_CPU_LIMIT: ${WORKSPACE_EXECUTION_RUNNER_CPU_LIMIT:-1.0}
+      WORKSPACE_EXECUTION_RUNNER_MEMORY_LIMIT: ${WORKSPACE_EXECUTION_RUNNER_MEMORY_LIMIT:-512m}
+      WORKSPACE_EXECUTION_RUNNER_PIDS_LIMIT: ${WORKSPACE_EXECUTION_RUNNER_PIDS_LIMIT:-256}
+      WORKSPACE_EXECUTION_VM_BACKEND: ${WORKSPACE_EXECUTION_VM_BACKEND:-unavailable}
+      WORKSPACE_EXECUTION_VM_CONTROL_URL: ${WORKSPACE_EXECUTION_VM_CONTROL_URL:-}
+      WORKSPACE_EXECUTION_VM_CONTROL_TOKEN_FILE: ${WORKSPACE_EXECUTION_VM_CONTROL_TOKEN_FILE:-}
+      WORKSPACE_EXECUTION_VM_IMAGE_REF: ${WORKSPACE_EXECUTION_VM_IMAGE_REF:-ai-local-command-sandbox:latest}
+      WORKSPACE_EXECUTION_VM_PROFILE: ${WORKSPACE_EXECUTION_VM_PROFILE:-material-default}
+      WORKSPACE_EXECUTION_VM_QEMU_BINARY: ${WORKSPACE_EXECUTION_VM_QEMU_BINARY:-qemu-system-x86_64}
+      WORKSPACE_EXECUTION_VM_KERNEL_PATH: ${WORKSPACE_EXECUTION_VM_KERNEL_PATH:-}
+      WORKSPACE_EXECUTION_VM_KVM_DEVICE_CONTAINER: ${WORKSPACE_EXECUTION_VM_KVM_DEVICE_CONTAINER:-/dev/kvm}
+      WORKSPACE_EXECUTION_VM_REQUIRE_KVM: ${WORKSPACE_EXECUTION_VM_REQUIRE_KVM:-true}
+      WORKSPACE_EXECUTION_VM_CACHE_ROOT: ${WORKSPACE_EXECUTION_VM_CACHE_ROOT:-/temp/workspace_execution_microvm}
+      WORKSPACE_EXECUTION_VM_BOOT_TIMEOUT_SECONDS: ${WORKSPACE_EXECUTION_VM_BOOT_TIMEOUT_SECONDS:-45}
+      WORKSPACE_EXECUTION_VM_PREWARM_ROOTFS: ${WORKSPACE_EXECUTION_VM_PREWARM_ROOTFS:-true}
+      WORKSPACE_EXECUTION_VM_TTL_SECONDS: ${WORKSPACE_EXECUTION_VM_TTL_SECONDS:-3600}
+      WORKSPACE_EXECUTION_VM_CPU_LIMIT: ${WORKSPACE_EXECUTION_VM_CPU_LIMIT:-2.0}
+      WORKSPACE_EXECUTION_VM_MEMORY_LIMIT: ${WORKSPACE_EXECUTION_VM_MEMORY_LIMIT:-4g}
+      WORKSPACE_EXECUTION_VM_DISK_LIMIT: ${WORKSPACE_EXECUTION_VM_DISK_LIMIT:-20g}
+      WORKSPACE_EXECUTION_COMPOSE_RUNTIME_URL: ${WORKSPACE_EXECUTION_COMPOSE_RUNTIME_URL:-https://workspace-execution:8000}
+      WORKSPACE_EXECUTION_COMPOSE_RUNTIME_TOKEN_FILE: ${WORKSPACE_EXECUTION_COMPOSE_RUNTIME_TOKEN_FILE:-/run/secrets/internal_api_key}
+      WORKSPACE_EXECUTION_COMPOSE_RUNTIME_TIMEOUT_SECONDS: ${WORKSPACE_EXECUTION_COMPOSE_RUNTIME_TIMEOUT_SECONDS:-300}
+      WORKSPACE_EXECUTION_COMPOSE_RUNTIME_BACKEND: ${WORKSPACE_EXECUTION_COMPOSE_RUNTIME_BACKEND:-dedicated-dind}
+      WORKSPACE_EXECUTION_COMPOSE_RUNTIME_DIND_IMAGE: ${WORKSPACE_EXECUTION_COMPOSE_RUNTIME_DIND_IMAGE:-docker:27-dind}
+      WORKSPACE_EXECUTION_COMPOSE_RUNTIME_RUNNER_IMAGE: ${WORKSPACE_EXECUTION_COMPOSE_RUNTIME_RUNNER_IMAGE:-ai-local-command-sandbox:latest}
+      STORAGE_GUARDIAN_URL: ${ORC_SERVICES_STORAGE_GUARDIAN_URL:-https://storage-guardian:8730}
+      STORAGE_GUARDIAN_INTERNAL_TOKEN_FILE: /run/secrets/internal_api_key
+      WORKSPACE_EXECUTION_STORAGE_GUARDIAN_AGENT: ${WORKSPACE_EXECUTION_STORAGE_GUARDIAN_AGENT:-symbiont}
+      WORKSPACE_EXECUTION_STORAGE_GUARDIAN_STORE: ${WORKSPACE_EXECUTION_STORAGE_GUARDIAN_STORE:-agent_outputs}
+      WORKSPACE_EXECUTION_STORAGE_GUARDIAN_ZONE: ${WORKSPACE_EXECUTION_STORAGE_GUARDIAN_ZONE:-ingest}
+      DOCKER_HOST: tcp://docker-proxy:2375
+      DOCKER_TLS_VERIFY: "1"
+      DOCKER_CERT_PATH: /run/ai-local-tls/services/workspace-execution
+      API_KEY_FILE: /run/secrets/internal_api_key
+    secrets:
+      - internal_api_key
+    volumes:
+      - ${AI_LOCAL_HOST_PROJECTS_DIR:-${PROJECTS_DIR:-${HOME}/_projects}}:/projects:ro,z
+      - ${AI_LOCAL_HOST_ALLOWED_ROOT:-${HOME}}:/host_home:ro,z
+      - ${WORKSPACE_EXECUTION_VM_BOOT_DIR:-/tmp}:/host-boot:ro
+      - *tls-volume
+    devices:
+      - ${WORKSPACE_EXECUTION_VM_KVM_DEVICE:-/dev/null}:${WORKSPACE_EXECUTION_VM_KVM_DEVICE_CONTAINER:-/dev/kvm}
+    tmpfs:
+      - /temp:rw,noexec,nosuid,nodev,size=${WORKSPACE_EXECUTION_TMPFS_SIZE:-2g},uid=1000,gid=1000,mode=1777
+    networks:
+      - ai-local
+    deploy:
+      resources:
+        limits:
+          memory: ${WORKSPACE_EXECUTION_MEM_LIMIT:-6g}
+          cpus: "${WORKSPACE_EXECUTION_CPUS_LIMIT:-2.0}"
+          pids: ${WORKSPACE_EXECUTION_PIDS_LIMIT:-2048}
+        reservations:
+          memory: ${WORKSPACE_EXECUTION_MEM_RESERVATION:-512m}
+    healthcheck:
+      test: ["CMD", "curl", "-skf", "https://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+  material-execution-kernel:
+    !!merge <<: *secure-service
+    build:
+      context: ../../..
+      dockerfile: infra/docker/images/symbiont/services/material-execution-kernel.Dockerfile
+      args:
+        AI_LOCAL_BASE_TAG: ${AI_LOCAL_BASE_TAG:-dev}
+    image: ai-local-material-execution-kernel:${AI_LOCAL_IMAGE_TAG:-dev}
+    container_name: orc-material-execution-kernel
+    profiles: ["features", "material"]
+    restart: unless-stopped
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: material-execution-kernel
+      ai.local.service_class: internal
+      ai.local.exposure_class: internal
+      ai.local.component: feature
+      ai.local.profile: features
+      ai.local.owner: features
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      material-builder:
+        condition: service_healthy
+      workspace-execution:
+        condition: service_healthy
+    expose:
+      - "8000"
+    environment:
+      !!merge <<: *common-env
+      SERVICE_NAME: material-execution-kernel
+      MATERIAL_EXECUTION_KERNEL_SERVER_HOST: ${MATERIAL_EXECUTION_KERNEL_SERVER_HOST:-0.0.0.0}
+      MATERIAL_EXECUTION_KERNEL_SERVER_PORT: ${MATERIAL_EXECUTION_KERNEL_SERVER_PORT:-8000}
+      MATERIAL_EXECUTION_KERNEL_SESSION_BUDGET_SECONDS: ${MATERIAL_EXECUTION_KERNEL_SESSION_BUDGET_SECONDS:-870}
+      MATERIAL_EXECUTION_KERNEL_NO_PROGRESS_WATCHDOG_SECONDS: ${MATERIAL_EXECUTION_KERNEL_NO_PROGRESS_WATCHDOG_SECONDS:-120}
+      MATERIAL_EXECUTION_KERNEL_MODEL_LANES: ${MATERIAL_EXECUTION_KERNEL_MODEL_LANES:-material_plan,material_file,material_patch,material_repair,material_critic}
+      MATERIAL_EXECUTION_KERNEL_PREWARM_MATERIAL_LANES: ${MATERIAL_EXECUTION_KERNEL_PREWARM_MATERIAL_LANES:-true}
+      MATERIAL_EXECUTION_KERNEL_BUILDER_TIMEOUT_SECONDS: ${MATERIAL_EXECUTION_KERNEL_BUILDER_TIMEOUT_SECONDS:-870}
+      MATERIAL_EXECUTION_KERNEL_MATERIAL_BUILDER_URL: ${ORC_SERVICES_MATERIAL_BUILDER_URL:-https://material-builder:8000}
+      MATERIAL_EXECUTION_KERNEL_WORKSPACE_EXECUTION_URL: ${ORC_SERVICES_WORKSPACE_EXECUTION_URL:-https://workspace-execution:8000}
+      MATERIAL_EXECUTION_KERNEL_INTERNAL_API_KEY_FILE: /run/secrets/internal_api_key
+      API_KEY_FILE: /run/secrets/internal_api_key
+    secrets:
+      - internal_api_key
+    volumes:
+      - *tls-volume
+    networks:
+      - ai-local
+    deploy:
+      resources:
+        limits:
+          memory: ${MATERIAL_EXECUTION_KERNEL_MEM_LIMIT:-512m}
+          cpus: "${MATERIAL_EXECUTION_KERNEL_CPUS_LIMIT:-1.0}"
+          pids: ${MATERIAL_EXECUTION_KERNEL_PIDS_LIMIT:-512}
+        reservations:
+          memory: ${MATERIAL_EXECUTION_KERNEL_MEM_RESERVATION:-128m}
+    healthcheck:
+      test: ["CMD", "curl", "-skf", "https://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+  personal-context:
+    !!merge <<: *secure-service
+    build:
+      context: ../../..
+      dockerfile: infra/docker/images/symbiont/services/personal-context.Dockerfile
+      args:
+        AI_LOCAL_BASE_TAG: ${AI_LOCAL_BASE_TAG:-dev}
+    image: ai-local-personal-context:${AI_LOCAL_IMAGE_TAG:-dev}
+    container_name: orc-personal-context
+    profiles: ["features"]
+    restart: unless-stopped
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: personal-context
+      ai.local.service_class: internal
+      ai.local.exposure_class: internal
+      ai.local.component: feature
+      ai.local.profile: features
+      ai.local.owner: features
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8000"
+    environment:
+      !!merge <<: *common-env
+      SERVICE_NAME: personal-context
+      PERSONAL_CONTEXT_PORT: ${PERSONAL_CONTEXT_SERVER_PORT:-8000}
+      PERSONAL_CONTEXT_SERVER_HOST: ${PERSONAL_CONTEXT_SERVER_HOST:-0.0.0.0}
+      PERSONAL_CONTEXT_SERVER_PORT: ${PERSONAL_CONTEXT_SERVER_PORT:-8000}
+      PERSONAL_CONTEXT_SERVER_WORKERS: ${PERSONAL_CONTEXT_SERVER_WORKERS:-1}
+      PERSONAL_CONTEXT_CONFIG: /app/config.toml
+      PERSONAL_CONTEXT_DATA_DIR: /data
+      API_KEY_FILE: /run/secrets/internal_api_key
+    secrets:
+      - internal_api_key
+    volumes:
+      - ${PERSONAL_CONTEXT_DATA_DIR:-../../../.local/data/personal_context}:/data:ro,z
+      - ${EVOLUTION_CALENDAR_DIR:-${HOME}/.local/share/evolution/calendar}:/calendar:ro,z
+      - *tls-volume
+    networks:
+      - ai-local
+    deploy:
+      resources:
+        limits:
+          memory: ${PERSONAL_CONTEXT_MEM_LIMIT:-512m}
+          cpus: "${PERSONAL_CONTEXT_CPUS_LIMIT:-1.0}"
+          pids: ${PERSONAL_CONTEXT_PIDS_LIMIT:-512}
+        reservations:
+          memory: ${PERSONAL_CONTEXT_MEM_RESERVATION:-128m}
+    healthcheck:
+      test: ["CMD", "curl", "-skf", "https://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+  extrator:
+    !!merge <<: *secure-service
+    build:
+      context: ../../..
+      dockerfile: infra/docker/images/symbiont/services/extrator.Dockerfile
+      args:
+        AI_LOCAL_BASE_TAG: ${AI_LOCAL_BASE_TAG:-dev}
+    image: ai-local-extrator:${AI_LOCAL_IMAGE_TAG:-dev}
+    container_name: orc-extrator
+    profiles: ["features"]
+    restart: unless-stopped
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: extrator
+      ai.local.service_class: internal
+      ai.local.exposure_class: internal
+      ai.local.component: feature
+      ai.local.profile: features
+      ai.local.owner: features
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8000"
+    environment:
+      !!merge <<: *common-env
+      SERVICE_NAME: extrator
+      EXTRATOR_SERVER_HOST: ${EXTRATOR_SERVER_HOST:-0.0.0.0}
+      EXTRATOR_SERVER_PORT: ${EXTRATOR_SERVER_PORT:-8000}
+      EXTRATOR_SERVER_WORKERS: ${EXTRATOR_SERVER_WORKERS:-1}
+      EXTRATOR_CONFIG: /app/config.toml
+      TMPDIR: /temp
+      AI_LOCAL_AGENT_TEMP_ROOT: /temp
+      AI_LOCAL_AGENT_STATE_ROOTS: /data/manifest
+      EXTRATOR_PATHS_DATA_DIR: /temp/extrator
+      EXTRATOR_PATHS_UPLOADS_DIR: /temp/extrator/uploads
+      EXTRATOR_PATHS_BRONZE_DIR: /temp/extrator/bronze
+      EXTRATOR_PATHS_SILVER_DIR: /temp/extrator/silver
+      EXTRATOR_PATHS_GOLD_DIR: /temp/extrator/gold
+      EXTRATOR_PATHS_CONVERSIONS_DIR: /temp/extrator/conversions
+      EXTRATOR_PATHS_CACHE_DIR: /temp/extrator/cache
+      EXTRATOR_PATHS_LOGS_DIR: /temp/extrator/logs
+      EXTRATOR_PATHS_TMP_DIR: /temp/extrator/tmp
+      EXTRATOR_MANIFEST_DB_PATH: /data/manifest/extrator.duckdb
+      EXTRATOR_PROJECTION_INPUT_ROOT: /data/input
+      EXTRATOR_SECURITY_ALLOWED_ROOTS: '["/temp/extrator/uploads", "/data/input", "/projects", "/host_home"]'
+      HOST_HOME_PREFIX: ${HOST_HOME_PREFIX:-${AI_LOCAL_HOST_ALLOWED_ROOT:-${HOME}}}
+      STORAGE_GUARDIAN_URL: ${ORC_SERVICES_STORAGE_GUARDIAN_URL:-https://storage-guardian:8730}
+      STORAGE_GUARDIAN_INTERNAL_TOKEN_FILE: /run/secrets/internal_api_key
+      STORAGE_GUARDIAN_REQUIRED: "true"
+      API_KEY_FILE: /run/secrets/internal_api_key
+    secrets:
+      - internal_api_key
+    volumes:
+      - ${EXTRATOR_DATA_DIR:-../../../.local/data/extrator}:/data/input:ro,z
+      - ${EXTRATOR_DATA_DIR:-../../../.local/data/extrator}/manifest:/data/manifest:rw,z
+      - ${PROJECTS_DIR:-${HOME}/_projects}:/projects:ro,z
+      - ${AI_LOCAL_HOST_ALLOWED_ROOT:-${HOME}}:/host_home:ro,z
+      - *tls-volume
+    tmpfs:
+      - /temp:rw,noexec,nosuid,nodev,size=512m,uid=1000,gid=1000,mode=1777
+      - /tmp:rw,noexec,nosuid,nodev,size=512m,uid=1000,gid=1000,mode=1777
+    networks:
+      - ai-local
+    deploy:
+      resources:
+        limits:
+          memory: ${EXTRATOR_MEM_LIMIT:-2g}
+          cpus: "${EXTRATOR_CPUS_LIMIT:-2.0}"
+          pids: ${EXTRATOR_PIDS_LIMIT:-512}
+        reservations:
+          memory: ${EXTRATOR_MEM_RESERVATION:-256m}
+    healthcheck:
+      test: ["CMD", "curl", "-skf", "https://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+  translation:
+    !!merge <<: *secure-service
+    build:
+      context: ../../..
+      dockerfile: features/translation/Dockerfile
+    image: ai-local-translation:${AI_LOCAL_IMAGE_TAG:-dev}
+    container_name: orc-translation
+    profiles: ["i18n"]
+    user: "${AI_LOCAL_UID:-1000}:${AI_LOCAL_GID:-1000}"
+    restart: unless-stopped
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: translation
+      ai.local.service_class: admin-local
+      ai.local.exposure_class: admin-local
+      ai.local.component: feature
+      ai.local.profile: i18n
+      ai.local.owner: features
+    expose:
+      - "8590"
+    ports:
+      - "${AI_LOCAL_BIND:-127.0.0.1}:8590:8590"
+    environment:
+      !!merge <<: *common-env
+      SERVICE_NAME: translation
+      I18N_CONFIG: /app/config.toml
+      API_KEY_FILE: /run/secrets/internal_api_key
+      OLLAMA_API_KEY_FILE: /run/secrets/ollama_api_key
+    secrets:
+      - internal_api_key
+      - ollama_api_key
+    volumes:
+      - ${TRANSLATION_MODELS_DIR:-../../../.local/data/models/translation}:/app/models:ro,z
+      - *tls-volume
+    tmpfs:
+      - /app/cache:rw,noexec,nosuid,nodev,size=128m,uid=1000,gid=1000,mode=1777
+    networks:
+      - ai-local
+    deploy:
+      resources:
+        limits:
+          memory: ${TRANSLATION_MEM_LIMIT:-1536m}
+          cpus: "${TRANSLATION_CPUS_LIMIT:-2.0}"
+          pids: ${TRANSLATION_PIDS_LIMIT:-256}
+        reservations:
+          memory: ${TRANSLATION_MEM_RESERVATION:-512m}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request, ssl; urllib.request.urlopen('https://localhost:8590/health', context=ssl._create_unverified_context())",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+  # ===========================================================================
+  # HEAVY PROFILE — GPU-accelerated services
+  # ===========================================================================
+  audio-transcribe:
+    !!merge <<: *gpu-service
+    build:
+      context: ../../..
+      dockerfile: infra/docker/images/symbiont/services/audio-transcribe.Dockerfile
+      args:
+        AI_LOCAL_IMAGE_TAG: ${AI_LOCAL_IMAGE_TAG:-dev}
+    image: ai-local-audio-transcribe:${AI_LOCAL_IMAGE_TAG:-dev}
+    container_name: orc-audio-transcribe
+    profiles: ["heavy"]
+    restart: "no"
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: audio-transcribe
+      ai.local.service_class: internal
+      ai.local.exposure_class: internal
+      ai.local.component: agent
+      ai.local.profile: heavy
+      ai.local.owner: audio
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8080"
+    environment:
+      AI_LOCAL_TLS_DIR: /run/ai-local-tls
+      SSL_CERT_FILE: /run/ai-local-tls/ca-bundle.crt
+      REQUESTS_CA_BUNDLE: /run/ai-local-tls/ca-bundle.crt
+      CURL_CA_BUNDLE: /run/ai-local-tls/ca-bundle.crt
+      SERVICE_NAME: audio-transcribe
+      AUDIO_TRANSCRIBE_CONFIG: /app/config.toml
+      AUDIO_TRANSCRIBE_API_KEY_FILE: /run/secrets/audio_transcribe_api_key
+      AUDIO_TRANSCRIBE_SERVER_HOST: ${AUDIO_TRANSCRIBE_SERVER_HOST:-0.0.0.0}
+      AUDIO_TRANSCRIBE_SERVER_PORT: ${AUDIO_TRANSCRIBE_SERVER_PORT:-8080}
+      AUDIO_TRANSCRIBE_SERVER_WORKERS: ${AUDIO_TRANSCRIBE_SERVER_WORKERS:-1}
+      TMPDIR: /temp
+      AI_LOCAL_AGENT_TEMP_ROOT: /temp
+      AUDIO_TRANSCRIBE_PATHS_INPUT_DIR: /temp/audio/input
+      AUDIO_TRANSCRIBE_PATHS_OUTPUT_DIR: /temp/audio/output
+      AUDIO_TRANSCRIBE_PATHS_MODELS_DIR: /models/huggingface/audio-transcribe
+      AUDIO_TRANSCRIBE_PATHS_TMP_DIR: /temp/audio/tmp
+      AUDIO_TRANSCRIBE_TRANSCRIPTION_DOWNLOAD_ROOT: /models/huggingface/audio-transcribe
+      HF_HOME: /models/huggingface
+      AUDIO_TRANSCRIBE_ALLOWED_DIRS: /data/input,/host_home
+      AUDIO_TRANSCRIBE_TRANSCRIPTION_COMPUTE_TYPE: int8_float16
+      AUDIO_TRANSCRIBE_REDIS_URL: redis://redis:6379/1
+      STORAGE_GUARDIAN_URL: ${ORC_SERVICES_STORAGE_GUARDIAN_URL:-https://storage-guardian:8730}
+      STORAGE_GUARDIAN_INTERNAL_TOKEN_FILE: /run/secrets/internal_api_key
+      STORAGE_GUARDIAN_REQUIRED: "true"
+      AI_RESOURCE_GOVERNOR_URL: ${AI_RESOURCE_GOVERNOR_URL:-https://symbiont:8585}
+      AI_RESOURCE_GOVERNOR_TOKEN_FILE: /run/secrets/internal_api_key
+    secrets:
+      - audio_transcribe_api_key
+      - internal_api_key
+    volumes:
+      - type: bind
+        source: ${AUDIO_TRANSCRIBE_DATA_DIR:-../../../.local/data/audio}
+        target: /data
+        read_only: true
+        bind:
+          create_host_path: false
+      - ${AI_LOCAL_HOST_ALLOWED_ROOT:-${HOME}}:/host_home:ro,z
+      - type: bind
+        source: ${HF_CACHE_DIR:-../../../.local/data/cache/hf}
+        target: /models/huggingface
+        bind:
+          create_host_path: false
+      - *tls-volume
+    tmpfs:
+      - /temp:rw,noexec,nosuid,nodev,size=1g,uid=1000,gid=1000,mode=1777
+      - /tmp:rw,noexec,nosuid,nodev,size=1g,uid=1000,gid=1000,mode=1777
+    networks:
+      - ai-local
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: ${AUDIO_TRANSCRIBE_MEM_LIMIT:-8g}
+          cpus: "${AUDIO_TRANSCRIBE_CPUS_LIMIT:-4.0}"
+          pids: ${AUDIO_TRANSCRIBE_PIDS_LIMIT:-1024}
+        reservations:
+          memory: ${AUDIO_TRANSCRIBE_MEM_RESERVATION:-1g}
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request, ssl; urllib.request.urlopen('https://localhost:8080/health', context=ssl._create_unverified_context())",
+        ]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 5
+  redis:
+    !!merge <<: *secure-service
+    image: redis:${REDIS_IMAGE_TAG:-7-alpine}
+    container_name: orc-redis
+    profiles: ["heavy"]
+    restart: "no"
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    logging: *logging
+    cap_add:
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: redis
+      ai.local.service_class: internal
+      ai.local.exposure_class: internal
+      ai.local.component: infra
+      ai.local.profile: heavy
+      ai.local.owner: audio
+    command: redis-server --maxmemory 512mb --maxmemory-policy volatile-lru --appendonly yes
+    volumes:
+      - ${REDIS_DATA_DIR:-../../../.local/data/docker-volumes/redis}:/data:z
+    networks:
+      - ai-local
+    deploy:
+      resources:
+        limits:
+          memory: ${REDIS_MEM_LIMIT:-768m}
+          cpus: "${REDIS_CPUS_LIMIT:-0.5}"
+          pids: ${REDIS_PIDS_LIMIT:-512}
+        reservations:
+          memory: ${REDIS_MEM_RESERVATION:-256m}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+  audio-streaming:
+    !!merge <<: *gpu-service
+    build:
+      context: ../../..
+      dockerfile: infra/docker/images/symbiont/services/audio-streaming.Dockerfile
+      args:
+        AI_LOCAL_IMAGE_TAG: ${AI_LOCAL_IMAGE_TAG:-dev}
+    image: ai-local-audio-streaming:${AI_LOCAL_IMAGE_TAG:-dev}
+    container_name: orc-audio-streaming
+    profiles: ["heavy"]
+    restart: "no"
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: audio-streaming
+      ai.local.service_class: internal
+      ai.local.exposure_class: internal
+      ai.local.component: agent
+      ai.local.profile: heavy
+      ai.local.owner: audio
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8087"
+    environment:
+      AI_LOCAL_TLS_DIR: /run/ai-local-tls
+      SSL_CERT_FILE: /run/ai-local-tls/ca-bundle.crt
+      REQUESTS_CA_BUNDLE: /run/ai-local-tls/ca-bundle.crt
+      CURL_CA_BUNDLE: /run/ai-local-tls/ca-bundle.crt
+      SERVICE_NAME: audio-streaming
+      STREAM_PORT: "8087"
+      AUDIO_TRANSCRIBE_API_KEY_FILE: /run/secrets/audio_transcribe_api_key
+      REDIS_URL: redis://redis:6379/0
+      WHISPER_MODEL: distil-large-v3
+      WHISPER_COMPUTE_TYPE: int8_float16
+      GPU_WORKERS: "1"
+      CHROMAPRINT_ENABLED: "1"
+      VAD_ENERGY_THRESHOLD_DB: "-35.0"
+      TMPDIR: /temp
+      AI_LOCAL_AGENT_TEMP_ROOT: /temp
+      AUDIO_OUTPUT_DIR: /temp/audio-streaming/output
+      LOG_LEVEL: INFO
+      OLLAMA_BASE_URL: ${LLAMA_CPP_AUX_URL:-https://ollama-proxy:11434}
+      LLM_POST_MODEL: ${AUDIO_LLM_MODEL:-qwen3:4b}
+      HF_HOME: /models/huggingface
+      STORAGE_GUARDIAN_URL: ${ORC_SERVICES_STORAGE_GUARDIAN_URL:-https://storage-guardian:8730}
+      STORAGE_GUARDIAN_INTERNAL_TOKEN_FILE: /run/secrets/internal_api_key
+      STORAGE_GUARDIAN_REQUIRED: "true"
+    secrets:
+      - audio_transcribe_api_key
+      - internal_api_key
+    volumes:
+      - type: bind
+        source: ${AUDIO_TRANSCRIBE_DATA_DIR:-../../../.local/data/audio}
+        target: /data
+        read_only: true
+        bind:
+          create_host_path: false
+      - ${AI_LOCAL_HOST_ALLOWED_ROOT:-${HOME}}:/host_home:ro,z
+      - type: bind
+        source: ${HF_CACHE_DIR:-../../../.local/data/cache/hf}
+        target: /models/huggingface
+        bind:
+          create_host_path: false
+      - *tls-volume
+    tmpfs:
+      - /temp:rw,noexec,nosuid,nodev,size=1g,uid=1000,gid=1000,mode=1777
+      - /tmp:rw,noexec,nosuid,nodev,size=1g,uid=1000,gid=1000,mode=1777
+    networks:
+      - ai-local
+    depends_on:
+      redis:
+        condition: service_healthy
+      audio-transcribe:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: ${AUDIO_STREAMING_MEM_LIMIT:-4g}
+          cpus: "${AUDIO_STREAMING_CPUS_LIMIT:-4.0}"
+          pids: ${AUDIO_STREAMING_PIDS_LIMIT:-1024}
+        reservations:
+          memory: ${AUDIO_STREAMING_MEM_RESERVATION:-1g}
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-skf", "https://localhost:8087/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 45s
+      retries: 3

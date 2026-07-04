@@ -1,0 +1,480 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT count() AS spans\nFROM ai_symbiont.otel_traces\nWHERE Timestamp >= $__fromTime AND Timestamp <= $__toTime\n  AND SpanAttributes['ai.local.owner'] = 'orchestrator'"
+        }
+      ],
+      "title": "Orchestrator OTel Spans",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT countIf(StatusCode NOT IN ('STATUS_CODE_UNSET', 'STATUS_CODE_OK')) AS errored_spans\nFROM ai_symbiont.otel_traces\nWHERE Timestamp >= $__fromTime AND Timestamp <= $__toTime\n  AND SpanAttributes['ai.local.owner'] = 'orchestrator'"
+        }
+      ],
+      "title": "Errored Spans",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT uniqExact(SpanAttributes['ai.local.policy_action']) AS policy_actions\nFROM ai_symbiont.otel_traces\nWHERE Timestamp >= $__fromTime AND Timestamp <= $__toTime\n  AND SpanAttributes['ai.local.owner'] = 'orchestrator'\n  AND SpanAttributes['ai.local.policy_action'] != ''"
+        }
+      ],
+      "title": "Policy Actions",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT uniqExact(SpanAttributes['ai.local.capability_id']) AS capabilities\nFROM ai_symbiont.otel_traces\nWHERE Timestamp >= $__fromTime AND Timestamp <= $__toTime\n  AND SpanAttributes['ai.local.owner'] = 'orchestrator'\n  AND SpanAttributes['ai.local.capability_id'] != ''"
+        }
+      ],
+      "title": "Capabilities",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 14,
+        "x": 0,
+        "y": 4
+      },
+      "id": 5,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT\n  toStartOfInterval(Timestamp, INTERVAL 5 minute) AS time,\n  nullIf(SpanAttributes['ai.local.trace_kind'], '') AS trace_kind,\n  count() AS spans\nFROM ai_symbiont.otel_traces\nWHERE Timestamp >= $__fromTime AND Timestamp <= $__toTime\n  AND SpanAttributes['ai.local.owner'] = 'orchestrator'\nGROUP BY time, trace_kind\nORDER BY time ASC"
+        }
+      ],
+      "title": "Spans by Trace Kind",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 10,
+        "x": 14,
+        "y": 4
+      },
+      "id": 6,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT\n  nullIf(SpanAttributes['ai.local.policy_action'], '') AS policy_action,\n  nullIf(SpanAttributes['ai.local.risk_level'], '') AS risk_level,\n  count() AS spans\nFROM ai_symbiont.otel_traces\nWHERE Timestamp >= $__fromTime AND Timestamp <= $__toTime\n  AND SpanAttributes['ai.local.owner'] = 'orchestrator'\n  AND SpanAttributes['ai.local.policy_action'] != ''\nGROUP BY policy_action, risk_level\nORDER BY spans DESC\nLIMIT 50"
+        }
+      ],
+      "title": "Policy and Risk Decisions",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 0,
+        "y": 13
+      },
+      "id": 7,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "format": 1,
+          "queryType": "sql",
+          "rawSql": "SELECT\n  Timestamp AS time,\n  TraceId AS trace_id,\n  SpanName AS span,\n  StatusCode AS status_code,\n  StatusMessage AS status_message,\n  SpanAttributes['ai.local.request_id'] AS request_id,\n  SpanAttributes['ai.local.task_id'] AS task_id,\n  SpanAttributes['ai.local.capability_id'] AS capability_id\nFROM ai_symbiont.otel_traces\nWHERE Timestamp >= $__fromTime AND Timestamp <= $__toTime\n  AND SpanAttributes['ai.local.owner'] = 'orchestrator'\n  AND StatusCode NOT IN ('STATUS_CODE_UNSET', 'STATUS_CODE_OK')\nORDER BY Timestamp DESC\nLIMIT 100"
+        }
+      ],
+      "title": "Recent Dispatch Errors",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 13
+      },
+      "id": 8,
+      "options": {
+        "code": {
+          "language": "markdown",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "This dashboard reads the OpenTelemetry collector tables (`ai_symbiont.otel_traces`) using canonical `ai.local.*` attributes. Use it to compare dispatcher visibility with the retired dispatcher/ClickHouse dashboards before deleting dispatcher-specific sinks, schemas, or readers.",
+        "mode": "markdown"
+      },
+      "pluginVersion": "11.0.0",
+      "title": "Retired Surface Removal Readiness",
+      "type": "text"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [
+    "ai-symbiont",
+    "otel",
+    "dispatch",
+    "migration"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "AI Symbiont - OTel Dispatch Migration",
+  "uid": "otel-dispatch-migration",
+  "version": 1,
+  "weekStart": ""
+}

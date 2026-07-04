@@ -1,0 +1,236 @@
+# Optional Temporal development server and RAG worker.
+#
+# Usage:
+#   docker compose --profile core --profile temporal up -d temporal rag-temporal-worker
+#   RAG_WORKFLOWS_BACKEND=temporal docker compose --profile core --profile temporal up -d rag temporal rag-temporal-worker
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+x-secure-service: &secure-service
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  stop_grace_period: 30s
+x-common-labels: &common-labels
+  ai.local.managed: "true"
+x-rag-worker-env: &rag-worker-env
+  - RAG_OLLAMA_BASE_URL=${RAG_OLLAMA_BASE_URL:-https://ollama-proxy:11434}
+  - AI_LOCAL_TLS_DIR=/run/ai-local-tls
+  - AI_LOCAL_TLS_DNS_NAMES=rag-temporal-worker,localhost
+  - SSL_CERT_FILE=/run/ai-local-tls/ca-bundle.crt
+  - REQUESTS_CA_BUNDLE=/run/ai-local-tls/ca-bundle.crt
+  - CURL_CA_BUNDLE=/run/ai-local-tls/ca-bundle.crt
+  - OLLAMA_API_KEY_FILE=/run/secrets/ollama_api_key
+  - RAG_API_API_KEY_FILE=/run/secrets/rag_api_key
+  - AI_RAG_SETTINGS_DIR=/app/config/rag
+  - AI_MODELS_REGISTRY=/app/config/models/rag.config.json
+  - RAG_STORE_QDRANT_URL=${RAG_STORE_QDRANT_URL:-https://qdrant:6333}
+  - RAG_STORE_QDRANT_API_KEY_FILE=/run/secrets/qdrant_api_key
+  - RAG_OBSERVABILITY_CLICKHOUSE_URL=${RAG_OBSERVABILITY_CLICKHOUSE_URL:-https://clickhouse:8123}
+  - RAG_WORKFLOWS_BACKEND=temporal
+  - RAG_WORKFLOWS_TEMPORAL_ADDRESS=temporal:7233
+  - RAG_WORKFLOWS_TEMPORAL_NAMESPACE=${RAG_WORKFLOWS_TEMPORAL_NAMESPACE:-default}
+  - RAG_WORKFLOWS_TEMPORAL_TASK_QUEUE=${RAG_WORKFLOWS_TEMPORAL_TASK_QUEUE:-rag-reprocess}
+  - RAG_WORKFLOWS_TEMPORAL_WORKFLOW_TIMEOUT_SECONDS=${RAG_WORKFLOWS_TEMPORAL_WORKFLOW_TIMEOUT_SECONDS:-7200}
+  - RAG_GRAPHIFY_QUERY_BACKEND=${RAG_GRAPHIFY_QUERY_BACKEND:-json}
+  - RAG_GRAPHIFY_IMPORT_ON_BUILD=${RAG_GRAPHIFY_IMPORT_ON_BUILD:-true}
+  - RAG_GRAPHIFY_FALKOR_HOST=${RAG_GRAPHIFY_FALKOR_HOST:-rag-falkordb}
+  - RAG_GRAPHIFY_FALKOR_PORT=${RAG_GRAPHIFY_FALKOR_PORT:-6379}
+  - RAG_GRAPHIFY_FALKOR_GRAPH=${RAG_GRAPHIFY_FALKOR_GRAPH:-obsidian_rag}
+  - AI_RAG_HOST_HOME=${AI_RAG_HOST_HOME:-/app/sources/host_home}
+  - RAG_SYNC_LIFECYCLE_URL=${RAG_SYNC_LIFECYCLE_URL:-https://symbiont:8585}
+  - RAG_SYNC_LIFECYCLE_API_KEY_FILE=/run/secrets/orc_api_key
+  - RAG_SYNC_EXTRATOR_URL=${RAG_SYNC_EXTRATOR_URL:-https://extrator:8000}
+  - RAG_SYNC_EXTRATOR_API_KEY_FILE=/run/secrets/internal_api_key
+  - RAG_SYNC_AUDIO_TRANSCRIBE_URL=${RAG_SYNC_AUDIO_TRANSCRIBE_URL:-https://audio-transcribe:8080}
+  - RAG_SYNC_AUDIO_TRANSCRIBE_API_KEY_FILE=/run/secrets/audio_transcribe_api_key
+  - RAG_SYNC_AUDIO_TRANSCRIBE_OUTPUT_DIR=/app/sources/audio_transcribe/output
+  - AI_RESOURCE_GOVERNOR_URL=${AI_RESOURCE_GOVERNOR_URL:-https://symbiont:8585}
+  - AI_RESOURCE_GOVERNOR_TOKEN_FILE=/run/secrets/internal_api_key
+
+services:
+  temporal-volume-init:
+    image: temporalio/admin-tools:${TEMPORAL_ADMIN_TOOLS_IMAGE_TAG:-1.31.1}
+    container_name: orc-temporal-volume-init
+    init: true
+    user: "0:0"
+    security_opt:
+      - no-new-privileges:true
+    command: ["sh", "-c", "chown -R 1000:1000 /var/lib/temporal"]
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: temporal-volume-init
+      ai.local.service_class: internal
+      ai.local.exposure_class: internal
+      ai.local.component: workflows
+      ai.local.profile: temporal
+      ai.local.owner: config
+    volumes:
+      - temporal_dev_data:/var/lib/temporal
+    deploy:
+      resources:
+        limits:
+          memory: ${TEMPORAL_VOLUME_INIT_MEM_LIMIT:-128m}
+          cpus: "${TEMPORAL_VOLUME_INIT_CPUS_LIMIT:-0.25}"
+          pids: ${TEMPORAL_VOLUME_INIT_PIDS_LIMIT:-128}
+        reservations:
+          memory: ${TEMPORAL_VOLUME_INIT_MEM_RESERVATION:-32m}
+    restart: "no"
+    profiles:
+      - temporal
+
+  temporal:
+    !!merge <<: *secure-service
+    image: temporalio/admin-tools:${TEMPORAL_ADMIN_TOOLS_IMAGE_TAG:-1.31.1}
+    container_name: orc-temporal
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: temporal
+      ai.local.service_class: admin-local
+      ai.local.exposure_class: admin-local
+      ai.local.component: workflows
+      ai.local.profile: temporal
+      ai.local.owner: config
+    command:
+      - temporal
+      - server
+      - start-dev
+      - --ip
+      - 0.0.0.0
+      - --ui-ip
+      - 0.0.0.0
+      - --db-filename
+      - /var/lib/temporal/temporal.db
+    ports:
+      - "${AI_LOCAL_BIND:-127.0.0.1}:${TEMPORAL_PORT:-17233}:7233"
+      - "${AI_LOCAL_BIND:-127.0.0.1}:${TEMPORAL_UI_PORT:-18233}:8233"
+    volumes:
+      - temporal_dev_data:/var/lib/temporal
+    depends_on:
+      temporal-volume-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "127.0.0.1:7233"]
+      interval: 15s
+      timeout: 10s
+      start_period: 60s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - ai-local
+    deploy:
+      resources:
+        limits:
+          memory: ${TEMPORAL_MEM_LIMIT:-512m}
+          cpus: "${TEMPORAL_CPUS_LIMIT:-1.0}"
+          pids: ${TEMPORAL_PIDS_LIMIT:-512}
+        reservations:
+          memory: ${TEMPORAL_MEM_RESERVATION:-128m}
+    profiles:
+      - temporal
+
+  rag-temporal-worker:
+    !!merge <<: *secure-service
+    build:
+      context: ../../..
+      dockerfile: infra/docker/images/obsidian-rag/rag/rag.Dockerfile
+      ssh:
+        - default
+      secrets:
+        - github_token
+      args:
+        AI_LOCAL_GIT_URL_INSTEAD_OF: ${AI_LOCAL_GIT_URL_INSTEAD_OF:-}
+    container_name: orc-rag-temporal-worker
+    command: ["python", "-m", "obsidian_rag.workflows.worker"]
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: rag-temporal-worker
+      ai.local.service_class: internal
+      ai.local.exposure_class: internal
+      ai.local.component: workflows
+      ai.local.profile: temporal
+      ai.local.owner: rag
+    depends_on:
+      temporal:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "from pathlib import Path; import sys; sys.exit(0 if b'obsidian_rag.workflows.worker' in Path('/proc/1/cmdline').read_bytes() else 1)",
+        ]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    volumes:
+      - ${RAG_DATA_DIR:-../../../.local/data/rag}:/app/data:z
+      - ${GRAPHIFY_OUT_DIR:-../../../.local/data/graphify}:/app/data/graphify:z
+      - ${AI_RAG_SETTINGS_DIR_HOST:-../../../config/rag}:/app/config/rag:ro
+      - ${RAG_MODELS_CONFIG:-../../../config/models/rag.config.json}:/app/config/models/rag.config.json:ro
+      - ${AI_RAG_HOST_SOURCE_ROOT:-${HOME}}:${AI_RAG_HOST_HOME:-/app/sources/host_home}:ro
+      - ${AUDIO_TRANSCRIBE_DATA_DIR:-../../../.local/data/audio}/output:/app/sources/audio_transcribe/output:ro
+      - ${AI_LOCAL_TLS_DIR_HOST:-../../../.local/tls}:/run/ai-local-tls:z
+    environment: *rag-worker-env
+    secrets:
+      - source: temporal_rag_ollama_api_key
+        target: ollama_api_key
+      - source: temporal_rag_service_api_key
+        target: rag_api_key
+      - source: temporal_rag_qdrant_api_key
+        target: qdrant_api_key
+      - source: temporal_rag_internal_api_key
+        target: internal_api_key
+      - source: temporal_rag_symbiont_api_key
+        target: orc_api_key
+      - source: temporal_rag_audio_transcribe_api_key
+        target: audio_transcribe_api_key
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - ai-local
+    deploy:
+      resources:
+        limits:
+          memory: ${RAG_TEMPORAL_WORKER_MEM_LIMIT:-2g}
+          cpus: "${RAG_TEMPORAL_WORKER_CPUS_LIMIT:-2.0}"
+          pids: ${RAG_TEMPORAL_WORKER_PIDS_LIMIT:-512}
+        reservations:
+          memory: ${RAG_TEMPORAL_WORKER_MEM_RESERVATION:-512m}
+    profiles:
+      - temporal
+
+networks:
+  ai-local:
+    driver: bridge
+    name: ai-local-net
+
+volumes:
+  temporal_dev_data:
+
+secrets:
+  temporal_rag_ollama_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/ollama_api_key
+  temporal_rag_service_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/rag_api_key
+  temporal_rag_qdrant_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/qdrant_api_key
+  temporal_rag_internal_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/internal_api_key
+  temporal_rag_symbiont_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/orc_api_key
+  temporal_rag_audio_transcribe_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/audio_transcribe_api_key
+  github_token:
+    environment: GITHUB_TOKEN

@@ -1,0 +1,197 @@
+{
+  "version": "2.0",
+  "description": "",
+  "orchestration": {
+    "description": "Models and agent configurations for the AI symbiont pipeline",
+    "settings": {
+      "terminal_alias": "@",
+      "description": "Single entry point alias for the symbiont. Users invoke the full pipeline via this alias — model selection is handled internally by the symbiont based on intent and complexity analysis.",
+      "default_backend": {
+        "type": "ollama"
+      }
+    },
+    "backends": {
+      "ollama": {
+        "priority": 20,
+        "enabled": true,
+        "models": ["qwen3:0.6b", "qwen3:1.7b", "qwen3.5:4b-q4_K_M", "qwen3:8b", "qwen2.5-coder:7b", "gemma3:4b", "deepseek-r1:8b", "atla/selene-mini:latest"],
+        "capabilities": ["chat", "stream", "local", "private"],
+        "privacy_level": "local",
+        "api_key_env": "OLLAMA_API_KEY"
+      },
+      "llama_cpp_aux": {
+        "priority": 5,
+        "enabled": false,
+        "models": ["qwen3:4b"],
+        "capabilities": ["chat", "stream", "local", "gguf", "cpu", "low_memory"],
+        "privacy_level": "local"
+      },
+      "llama_cpp_fast": {
+        "priority": 5,
+        "enabled": false,
+        "models": ["qwen3:1.7b"],
+        "capabilities": ["chat", "stream", "local", "gguf", "cpu", "classify"],
+        "privacy_level": "local"
+      },
+      "vllm": {
+        "priority": 1,
+        "enabled": true,
+        "models": ["qwen3:8b", "qwen2.5-coder:7b"],
+        "capabilities": ["chat", "stream", "gpu", "batching", "throughput", "prefix_cache"],
+        "privacy_level": "local"
+      }
+    },
+    "admission": {
+      "description": "Admission fallback and task routing policy. Profiles are resolved through orchestration.routing.profiles so model names stay centralized.",
+      "downgrade": {
+        "profile": "fast",
+        "backend": "ollama"
+      },
+      "routing_policy": {
+        "default_profile": "default",
+        "default_backend": "vllm",
+        "rules": [
+          {"task_type": "classification", "profile": "classifier", "backend": "ollama"},
+          {"task_type": "rag_context", "profile": "auxiliary", "backend": "ollama"},
+          {"task_type": "main_response", "profile": "default", "backend": "vllm"},
+          {"task_type": "local_evidence", "profile": "code", "backend": "vllm"},
+          {"task_type": "synthesis", "profile": "default", "backend": "vllm"},
+          {"task_type": "agent", "profile": "default", "backend": "vllm"},
+          {"task_type": "fast_classification", "profile": "classifier", "backend": "ollama"}
+        ]
+      }
+    },
+    "routing": {
+      "description": "Internal intent x complexity routing profiles. The symbiont selects the best model automatically — not user-facing.",
+      "profiles": {
+        "fast": {
+          "model": "qwen3:1.7b",
+          "preferred_models": ["qwen3:1.7b", "qwen3.5:4b-q4_K_M", "gemma3:4b"],
+          "required_capabilities": ["chat"],
+          "fallback_model": "qwen3.5:4b-q4_K_M",
+          "description": "Ultra-fast responses for simple queries, clarifications, and quick tasks"
+        },
+        "default": {
+          "model": "qwen3:8b",
+          "preferred_models": ["qwen3:8b", "qwen3.5:4b-q4_K_M", "gemma3:4b"],
+          "required_capabilities": ["chat"],
+          "fallback_model": "qwen3.5:4b-q4_K_M",
+          "description": "General-purpose reasoning and multilingual conversation"
+        },
+        "code": {
+          "model": "qwen2.5-coder:7b",
+          "preferred_models": ["qwen2.5-coder:7b", "qwen3:8b"],
+          "required_capabilities": ["chat", "stream"],
+          "fallback_model": "qwen3:8b",
+          "description": "Code generation, review, refactoring, debugging"
+        },
+        "material_plan": {
+          "model": "qwen3:8b",
+          "preferred_models": ["qwen3:8b", "qwen2.5-coder:7b"],
+          "required_capabilities": ["chat", "stream"],
+          "fallback_model": "qwen3:8b",
+          "description": "Structured planning for generated workspace artifacts"
+        },
+        "material_code": {
+          "model": "qwen2.5-coder:7b",
+          "preferred_models": ["qwen2.5-coder:7b", "qwen3:8b"],
+          "required_capabilities": ["chat", "stream"],
+          "fallback_model": "qwen3:8b",
+          "description": "Generated source files, tests, scripts, and runtime manifests"
+        },
+        "material_repair": {
+          "model": "qwen3:8b",
+          "preferred_models": ["qwen3:8b", "qwen2.5-coder:7b"],
+          "required_capabilities": ["chat", "stream"],
+          "fallback_model": "qwen3:8b",
+          "description": "Focused repair of generated files after validation failures"
+        },
+        "material_critic": {
+          "model": "atla/selene-mini:latest",
+          "preferred_models": ["atla/selene-mini:latest", "qwen3:8b"],
+          "required_capabilities": ["chat"],
+          "fallback_model": "qwen3:8b",
+          "description": "Quality critique for generated artifacts when local gates are insufficient"
+        },
+        "deep": {
+          "model": "qwen3:8b",
+          "preferred_models": ["qwen3:8b"],
+          "required_capabilities": ["chat"],
+          "fallback_model": "qwen3:8b",
+          "description": "Conservative deep reasoning profile using the daily 8B model"
+        },
+        "deep_reasoning": {
+          "model": "deepseek-r1:8b",
+          "preferred_models": ["deepseek-r1:8b", "qwen3:8b"],
+          "required_capabilities": ["chat"],
+          "fallback_model": "qwen3:8b",
+          "description": "Explicit reasoning profile for tasks that ask for deeper analysis"
+        },
+        "critic": {
+          "model": "atla/selene-mini:latest",
+          "preferred_models": ["atla/selene-mini:latest", "qwen3:8b"],
+          "required_capabilities": ["chat"],
+          "fallback_model": "qwen3:8b",
+          "description": "Specialized critique/evaluation profile for quality review"
+        },
+        "auxiliary": {
+          "model": "qwen3.5:4b-q4_K_M",
+          "preferred_models": ["qwen3.5:4b-q4_K_M", "gemma3:4b"],
+          "required_capabilities": ["chat"],
+          "fallback_model": "gemma3:4b",
+          "description": "Quality scoring, planning and reranking"
+        },
+        "classifier": {
+          "model": "qwen3:1.7b",
+          "preferred_models": ["qwen3:1.7b", "gemma3:4b"],
+          "required_capabilities": ["chat"],
+          "fallback_model": "gemma3:4b",
+          "description": "Intent routing, RAG routing and micro-classification"
+        }
+      },
+      "rag_capable_models": ["qwen3:8b", "qwen3.5:4b-q4_K_M", "gemma3:4b", "deepseek-r1:8b"],
+      "context_instruction": "The context below was retrieved from the user's local knowledge base. Use it to answer accurately. If the context does not contain relevant information, answer from your general knowledge and state that clearly. Never fabricate information that is not in the context."
+    },
+    "agents": {
+      "reasoning_and_response": {
+        "description": "Consolidated owner for direct response, decomposition, synthesis, critique, and intent classification",
+        "model": "qwen3:8b",
+        "backend": {
+          "type": "openai",
+          "service": "vllm"
+        },
+        "system_prompt": "/no_think\nYou are the reasoning_and_response owner. Provide direct answers, synthesize sources, decompose work, critique outputs, and classify intent through the requested provider mode. Think internally in English only; never show reasoning, chain-of-thought, analysis, or scratchpad text. User-facing text must follow the runtime language_context/response_language when supplied; otherwise match the original user language. Keep structured internal contracts in English. Do not fabricate information or claim actions that were not executed.",
+        "polish_prompt": "You are a quality refinement assistant. Improve the draft by addressing the identified issues while preserving correct information and the runtime response language.",
+        "parameters": {
+          "temperature": 0.3,
+          "max_tokens": 768,
+          "timeout": 120.0
+        }
+      },
+      "audio_transcribe": {
+        "description": "Transcribes audio files using Whisper — not an LLM agent",
+        "model": "distil-large-v3",
+        "backend": {
+          "type": "whisper",
+          "device": "auto",
+          "compute_type": "float16"
+        },
+        "parameters": {
+          "language": "auto",
+          "vad_enabled": true,
+          "diarization_enabled": false
+        }
+      }
+    }
+  },
+  "settings": {
+    "description": "Global runtime settings for the symbiont engine",
+    "agentic": {
+      "enabled": true,
+      "max_iterations": 10,
+      "max_tool_calls": 30,
+      "timeout": 1200,
+      "token_budget": 32000
+    }
+  }
+}

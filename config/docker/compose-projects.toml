@@ -1,0 +1,19 @@
+# Compose project catalog for the ai-local mono-repo.
+#
+# ai-local is the only repo and the only Compose project entry point. Service
+# ownership remains component-level, but Compose fragments, Dockerfiles and
+# secrets are centralized under infra/.
+
+[projects.ai-local]
+order = 10
+role = "mono-repo-root"
+workdir = "."
+files = ["compose.yml"]
+use_catalog_profiles = true
+env_files = [
+  ".env.storage.generated",
+  ".env.llm.generated",
+  ".env.services.generated",
+  "infra/docker/.env.observability",
+]
+secrets_dir = "infra/docker/secrets"

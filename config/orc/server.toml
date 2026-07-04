@@ -1,0 +1,29 @@
+# AI Symbiont — Server & Core Settings
+# Override com env vars prefixadas com ORC_
+# Ex: ORC_SYMBIONT_PORT=8585
+
+[symbiont]
+
+[logging]
+level = "INFO"
+format = "text"
+
+[session]
+enabled = true
+max_messages = 20
+# CLI continuity: when true the generated model aliases (e.g. @) reuse a
+# persistent default session across invocations so follow-up questions inherit
+# conversation context. Pass --new-session to the alias to reset it.
+cli_default_session = true
+# Session DB/state paths are inferred by orchestrator.config and can be
+# overridden with ORC_SESSION_* env vars.
+
+[metrics]
+enabled = true
+# Resource snapshots are now served through the governed agentic command
+# capability on demand. Keep the metrics collector from polling RAM/GPU/swap
+# permanently in normal CLI use.
+resource_monitor_enabled = false
+
+[dashboard]
+enabled = true

@@ -1,0 +1,1 @@
+ALTER TABLE files ADD COLUMN config_version TEXT NOT NULL DEFAULT ''

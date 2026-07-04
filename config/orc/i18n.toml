@@ -1,0 +1,61 @@
+[i18n]
+enabled = true
+mode = "assisted"
+preserve_original = true
+default_response_language = "same_as_user"
+
+[language_detection]
+enabled = true
+default_variant_for_pt = "pt-PT"
+min_confidence = 0.70
+
+[protected_spans]
+enabled = true
+strict = true
+
+[spellcheck]
+enabled = true
+backend = "dictionary"
+autocorrect_enabled = true
+max_edit_distance = 2
+
+[glossary]
+enabled = true
+
+[translation]
+enabled = true
+backend = "ctranslate2"
+model = "facebook/nllb-200-distilled-600M"
+source_lang = "por_Latn"
+target_lang = "eng_Latn"
+device = "cpu"
+compute_type = "int8"
+intra_threads = 4
+inter_threads = 1
+
+[latency]
+translation_budget_normal_ms = 180000
+translation_budget_shadow_ms = 5000
+ptpt_linter_timeout_ms = 1000
+
+[cache]
+enabled = true
+backend = "sqlite"
+
+[i18n_rag]
+dual_query = true
+use_original_query = true
+use_translated_query = true
+rerank_after_merge = true
+
+[final_response]
+force_user_language = true
+ptpt_linter_enabled = true
+
+[i18n_observability]
+enabled = true
+log_translation_latency = true
+log_cache_hit = true
+log_route_diff = true
+log_fallback_reason = true
+log_ptpt_linter_changes = true

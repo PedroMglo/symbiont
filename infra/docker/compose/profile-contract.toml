@@ -1,0 +1,113 @@
+# Declarative Docker Compose profile contract for ai-local.
+#
+# Service ownership and per-service policy stay in config/docker/service-catalog.toml.
+# This file documents the operational meaning of each live Compose profile and
+# the generated env surfaces the profile is expected to consume.
+
+[meta]
+policy_source = "config/docker/service-catalog.toml"
+compose_project_source = "config/docker/compose-projects.toml"
+
+[profiles.core]
+owner = "infra/docker"
+purpose = "Default local substrate for the gateway, RAG, vector store, Docker proxy and currently cataloged Temporal dev wiring."
+health = "Long-running services must expose Compose healthchecks; one-shot exceptions must stay explicit in the service catalog."
+secrets = "Use Docker secrets under infra/docker/secrets or generated env placeholders only; no real secret values belong in the repo."
+resources = "Resource limits are checked by Docker governance inventory; profile services must not bypass catalog review."
+generated_env = [".env.storage.generated", ".env.llm.generated", ".env.services.generated"]
+
+[profiles.storage]
+owner = "infra/docker"
+purpose = "Storage Guardian runtime boundary for managed storage lifecycle and custody operations."
+health = "Storage Guardian must keep a Compose healthcheck because other services depend on storage readiness."
+secrets = "Storage backend credentials must stay with storage_guardian policy and generated env surfaces."
+resources = "Storage services use bounded CPU, memory and pids values in Compose."
+generated_env = [".env.storage.generated", ".env.llm.generated", ".env.services.generated"]
+
+[profiles.agents]
+owner = "infra/docker"
+purpose = "Internal agent services that propose, critique or produce typed runtime evidence."
+health = "Agent services must be healthchecked before gateway dispatch depends on them."
+secrets = "Agent secrets are Docker secret mounts or internal generated env references, never literal values."
+resources = "Agent containers must keep bounded resource limits suitable for local development."
+generated_env = [".env.storage.generated", ".env.llm.generated", ".env.services.generated"]
+
+[profiles.features]
+owner = "infra/docker"
+purpose = "Internal feature APIs and pipelines owned by feature components."
+health = "Feature services must be healthchecked before routing or smoke tests rely on them."
+secrets = "Feature credentials use Docker secrets or generated env references only."
+resources = "Feature containers must declare bounded resource limits and avoid persistent write mounts unless owner policy allows them."
+generated_env = [".env.storage.generated", ".env.llm.generated", ".env.services.generated"]
+
+[profiles.material]
+owner = "infra/docker"
+purpose = "Material-generation runtime slice spanning declared agent and feature services."
+health = "Material services must expose healthchecks because the profile is used by focused smoke workflows."
+secrets = "Material services reuse internal service secrets and generated env references without new secret files."
+resources = "Material services must keep explicit limits because this profile can drive longer generation sessions."
+generated_env = [".env.storage.generated", ".env.llm.generated", ".env.services.generated"]
+
+[profiles.heavy]
+owner = "infra/docker"
+purpose = "Heavy audio and auxiliary state services that are intentionally opt-in."
+health = "Heavy services must be healthchecked because they are expensive to start and debug."
+secrets = "Heavy services mount only declared Docker secrets and generated env references."
+resources = "Heavy services must have larger but explicit CPU, memory and pids bounds."
+generated_env = [".env.storage.generated", ".env.llm.generated", ".env.services.generated"]
+
+[profiles.observability]
+owner = "infra/docker"
+purpose = "Local observability stack for traces, metrics, logs, dashboards and Langfuse."
+health = "Observability services must expose healthchecks before reports claim the stack is usable."
+secrets = "Observability secrets are Docker secrets or the generated infra/docker/.env.observability compatibility file."
+resources = "Observability databases and collectors must declare bounded local resource limits."
+generated_env = [".env.storage.generated", ".env.llm.generated", ".env.services.generated", "infra/docker/.env.observability"]
+
+[profiles.llm]
+owner = "infra/docker"
+purpose = "Local CPU LLM serving endpoints."
+health = "LLM servers must expose healthchecks so routing can distinguish unavailable model backends."
+secrets = "LLM services use generated model/cache paths and do not store provider tokens in Compose."
+resources = "LLM CPU services must declare high but explicit local limits."
+generated_env = [".env.storage.generated", ".env.llm.generated", ".env.services.generated"]
+
+[profiles.gpu]
+owner = "infra/docker"
+purpose = "Local GPU LLM serving endpoint."
+health = "GPU LLM services must expose healthchecks before being selected by runtime routing."
+secrets = "GPU LLM services use generated model/cache paths and do not store provider tokens in Compose."
+resources = "GPU services must declare explicit GPU-class CPU, memory and pids limits."
+generated_env = [".env.storage.generated", ".env.llm.generated", ".env.services.generated"]
+
+[profiles.i18n]
+owner = "infra/docker"
+purpose = "Translation service profile for local i18n API development."
+health = "Translation must expose a healthcheck before direct development use."
+secrets = "Translation uses Docker secret mounts and generated LLM env references only."
+resources = "Translation must keep bounded resource limits because it may call local LLM backends."
+generated_env = [".env.storage.generated", ".env.llm.generated", ".env.services.generated"]
+
+[profiles.qdrant]
+owner = "infra/docker"
+purpose = "Explicit vector database profile for direct Qdrant operations beyond default core startup."
+health = "Qdrant must remain healthchecked before RAG or admin use."
+secrets = "Qdrant API keys are Docker secrets and never literal Compose values."
+resources = "Qdrant must keep explicit stateful resource limits."
+generated_env = [".env.storage.generated", ".env.llm.generated", ".env.services.generated"]
+
+[profiles.temporal]
+owner = "infra/docker"
+purpose = "Optional Temporal development infrastructure for durable owner workflows."
+health = "Temporal server readiness is healthchecked; one-shot init and worker exceptions must stay cataloged."
+secrets = "Temporal profile services reuse generated env and service secrets only."
+resources = "Temporal resource gaps are visible through Docker governance warnings until tightened."
+generated_env = [".env.storage.generated", ".env.llm.generated", ".env.services.generated"]
+
+[profiles.rag-graph]
+owner = "infra/docker"
+purpose = "Optional service-backed GraphRAG query/index backend."
+health = "GraphRAG backing services must expose healthchecks before RAG points at them."
+secrets = "GraphRAG backend services do not introduce real secrets into Compose."
+resources = "GraphRAG backend services must keep explicit resource limits."
+generated_env = [".env.storage.generated", ".env.llm.generated", ".env.services.generated"]

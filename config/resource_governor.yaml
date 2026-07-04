@@ -1,0 +1,144 @@
+resource_governor:
+  contract_version: resource-governor.v1
+  mode: enforced
+
+  api:
+    bind_host: 127.0.0.1
+    require_internal_token: true
+    token_env_var: AI_RESOURCE_GOVERNOR_TOKEN
+
+  experience_policy:
+    foreground_first: true
+    preserve_quality: true
+    allow_deferred_quality: true
+    allow_silent_quality_loss: false
+
+  machine_profile:
+    source: smart_resolver
+    allow_auto_detect: true
+    allow_profile_override: true
+
+  integration:
+    use_config_intelligence: true
+    use_runtime_resolver: true
+    write_effective_policy_snapshot: true
+
+  experience_slo:
+    first_token_target_ms: 800
+    first_token_soft_limit_ms: 1500
+    query_context_budget_ms: 350
+    reranker_budget_ms: 250
+    graph_context_budget_ms: 300
+    router_llm_budget_ms: 200
+    enrichment_total_budget_ms: 700
+
+  fallback_policy:
+    if_governor_unavailable:
+      interactive: allow
+      interactive_enrichment: skip
+      background: conservative_local_guard
+      storage: pause
+      heavy_gpu: deny_unless_explicit_override
+
+  gpu_conflict_matrix:
+    chat_stream:
+      blocks:
+        - embedding_gpu_batch
+        - audio_transcribe_gpu
+        - graph_llm
+        - deep_reasoning_batch
+        - material_generation
+        - model_warmup
+    material_generation:
+      blocks:
+        - embedding_gpu_batch
+        - audio_transcribe_gpu
+        - graph_llm
+        - deep_reasoning_batch
+        - model_warmup
+    embedding_gpu_batch:
+      blocks:
+        - chat_stream
+        - material_generation
+        - audio_transcribe_gpu
+        - graph_llm
+    audio_transcribe_gpu:
+      blocks:
+        - chat_stream
+        - material_generation
+        - embedding_gpu_batch
+        - graph_llm
+    graph_llm:
+      blocks:
+        - chat_stream
+        - material_generation
+        - embedding_gpu_batch
+        - audio_transcribe_gpu
+    model_warmup:
+      blocks:
+        - chat_stream
+        - material_generation
+
+  thresholds:
+    swap_used_mb_hard: 512
+    swap_growth_mb_hard: 128
+    swap_percent_hard: 70
+    ram_available_mb_hard: 1024
+    memory_pressure_some_10s_hard: 0.35
+    io_pressure_some_10s_hard: 0.40
+    disk_free_ratio_hard: 0.12
+    battery_percent_soft: 25
+    battery_percent_hard: 15
+    thermal_celsius_soft: 85
+    thermal_celsius_hard: 92
+
+  resource_classes:
+    interactive_api:
+      priority: protected
+    vector_store:
+      priority: protected_io
+    background_compute:
+      priority: preemptible
+    storage_low_priority:
+      priority: lowest
+    observability:
+      priority: adaptive
+
+  service_lease_requirements:
+    symbiont.chat:
+      lane: interactive
+      capability: chat_stream
+      resource_class: model_runtime
+      required: true
+    symbiont.material_generation:
+      lane: interactive
+      capability: material_generation
+      resource_class: model_runtime
+      required: true
+    rag.embedding:
+      lane: background
+      capability: embedding_gpu_batch
+      fallback_capability: embedding_cpu_batch
+      resource_class: vram
+      required: true
+    rag.graphify:
+      lane: background
+      capability: graph_llm
+      resource_class: model_runtime
+      required: true
+    storage_guardian.archive:
+      lane: storage
+      capability: storage_archive
+      resource_class: io_write
+      required: true
+    audio_transcribe.gpu:
+      lane: heavy_gpu
+      capability: audio_transcribe_gpu
+      fallback_capability: audio_transcribe_cpu
+      resource_class: vram
+      required: true
+    model.warmup:
+      lane: heavy_gpu
+      capability: model_warmup
+      resource_class: model_runtime
+      required: true

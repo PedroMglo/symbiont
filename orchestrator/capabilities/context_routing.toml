@@ -1,0 +1,54 @@
+[[context_routes]]
+intent = "general"
+sources = ["rag", "calendar", "rss", "email"]
+required_sources = ["rag"]
+
+[[context_routes]]
+intent = "local"
+sources = ["rag", "cag"]
+required_sources = ["rag"]
+
+[[context_routes]]
+intent = "research"
+sources = ["rag", "cag"]
+required_sources = ["rag"]
+
+[[context_routes]]
+intent = "personal_context"
+sources = ["calendar", "rss", "email"]
+required_sources = []
+
+[[context_routes]]
+intent = "code"
+sources = ["rag", "graph", "repo", "cag"]
+required_sources = ["rag", "graph", "repo"]
+
+[[context_routes]]
+intent = "system"
+sources = ["system", "config", "logs", "cag"]
+required_sources = ["system"]
+
+[[context_routes]]
+intent = "graph"
+sources = ["graph", "cag"]
+required_sources = ["graph"]
+
+[[context_routes]]
+intent = "audio"
+sources = []
+required_sources = []
+
+[[context_routes]]
+intent = "local_and_graph"
+sources = ["rag", "graph", "cag"]
+required_sources = ["rag", "graph"]
+
+[[context_routes]]
+intent = "system_and_local"
+sources = ["system", "rag", "config", "cag"]
+required_sources = ["system", "rag"]
+
+[[context_routes]]
+intent = "clarify"
+sources = []
+required_sources = []

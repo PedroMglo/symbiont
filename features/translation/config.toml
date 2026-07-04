@@ -1,0 +1,36 @@
+[i18n]
+enabled = true
+mode = "assisted"
+
+[policy]
+min_translate_chars = 20
+max_protected_ratio = 0.40
+
+[spellcheck]
+backend = "dictionary"
+autocorrect_enabled = true
+max_edit_distance = 2
+# Dictionary paths and autocorrect threshold are derived by translation.config.
+
+[glossary]
+# Glossary paths are derived by translation.config.
+
+[translation]
+enabled = true
+backend = "ollama"
+model = "facebook/nllb-200-distilled-600M"
+ollama_model = "translategemma:4b-it-q4_K_M"
+ollama_chunk_chars = 4000
+ollama_max_tokens = 1024
+source_lang = "por_Latn"
+target_lang = "eng_Latn"
+device = "cpu"
+compute_type = "int8"
+intra_threads = 4
+inter_threads = 1
+# CT2 model path is derived by translation.config.
+
+[cache]
+enabled = true
+backend = "sqlite"
+# Cache path and TTL are derived by translation.config.

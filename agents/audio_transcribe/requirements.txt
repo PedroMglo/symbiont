@@ -1,0 +1,10 @@
+fastapi>=0.110
+sharedai @ git+https://github.com/PedroMglo/sharedai.git@3bc5aed169e8da9d5297e6ae10a50cc906e2d27
+uvicorn[standard]>=0.29
+pydantic>=2.6
+pydantic-settings>=2.2
+faster-whisper>=1.0
+numpy>=1.26
+python-multipart>=0.0.9
+async-timeout>=4.0
+redis[hiredis]>=5.0

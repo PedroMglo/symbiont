@@ -1,0 +1,188 @@
+[[action_capabilities]]
+capability_id = "local_evidence.repo_inspect"
+owner = "local_evidence_operator"
+endpoint = "/v1/code/analyze"
+policy_action = "local_evidence.read"
+transport = { type = "feature_endpoint", service = "local_evidence_operator", method = "POST", path = "/v1/code/analyze" }
+risk_level = "low"
+supported_action_types = ["api_call"]
+resource_profile = { resource_class = "cpu", lane = "interactive" }
+input_schema = { type = "object", contract = "AnalyzeRequest", schema_ref = "python:code_analysis.types:AnalyzeRequest", required = ["query"] }
+output_schema = { type = "object", contract = "AnalyzeResponse", schema_ref = "python:code_analysis.types:AnalyzeResponse", fields = ["graph_context", "repo_context", "file_context", "status"] }
+evidence_types = ["repo_snapshot", "code_evidence"]
+writes_allowed = false
+idempotency_policy = "read_only"
+dry_run_supported = false
+rollback_supported = false
+events_published = ["feature.invoke.completed", "service.degraded"]
+risk_review_criteria = ["read_only_repo_access", "no_repo_write", "bounded_evidence"]
+round_dependencies = []
+timeout_seconds = 10
+
+[[action_capabilities]]
+capability_id = "local_evidence.compose_diagnostics"
+owner = "local_evidence_operator"
+endpoint = "/v1/ops/compose-diagnostics"
+policy_action = "ops.diagnostics.read"
+transport = { type = "feature_endpoint", service = "local_evidence_operator", method = "POST", path = "/v1/ops/compose-diagnostics" }
+risk_level = "low"
+supported_action_types = ["api_call"]
+resource_profile = { resource_class = "cpu", lane = "background" }
+input_schema = { type = "object", contract = "OpsDiagnosticsRequest", schema_ref = "python:ops_diagnostics.types:OpsDiagnosticsRequest", required = [] }
+output_schema = { type = "object", contract = "OpsDiagnosticsResponse", schema_ref = "python:ops_diagnostics.types:OpsDiagnosticsResponse", fields = ["content", "success", "metadata"] }
+evidence_types = ["compose_evidence", "readiness_report"]
+writes_allowed = false
+idempotency_policy = "read_only"
+dry_run_supported = true
+rollback_supported = false
+events_published = ["ops.diagnostics.completed", "service.degraded"]
+risk_review_criteria = ["read_only_diagnostics", "no_container_mutation", "compose_evidence_only"]
+round_dependencies = []
+timeout_seconds = 30
+
+[[action_capabilities]]
+capability_id = "local_evidence.security_evidence"
+owner = "local_evidence_operator"
+endpoint = "/v1/security/cache-correlation"
+policy_action = "security.analysis.read"
+transport = { type = "feature_endpoint", service = "local_evidence_operator", method = "POST", path = "/v1/security/cache-correlation" }
+risk_level = "medium"
+supported_action_types = ["api_call"]
+resource_profile = { resource_class = "cpu", lane = "background" }
+input_schema = { type = "object", contract = "SecurityAnalysisRequest", schema_ref = "python:security_analysis.types:SecurityAnalysisRequest", required = [] }
+output_schema = { type = "object", contract = "SecurityAnalysisResponse", schema_ref = "python:security_analysis.types:SecurityAnalysisResponse", fields = ["content", "success", "metadata"] }
+evidence_types = ["security_evidence", "redacted_report"]
+writes_allowed = false
+idempotency_policy = "read_only"
+dry_run_supported = true
+rollback_supported = false
+events_published = ["security.analysis.completed", "policy.risk_detected", "service.degraded"]
+risk_review_criteria = ["read_only_security_evidence", "redaction_required", "no_secret_write"]
+round_dependencies = []
+timeout_seconds = 30
+
+[[action_capabilities]]
+capability_id = "workspace_execution.session_create"
+owner = "workspace_execution"
+endpoint = "/v1/workspace-execution/sessions"
+policy_action = "workspace.sandbox.create"
+transport = { type = "feature_endpoint", service = "workspace_execution", method = "POST", path = "/v1/workspace-execution/sessions" }
+risk_level = "medium"
+supported_action_types = ["api_call", "sandbox_session"]
+resource_profile = { resource_class = "cpu_io", lane = "background" }
+input_schema = { type = "object", contract = "SessionCreateRequest", schema_ref = "python:workspace_execution.types:SessionCreateRequest", required = ["source"] }
+output_schema = { type = "object", contract = "SessionResponse", schema_ref = "python:workspace_execution.types:SessionResponse", fields = ["session_id", "status", "state_hash", "expires_at"] }
+evidence_types = ["session_record", "state_hash"]
+writes_allowed = true
+idempotency_policy = "idempotent_by_session_source_and_profile"
+dry_run_supported = true
+rollback_supported = false
+events_published = ["workspace.session.created", "service.degraded"]
+risk_review_criteria = ["disposable_copy_only", "no_real_host_write", "idempotency_key_required"]
+round_dependencies = []
+timeout_seconds = 30
+
+[[action_capabilities]]
+capability_id = "workspace_execution.session_read"
+owner = "workspace_execution"
+endpoint = "/v1/workspace-execution/sessions/{session_id}/diff"
+policy_action = "workspace.sandbox.read"
+transport = { type = "feature_endpoint", service = "workspace_execution", method = "GET", path = "/v1/workspace-execution/sessions/{session_id}/diff" }
+risk_level = "low"
+supported_action_types = ["api_call", "sandbox_read"]
+resource_profile = { resource_class = "cpu_io", lane = "interactive" }
+input_schema = { type = "object", contract = "SessionReadRequest", schema_ref = "python:workspace_execution.types:SessionReadRequest", required = ["session_id"] }
+output_schema = { type = "object", contract = "DiffResponse", schema_ref = "python:workspace_execution.types:DiffResponse", fields = ["changed", "files", "state_hash"] }
+evidence_types = ["diff", "artifact_descriptor", "redacted_log"]
+writes_allowed = false
+idempotency_policy = "read_only"
+dry_run_supported = false
+rollback_supported = false
+events_published = ["workspace.diff.generated", "service.degraded"]
+risk_review_criteria = ["read_session_only", "redacted_output", "no_host_write"]
+round_dependencies = []
+timeout_seconds = 30
+
+[[action_capabilities]]
+capability_id = "workspace_execution.command_execute"
+owner = "workspace_execution"
+endpoint = "/v1/workspace-execution/sessions/{session_id}/commands"
+policy_action = "workspace.sandbox.execute"
+transport = { type = "feature_endpoint", service = "workspace_execution", method = "POST", path = "/v1/workspace-execution/sessions/{session_id}/commands" }
+risk_level = "medium"
+supported_action_types = ["api_call", "sandbox_command"]
+resource_profile = { resource_class = "cpu_io", lane = "background" }
+input_schema = { type = "object", contract = "CommandRunRequest", schema_ref = "python:workspace_execution.types:CommandRunRequest", required = ["argv"] }
+output_schema = { type = "object", contract = "CommandRunResponse", schema_ref = "python:workspace_execution.types:CommandRunResponse", fields = ["run_id", "status", "exit_code", "changed"] }
+evidence_types = ["command_record", "redacted_log", "diff", "artifact_descriptor"]
+writes_allowed = true
+idempotency_policy = "idempotent_by_command_and_state_hash"
+dry_run_supported = true
+rollback_supported = false
+events_published = ["workspace.command.started", "workspace.command.completed", "service.degraded"]
+risk_review_criteria = ["session_copy_only", "resource_limits_required", "network_disabled_by_default", "redacted_output"]
+round_dependencies = ["execution_policy_when_shell"]
+timeout_seconds = 120
+
+[[action_capabilities]]
+capability_id = "workspace_execution.command_destructive"
+owner = "workspace_execution"
+endpoint = "/v1/workspace-execution/sessions/{session_id}/commands"
+policy_action = "workspace.sandbox.destructive"
+transport = { type = "feature_endpoint", service = "workspace_execution", method = "POST", path = "/v1/workspace-execution/sessions/{session_id}/commands" }
+risk_level = "high"
+supported_action_types = ["api_call", "sandbox_command"]
+resource_profile = { resource_class = "cpu_io", lane = "background" }
+input_schema = { type = "object", contract = "CommandRunRequest", schema_ref = "python:workspace_execution.types:CommandRunRequest", required = ["argv"] }
+output_schema = { type = "object", contract = "CommandRunResponse", schema_ref = "python:workspace_execution.types:CommandRunResponse", fields = ["run_id", "status", "exit_code", "changed"] }
+evidence_types = ["command_record", "execution_policy_report", "redacted_log", "diff", "artifact_descriptor"]
+writes_allowed = true
+idempotency_policy = "idempotent_by_command_and_state_hash"
+dry_run_supported = true
+rollback_supported = false
+events_published = ["workspace.command.started", "workspace.command.completed", "policy.risk_detected", "service.degraded"]
+risk_review_criteria = ["session_copy_only", "execution_policy_required", "approval_required", "no_real_host_write", "resource_limits_required"]
+round_dependencies = ["execution_policy_operator", "policy_approval"]
+timeout_seconds = 120
+
+[[action_capabilities]]
+capability_id = "workspace_execution.artifact_publish"
+owner = "workspace_execution"
+endpoint = "/v1/workspace-execution/sessions/{session_id}/artifacts/publish"
+policy_action = "workspace.sandbox.publish"
+transport = { type = "feature_endpoint", service = "workspace_execution", method = "POST", path = "/v1/workspace-execution/sessions/{session_id}/artifacts/publish" }
+risk_level = "medium"
+supported_action_types = ["api_call", "sandbox_publish"]
+resource_profile = { resource_class = "storage_io", lane = "background" }
+input_schema = { type = "object", contract = "ArtifactPublishRequest", schema_ref = "python:workspace_execution.types:ArtifactPublishRequest", required = ["artifact_ids"] }
+output_schema = { type = "object", contract = "ArtifactPublishResponse", schema_ref = "python:workspace_execution.types:ArtifactPublishResponse", fields = ["published"] }
+evidence_types = ["artifact_descriptor", "chain_of_custody", "storage_object_ref"]
+writes_allowed = true
+idempotency_policy = "idempotent_by_artifact_hash_and_target"
+dry_run_supported = true
+rollback_supported = false
+events_published = ["workspace.artifact.published", "service.degraded"]
+risk_review_criteria = ["publish_via_storage_guardian", "artifact_hash_required", "chain_of_custody_required"]
+round_dependencies = ["storage_guardian"]
+timeout_seconds = 60
+
+[[action_capabilities]]
+capability_id = "storage_guardian.restore_dry_run"
+owner = "storage_guardian"
+endpoint = "/restore/dry-run"
+policy_action = "storage.restore"
+transport = { type = "feature_endpoint", service = "storage_guardian", method = "POST", path = "/restore/dry-run", auth_profile = "storage_guardian_internal_token", tls_alias_profile = "storage_guardian_compose" }
+risk_level = "high"
+supported_action_types = ["api_call"]
+resource_profile = { resource_class = "storage_io", lane = "background" }
+input_schema = { type = "object", contract = "RestoreDryRunRequest", schema_ref = "python:storage_guardian.contracts:RestoreDryRunRequest", required = ["manifest_ref"] }
+output_schema = { type = "object", contract = "RestoreDryRunResponse", schema_ref = "python:storage_guardian.contracts:RestoreDryRunResponse", fields = ["restore_plan", "chain_of_custody", "metadata"] }
+evidence_types = ["restore_plan", "chain_of_custody"]
+writes_allowed = false
+idempotency_policy = "required"
+dry_run_supported = true
+rollback_supported = true
+events_published = ["storage.restore.dry_run.completed", "service.degraded"]
+risk_review_criteria = ["dry_run_only", "manifest_required", "chain_of_custody_required", "no_overwrite"]
+round_dependencies = ["policy_approval_before_restore_apply"]
+timeout_seconds = 60

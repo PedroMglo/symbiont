@@ -1,0 +1,51 @@
+# AI Symbiont — Admission Control Configuration
+# Controls request admission, rate limiting, and automatic model downgrade.
+
+[admission]
+# Concurrency, queue, rate-limit and retry budgets are inferred by
+# orchestrator.config and can be overridden with ORC_ADMISSION_* env vars.
+
+# Automatic downgrade model/profile policy is centralized in
+# config/models/orc.config.json. Override only when testing a custom topology.
+
+# ---------------------------------------------------------------------------
+# Routing Policy — maps task types to preferred backend/model
+# ---------------------------------------------------------------------------
+
+[routing_policy]
+default_backend = "vllm"
+
+[[routing_policy.rules]]
+task_type = "classification"
+backend = "llama_cpp_fast"
+profile = "classifier"
+
+[[routing_policy.rules]]
+task_type = "rag_context"
+backend = "llama_cpp_aux"
+profile = "auxiliary"
+
+[[routing_policy.rules]]
+task_type = "main_response"
+backend = "vllm"
+profile = "default"
+
+[[routing_policy.rules]]
+task_type = "local_evidence"
+backend = "vllm"
+profile = "code"
+
+[[routing_policy.rules]]
+task_type = "synthesis"
+backend = "vllm"
+profile = "default"
+
+[[routing_policy.rules]]
+task_type = "agent"
+backend = "vllm"
+profile = "default"
+
+[[routing_policy.rules]]
+task_type = "fast_classification"
+backend = "llama_cpp_fast"
+profile = "classifier"

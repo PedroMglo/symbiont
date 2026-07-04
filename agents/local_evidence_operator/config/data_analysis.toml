@@ -1,0 +1,13 @@
+# =============================================================================
+# Data Analysis Feature — Configuration
+# =============================================================================
+# Environment variables override all values (prefix: DATA_ANALYSIS_)
+# =============================================================================
+
+[workspace]
+# Read-only roots visible in the container.
+scan_paths = ["/projects", "/host_home"]
+allow_host_home_mapping = true
+
+[security]
+api_key = ""

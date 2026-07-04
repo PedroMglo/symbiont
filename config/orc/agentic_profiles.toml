@@ -1,0 +1,51 @@
+# Opt-in runtime profiles. These do not override [agentic_runtime] by
+# themselves; operators apply them deliberately through env/compose overlays.
+
+[agentic_runtime_profiles.autonomous]
+description = "Autonomous total local profile gated by Fase 12 readiness."
+opt_in = true
+default_mode = "autonomous"
+policy_mode = "enforce"
+runner_enabled = true
+runner_execute_proposals = false
+autonomous_safe_enabled = true
+event_loop_enabled = true
+event_loop_vllm_unhealthy_enabled = true
+autonomous_maintenance_enabled = true
+governed_improvement_enabled = true
+actuator_enabled = true
+actuator_auto_apply_runtime_flags = true
+actuator_closed_loop_enabled = true
+actuator_renew_enforced_flags = true
+actuator_auto_rollback_missing_flags = true
+actuator_escalation_ladder_enabled = true
+actuator_escalation_policy_router_enabled = true
+actuator_escalation_create_proposals = true
+actuator_escalation_policy_router_create_proposals = true
+preapproval_windows_enabled = true
+command_tool_enabled = true
+command_tool_backend = "workspace_execution"
+command_tool_allow_user_context_ro = false
+command_tool_allow_host_context_ro = false
+
+closed_flags = [
+    "runner_execute_proposals",
+    "command_tool_allow_user_context_ro",
+    "command_tool_allow_host_context_ro",
+]
+
+promotion_requires = [
+    "runner_read_only",
+    "command_sandbox",
+    "policy_enforce",
+    "approval_expiry",
+    "manifest_coverage",
+    "multi_agent_deliberation",
+    "event_loop_proposals",
+    "resource_governor_defer",
+    "memory_retrieval",
+    "actuator_ttl_rollback",
+    "anti_overfit_variants",
+    "cockpit_coverage",
+    "replay",
+]

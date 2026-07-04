@@ -1,0 +1,107 @@
+# Declarative terminal alias command registry.
+# The orchestrator consumes this as metadata only; selecting a command does not
+# execute owner behavior.
+
+[[commands]]
+name = "/doctor"
+aliases = ["/diag", "/diagnostics"]
+owner = "root/make"
+description = "Run the project doctor checks through the root Makefile."
+target = { type = "make", name = "doctor" }
+policy_action = "ops.diagnostics.read"
+read_only = true
+evidence_types = ["doctor_report", "readiness_report"]
+tags = ["ops", "diagnostics"]
+
+[[commands]]
+name = "/health"
+aliases = ["/live"]
+owner = "orchestrator/gateway"
+description = "Read orchestrator runtime health."
+target = { type = "api", method = "GET", path = "/health" }
+policy_action = "ops.diagnostics.read"
+read_only = true
+evidence_types = ["health_status"]
+tags = ["ops", "health"]
+
+[[commands]]
+name = "/services"
+owner = "orchestrator/agentic"
+description = "List owner-published service capability manifests."
+target = { type = "api", method = "GET", path = "/agentic/capabilities/services" }
+policy_action = "capability.read"
+read_only = true
+evidence_types = ["capability_manifest"]
+tags = ["capabilities", "services"]
+
+[[commands]]
+name = "/models"
+owner = "orchestrator/gateway"
+description = "Read configured and active model status."
+target = { type = "api", method = "GET", path = "/models/status" }
+policy_action = "model.status.read"
+read_only = true
+evidence_types = ["model_status"]
+tags = ["models", "status"]
+
+[[commands]]
+name = "/storage"
+owner = "storage_guardian"
+description = "Read storage guardian status and storage capability metadata."
+target = { type = "api", method = "POST", service = "storage_guardian", path = "/internal/storage/query" }
+capability_id = "feature.storage_guardian"
+policy_action = "storage.status"
+read_only = true
+evidence_types = ["storage_plan", "storage_status"]
+tags = ["storage", "storage_guardian"]
+
+[[commands]]
+name = "/rag"
+owner = "features/research"
+description = "Read RAG/research status without mutating indexes."
+target = { type = "api", method = "GET", service = "research", path = "/v1/research/status" }
+capability_id = "feature.research"
+policy_action = "rag.status"
+read_only = true
+evidence_types = ["rag_context", "service_status"]
+tags = ["rag", "research"]
+
+[[commands]]
+name = "/tasks"
+owner = "orchestrator/agentic"
+description = "List agentic tasks from the runtime ledger."
+target = { type = "api", method = "GET", path = "/agentic/tasks" }
+policy_action = "agentic.tasks.read"
+read_only = true
+evidence_types = ["task_ledger"]
+tags = ["agentic", "tasks"]
+
+[[commands]]
+name = "/approvals"
+owner = "orchestrator/agentic"
+description = "List pending and recent approval records."
+target = { type = "api", method = "GET", path = "/agentic/approvals" }
+policy_action = "agentic.approvals.read"
+read_only = true
+evidence_types = ["approval_ledger"]
+tags = ["agentic", "approvals"]
+
+[[commands]]
+name = "/evals"
+owner = "root/make"
+description = "Run local evaluation quality checks through the root Makefile."
+target = { type = "make", name = "eval-quality" }
+policy_action = "evals.read"
+read_only = true
+evidence_types = ["eval_report"]
+tags = ["evals", "quality"]
+
+[[commands]]
+name = "/cost"
+owner = "orchestrator/agentic"
+description = "Read runtime cost and resource-oriented cockpit metadata."
+target = { type = "api", method = "GET", path = "/agentic/cockpit" }
+policy_action = "cost.read"
+read_only = true
+evidence_types = ["runtime_cockpit"]
+tags = ["cost", "resources"]

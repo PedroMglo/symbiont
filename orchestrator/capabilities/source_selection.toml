@@ -1,0 +1,170 @@
+[[source_selection]]
+key = "extrator_path"
+source = "extrator"
+path_required = true
+action_terms = [
+  "bundle",
+  "chunks",
+  "convert",
+  "converte",
+  "converter",
+  "etl",
+  "extract",
+  "extrai",
+  "extrair",
+  "ingere",
+  "ingerir",
+  "indexa",
+  "indexar",
+  "process",
+  "processa",
+  "processar",
+]
+processing_action_terms = [
+  "conversion",
+  "convert",
+  "converte",
+  "converter",
+  "extract",
+  "extrai",
+  "extrair",
+  "job",
+  "process",
+  "processa",
+  "processar",
+]
+processing_target_terms = [
+  "extrator",
+  "extractor",
+  "para rag",
+  "rag bundle",
+]
+extensions = [
+  "csv",
+  "csv.gz",
+  "doc",
+  "docx",
+  "htm",
+  "html",
+  "ini",
+  "jpeg",
+  "jpg",
+  "json",
+  "jsonl",
+  "jsonl.gz",
+  "markdown",
+  "md",
+  "ndjson",
+  "ndjson.gz",
+  "pdf",
+  "png",
+  "ppt",
+  "pptx",
+  "tif",
+  "tiff",
+  "toml",
+  "tsv",
+  "tsv.gz",
+  "txt",
+  "webp",
+  "xls",
+  "xlsx",
+  "xml",
+  "yaml",
+  "yml",
+]
+folder_terms = [
+  "directoria",
+  "diretoria",
+  "directory",
+  "folder",
+  "pasta",
+]
+guard_terms = [
+  "analisa",
+  "analisar",
+  "architecture",
+  "arquitetura",
+  "avalia",
+  "avaliar",
+  "code",
+  "codigo",
+  "código",
+  "debug",
+  "routing",
+]
+
+[[source_selection]]
+key = "code_path"
+source = "local_evidence"
+path_required = true
+intent_terms = [
+  "analisa",
+  "analisar",
+  "architecture",
+  "arquitetura",
+  "avalia",
+  "avaliar",
+  "code",
+  "codigo",
+  "código",
+  "debug",
+  "routing",
+]
+extensions = [
+  "c",
+  "cpp",
+  "cs",
+  "go",
+  "h",
+  "hpp",
+  "java",
+  "js",
+  "jsx",
+  "py",
+  "rs",
+  "sh",
+  "sql",
+  "ts",
+  "tsx",
+]
+
+[[source_selection]]
+key = "storage"
+source = "storage"
+source_terms = [
+  "storage guardian",
+  "storage.status",
+  "storage/ssd",
+  "storage_guardian",
+]
+operation_terms = [
+  "archive",
+  "archive_id",
+  "arquiva",
+  "arquivar",
+  "backup",
+  "backups",
+  "comprime",
+  "comprimir",
+  "descompacta",
+  "descompactar",
+  "descomprime",
+  "descomprimir",
+  "manifest",
+  "manifesto",
+  "restaura",
+  "restaurar",
+  "restore",
+]
+direct_terms = ["archive_id"]
+recovery_terms = [
+  "archive inventory",
+  "archive recovery",
+  "backup recovery",
+  "checksum validation",
+  "recover archives",
+  "recover backup",
+  "recovery report",
+  "safe extraction",
+]

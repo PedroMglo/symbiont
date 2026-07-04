@@ -1,0 +1,47 @@
+# Canonical Docker service classes for ai-local.
+
+[classes.gateway-public]
+description = "Primary local API surfaces intentionally reachable from the host."
+host_ports = "allowed"
+default_bind = "127.0.0.1"
+healthcheck_required = true
+
+[classes.admin-local]
+description = "Local admin/debug APIs that are useful from the host but must stay localhost-bound."
+host_ports = "allowed-with-reason"
+default_bind = "127.0.0.1"
+healthcheck_required = true
+
+[classes.llm-local]
+description = "Local OpenAI-compatible LLM serving endpoints."
+host_ports = "allowed-with-reason"
+default_bind = "127.0.0.1"
+healthcheck_required = true
+
+[classes.local-ui]
+description = "Local browser UI surfaces intentionally reachable from the host."
+host_ports = "allowed-with-reason"
+default_bind = "127.0.0.1"
+healthcheck_required = true
+
+[classes.internal]
+description = "Docker DNS only services. They must not publish host ports in base compose."
+host_ports = "forbidden"
+healthcheck_required = true
+
+[classes.debug-only]
+description = "Ports published only by infra/docker/compose/debug.yml."
+host_ports = "debug-overlay-only"
+default_bind = "127.0.0.1"
+healthcheck_required = true
+
+[classes.worker]
+description = "Ephemeral job-style containers."
+host_ports = "forbidden"
+healthcheck_required = false
+restart_policy = "no"
+
+[classes.host-native]
+description = "Host services outside Docker, such as native Ollama."
+host_ports = "external-to-compose"
+healthcheck_required = false

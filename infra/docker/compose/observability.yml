@@ -1,0 +1,274 @@
+# AI Symbiont — Observability Stack
+# Services: ClickHouse, Grafana, OpenTelemetry Collector
+#
+# Usage (run from any directory):
+#   docker compose --env-file infra/docker/.env.observability -f compose.yml --profile observability up -d
+#   docker compose -f compose.yml --profile observability down
+#   docker compose -f compose.yml --profile observability logs -f
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+x-secure-service: &secure-service
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  stop_grace_period: 30s
+x-clickhouse-service: &clickhouse-service
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  stop_grace_period: 60s
+x-common-labels: &common-labels
+  ai.local.managed: "true"
+services:
+  clickhouse:
+    !!merge <<: *clickhouse-service
+    image: clickhouse/clickhouse-server:${CLICKHOUSE_IMAGE_TAG:-24.8}
+    container_name: orc-clickhouse
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: clickhouse
+      ai.local.service_class: admin-local
+      ai.local.exposure_class: admin-local
+      ai.local.component: observability
+      ai.local.profile: observability
+      ai.local.owner: observability
+    ports:
+      - "${AI_LOCAL_BIND:-127.0.0.1}:8123:8123" # HTTP interface
+      - "${AI_LOCAL_BIND:-127.0.0.1}:9000:9000" # Native protocol
+    volumes:
+      - ${CLICKHOUSE_DATA_DIR:-../../../.local/data/docker-volumes/clickhouse/data}:/var/lib/clickhouse:z
+      - ${CLICKHOUSE_LOGS_DIR:-../../../.local/logs/clickhouse}:/var/log/clickhouse-server:z
+    environment:
+      CLICKHOUSE_DB: ai_symbiont
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD_FILE: /run/secrets/clickhouse_password
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    secrets:
+      - clickhouse_password
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    deploy:
+      resources:
+        limits:
+          memory: ${CLICKHOUSE_MEM_LIMIT:-2g}
+          cpus: "${CLICKHOUSE_CPUS_LIMIT:-2.0}"
+          pids: ${CLICKHOUSE_PIDS_LIMIT:-2048}
+        reservations:
+          memory: ${CLICKHOUSE_MEM_RESERVATION:-512m}
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "--no-verbose", "--tries=1", "--spider", "https://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - ai-local
+    profiles:
+      - observability
+  grafana:
+    !!merge <<: *secure-service
+    image: grafana/grafana:${GRAFANA_IMAGE_TAG:-11.2.0}
+    container_name: orc-grafana
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: grafana
+      ai.local.service_class: local-ui
+      ai.local.exposure_class: local-ui
+      ai.local.component: observability
+      ai.local.profile: observability
+      ai.local.owner: observability
+    ports:
+      - "${AI_LOCAL_BIND:-127.0.0.1}:3000:3000"
+    volumes:
+      - ${GRAFANA_DATA_DIR:-../../../.local/data/docker-volumes/grafana}:/var/lib/grafana:z
+      - ../grafana/provisioning:/etc/grafana/provisioning
+      - ../grafana/dashboards:/var/lib/grafana/dashboards
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - export CLICKHOUSE_PASSWORD="$(cat /run/secrets/clickhouse_password)" && exec /run.sh
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_password
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/ai-symbiont-overview.json
+    secrets:
+      - grafana_password
+      - clickhouse_password
+    deploy:
+      resources:
+        limits:
+          memory: ${GRAFANA_MEM_LIMIT:-512m}
+          cpus: "${GRAFANA_CPUS_LIMIT:-1.0}"
+          pids: ${GRAFANA_PIDS_LIMIT:-512}
+        reservations:
+          memory: ${GRAFANA_MEM_RESERVATION:-128m}
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "--no-verbose", "--tries=1", "--spider", "https://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - ai-local
+    profiles:
+      - observability
+  otel-collector:
+    !!merge <<: *secure-service
+    image: otel/opentelemetry-collector-contrib:${OTEL_COLLECTOR_IMAGE_TAG:-0.104.0}
+    container_name: orc-otel-collector
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: otel-collector
+      ai.local.service_class: admin-local
+      ai.local.exposure_class: admin-local
+      ai.local.component: observability
+      ai.local.profile: observability
+      ai.local.owner: observability
+    ports:
+      - "${AI_LOCAL_BIND:-127.0.0.1}:4317:4317" # OTLP gRPC
+      - "${AI_LOCAL_BIND:-127.0.0.1}:4318:4318" # OTLP HTTP
+      - "${AI_LOCAL_BIND:-127.0.0.1}:8888:8888" # Collector metrics
+    volumes:
+      - ../otel/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml
+    deploy:
+      resources:
+        limits:
+          memory: ${OTEL_COLLECTOR_MEM_LIMIT:-512m}
+          cpus: "${OTEL_COLLECTOR_CPUS_LIMIT:-1.0}"
+          pids: ${OTEL_COLLECTOR_PIDS_LIMIT:-512}
+        reservations:
+          memory: ${OTEL_COLLECTOR_MEM_RESERVATION:-128m}
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "--no-verbose", "--tries=1", "--spider", "https://localhost:13133/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - ai-local
+    profiles:
+      - observability
+  # -----------------------------------------------------------------------
+  # Langfuse — LLM observability, prompt management, evals
+  # -----------------------------------------------------------------------
+  langfuse-db:
+    !!merge <<: *secure-service
+    image: postgres:16-alpine
+    container_name: orc-langfuse-db
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: langfuse-db
+      ai.local.service_class: internal
+      ai.local.exposure_class: internal
+      ai.local.component: observability
+      ai.local.profile: observability
+      ai.local.owner: observability
+    environment:
+      POSTGRES_DB: langfuse
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD_FILE: /run/secrets/langfuse_db_password
+    secrets:
+      - langfuse_db_password
+    volumes:
+      - ${LANGFUSE_DB_DATA_DIR:-../../../.local/data/docker-volumes/langfuse-db}:/var/lib/postgresql/data:z
+    deploy:
+      resources:
+        limits:
+          memory: ${LANGFUSE_DB_MEM_LIMIT:-512m}
+          cpus: "${LANGFUSE_DB_CPUS_LIMIT:-1.0}"
+          pids: ${LANGFUSE_DB_PIDS_LIMIT:-512}
+        reservations:
+          memory: ${LANGFUSE_DB_MEM_RESERVATION:-128m}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - ai-local
+    profiles:
+      - observability
+  langfuse:
+    !!merge <<: *secure-service
+    image: langfuse/langfuse:latest
+    container_name: orc-langfuse
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: langfuse
+      ai.local.service_class: local-ui
+      ai.local.exposure_class: local-ui
+      ai.local.component: observability
+      ai.local.profile: observability
+      ai.local.owner: observability
+    ports:
+      - "${AI_LOCAL_BIND:-127.0.0.1}:3001:3000"
+    environment:
+      # All secrets are REQUIRED — no defaults. Populate via .env or shell.
+      # Source values live in infra/docker/secrets/langfuse_* files.
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_DB_PASSWORD:-}@langfuse-db:5432/langfuse
+      NEXTAUTH_URL: https://localhost:3001
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-}
+      SALT: ${LANGFUSE_SALT:-}
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "true"
+    secrets:
+      - langfuse_db_password
+      - langfuse_nextauth_secret
+      - langfuse_salt
+    deploy:
+      resources:
+        limits:
+          memory: ${LANGFUSE_MEM_LIMIT:-1g}
+          cpus: "${LANGFUSE_CPUS_LIMIT:-2.0}"
+          pids: ${LANGFUSE_PIDS_LIMIT:-512}
+        reservations:
+          memory: ${LANGFUSE_MEM_RESERVATION:-256m}
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "--no-verbose", "--tries=1", "--spider", "https://localhost:3000/api/public/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - ai-local
+    profiles:
+      - observability
+secrets:
+  clickhouse_password:
+    file: ${ORC_SECRETS_DIR:-./infra/docker/secrets}/clickhouse_password
+  grafana_password:
+    file: ${ORC_SECRETS_DIR:-./infra/docker/secrets}/grafana_password
+  langfuse_db_password:
+    file: ${ORC_SECRETS_DIR:-./infra/docker/secrets}/langfuse_db_password
+  langfuse_nextauth_secret:
+    file: ${ORC_SECRETS_DIR:-./infra/docker/secrets}/langfuse_nextauth_secret
+  langfuse_salt:
+    file: ${ORC_SECRETS_DIR:-./infra/docker/secrets}/langfuse_salt
+networks:
+  ai-local:
+    driver: bridge
+    name: ai-local-net

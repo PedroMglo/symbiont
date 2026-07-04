@@ -1,0 +1,351 @@
+{
+  "uid": "orc-overview",
+  "title": "AI Symbiont \u2014 Overview",
+  "tags": [
+    "ai-symbiont"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "model",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "clickhouse"
+        },
+        "query": "SELECT DISTINCT model FROM ai_symbiont.llm_events WHERE timestamp > now() - INTERVAL 7 DAY AND model != '' ORDER BY model",
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Total Requests (24h)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT count() FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND timestamp >= now() - INTERVAL 1 DAY",
+          "format": 1,
+          "queryType": "sql"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Total Tokens (24h)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT sum(prompt_tokens + completion_tokens) AS total FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND timestamp >= now() - INTERVAL 1 DAY",
+          "format": 1,
+          "queryType": "sql"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Error Rate",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT round(countIf(success = 0) / count() * 100, 2) AS error_rate FROM ai_symbiont.llm_events WHERE event IN ('request_completed', 'request_error') AND timestamp >= now() - INTERVAL 1 DAY",
+          "format": 1,
+          "queryType": "sql"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Fallback Rate",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT round(countIf(fallback_used = 1) / count() * 100, 2) AS fb_rate FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND timestamp >= now() - INTERVAL 1 DAY",
+          "format": 1,
+          "queryType": "sql"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10
+              },
+              {
+                "color": "red",
+                "value": 25
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Top Model",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT model AS top_model FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND timestamp >= now() - INTERVAL 1 DAY GROUP BY model ORDER BY count() DESC LIMIT 1",
+          "format": 1,
+          "queryType": "sql"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Unique Sessions (24h)",
+      "type": "stat",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT uniqExact(session_id) FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND timestamp >= now() - INTERVAL 1 DAY AND session_id != ''",
+          "format": 1,
+          "queryType": "sql"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Requests Over Time",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT toStartOfFiveMinutes(timestamp) AS time, count() AS requests FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND timestamp >= $__fromTime AND timestamp <= $__toTime GROUP BY time ORDER BY time",
+          "format": 2,
+          "queryType": "sql"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Tokens Over Time",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT toStartOfFiveMinutes(timestamp) AS time, sum(prompt_tokens + completion_tokens) AS tokens FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND timestamp >= $__fromTime AND timestamp <= $__toTime GROUP BY time ORDER BY time",
+          "format": 2,
+          "queryType": "sql"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Requests by Model",
+      "type": "piechart",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 12
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT model, count() AS requests FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND timestamp >= now() - INTERVAL 1 DAY AND model != '' GROUP BY model ORDER BY requests DESC LIMIT 10",
+          "format": 1,
+          "queryType": "sql"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "title": "Requests by Backend",
+      "type": "piechart",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 12
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT backend, count() AS requests FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND timestamp >= now() - INTERVAL 1 DAY AND backend != '' GROUP BY backend ORDER BY requests DESC",
+          "format": 1,
+          "queryType": "sql"
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "title": "Requests by Entrypoint",
+      "type": "piechart",
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 12
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT entrypoint, count() AS requests FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND timestamp >= now() - INTERVAL 1 DAY AND entrypoint != '' GROUP BY entrypoint ORDER BY requests DESC",
+          "format": 1,
+          "queryType": "sql"
+        }
+      ]
+    }
+  ]
+}

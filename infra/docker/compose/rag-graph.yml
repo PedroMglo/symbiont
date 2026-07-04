@@ -1,0 +1,64 @@
+# Optional RAG graph database backend.
+#
+# Usage:
+#   docker compose --profile rag-graph up -d rag-falkordb
+#   RAG_GRAPHIFY_QUERY_BACKEND=falkordb docker compose --profile core --profile rag-graph up -d rag rag-falkordb
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+x-secure-service: &secure-service
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  stop_grace_period: 30s
+x-common-labels: &common-labels
+  ai.local.managed: "true"
+services:
+  rag-falkordb:
+    !!merge <<: *secure-service
+    image: falkordb/falkordb:${FALKORDB_IMAGE_TAG:-v4.18.11-alpine}
+    container_name: orc-rag-falkordb
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: rag-falkordb
+      ai.local.service_class: internal
+      ai.local.exposure_class: internal
+      ai.local.component: rag-graph
+      ai.local.profile: rag-graph
+      ai.local.owner: rag
+    expose:
+      - "6379"
+    volumes:
+      - rag_falkordb_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -h 127.0.0.1 -p 6379 PING | grep -q PONG"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - ai-local
+    deploy:
+      resources:
+        limits:
+          memory: ${RAG_FALKORDB_MEM_LIMIT:-512m}
+          cpus: "${RAG_FALKORDB_CPUS_LIMIT:-1.0}"
+          pids: ${RAG_FALKORDB_PIDS_LIMIT:-512}
+        reservations:
+          memory: ${RAG_FALKORDB_MEM_RESERVATION:-128m}
+    profiles:
+      - rag-graph
+
+networks:
+  ai-local:
+    driver: bridge
+    name: ai-local-net
+
+volumes:
+  rag_falkordb_data:

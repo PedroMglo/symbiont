@@ -1,0 +1,53 @@
+name: public-ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-public-tree:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate public shell entrypoints
+        run: bash -n scripts/install.sh scripts/bootstrap.sh scripts/doctor.sh
+
+      - name: Validate bootstrap preflight
+        run: python scripts/new_user_bootstrap.py --print-install-command
+
+      - name: Validate public tree hygiene
+        run: |
+          forbidden='(^|/)(\.codex|\.agents|AGENTS\.md|graphify-out|\.pytest_cache|\.ruff_cache|\.mypy_cache)(/|$)'
+          if git ls-files | grep -E "$forbidden"; then
+            echo "private/generated path leaked into public tree"
+            exit 1
+          fi
+          private_home="/home/${PRIVATE_USER_NAME:-pmglo}"
+          private_repo="PedroMglo/${PRIVATE_REPO_NAME:-local-ai-sys}"
+          if grep -R --binary-files=without-match -n "${private_home}\|${private_repo}" .; then
+            echo "private path or private repository reference leaked"
+            exit 1
+          fi
+
+      - name: Validate Docker Compose syntax
+        run: docker compose config >/tmp/ai-local-compose.yml
+
+      - name: Run public smoke tests
+        run: |
+          if [ -d tests/smoke ]; then
+            python -m pip install pytest
+            python -m pytest -q tests/smoke
+          else
+            echo "No public smoke tests yet."
+          fi

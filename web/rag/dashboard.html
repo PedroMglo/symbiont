@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Obsidian RAG — Dashboard</title>
+    <link rel="stylesheet" href="/dashboard/assets/dashboard.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  </head>
+  <body>
+    <!-- Header -->
+    <header class="header">
+      <div class="header-left">
+        <h1 class="logo">RAG<span class="logo-accent">Dashboard</span></h1>
+        <span class="health-badge" id="health-badge">●</span>
+      </div>
+      <div class="header-right">
+        <div class="period-selector">
+          <button class="period-btn active" data-days="1">24h</button>
+          <button class="period-btn" data-days="7">7d</button>
+          <button class="period-btn" data-days="30">30d</button>
+          <button class="period-btn" data-days="90">90d</button>
+        </div>
+        <button class="icon-btn" id="refresh-toggle" title="Auto-refresh (30s)">
+          ⟳
+        </button>
+        <button class="icon-btn" id="theme-toggle" title="Toggle theme">
+          ◐
+        </button>
+      </div>
+    </header>
+
+    <!-- Tabs -->
+    <nav class="tabs">
+      <button class="tab active" data-tab="overview">Overview</button>
+      <button class="tab" data-tab="retrieval">Retrieval</button>
+      <button class="tab" data-tab="ingest">Ingest</button>
+      <button class="tab" data-tab="cag">CAG & Graph</button>
+      <button class="tab" data-tab="infra">Infrastructure</button>
+      <button class="tab" data-tab="live">Live Events</button>
+    </nav>
+
+    <!-- Main content -->
+    <main class="main">
+      <!-- Overview Tab -->
+      <section class="tab-content active" id="tab-overview">
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-requests">—</div>
+            <div class="kpi-label">Requests</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-error-rate">—</div>
+            <div class="kpi-label">Error Rate</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-avg-latency">—</div>
+            <div class="kpi-label">Avg Latency</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-p95-latency">—</div>
+            <div class="kpi-label">P95 Latency</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-retrievals">—</div>
+            <div class="kpi-label">Retrievals</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-ingest-status">—</div>
+            <div class="kpi-label">Last Ingest</div>
+          </div>
+        </div>
+        <div class="charts-row">
+          <div class="chart-container">
+            <h3 class="chart-title">Requests / Hour</h3>
+            <canvas id="chart-requests-timeline"></canvas>
+          </div>
+          <div class="chart-container">
+            <h3 class="chart-title">Latency P50 / P95</h3>
+            <canvas id="chart-latency-timeline"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <!-- Retrieval Tab -->
+      <section class="tab-content" id="tab-retrieval">
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-acceptance">—</div>
+            <div class="kpi-label">Acceptance Rate</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-best-score">—</div>
+            <div class="kpi-label">Avg Best Score</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-reranker">—</div>
+            <div class="kpi-label">Reranker %</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-hyde">—</div>
+            <div class="kpi-label">HyDE %</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-dedup">—</div>
+            <div class="kpi-label">Avg Dedup</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-ret-latency">—</div>
+            <div class="kpi-label">Avg Latency</div>
+          </div>
+        </div>
+        <div class="charts-row">
+          <div class="chart-container">
+            <h3 class="chart-title">Best Scores Over Time</h3>
+            <canvas id="chart-scores-timeline"></canvas>
+          </div>
+          <div class="chart-container">
+            <h3 class="chart-title">Acceptance Rate Trend</h3>
+            <canvas id="chart-acceptance-timeline"></canvas>
+          </div>
+        </div>
+        <div class="charts-row">
+          <div class="chart-container">
+            <h3 class="chart-title">Route Mode Distribution</h3>
+            <canvas id="chart-route-modes"></canvas>
+          </div>
+          <div class="chart-container">
+            <h3 class="chart-title">Score Histogram</h3>
+            <canvas id="chart-score-histogram"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <!-- Ingest Tab -->
+      <section class="tab-content" id="tab-ingest">
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-ingest-last">—</div>
+            <div class="kpi-label">Last Status</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-files-parsed">—</div>
+            <div class="kpi-label">Files Parsed</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-chunks-stored">—</div>
+            <div class="kpi-label">Chunks Stored</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-stale-deleted">—</div>
+            <div class="kpi-label">Stale Deleted</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-ingest-errors">—</div>
+            <div class="kpi-label">Errors</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-ingest-duration">—</div>
+            <div class="kpi-label">Duration</div>
+          </div>
+        </div>
+        <div class="charts-row">
+          <div class="chart-container">
+            <h3 class="chart-title">Stage Latency Breakdown</h3>
+            <canvas id="chart-stage-latency"></canvas>
+          </div>
+          <div class="chart-container">
+            <h3 class="chart-title">Governor Events</h3>
+            <div class="table-wrapper" id="governor-table-wrapper">
+              <table class="data-table" id="governor-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Action</th>
+                    <th>RAM%</th>
+                    <th>CPU%</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="full-width-section">
+          <h3 class="chart-title">Recent Ingest Runs</h3>
+          <div class="table-wrapper">
+            <table class="data-table" id="ingest-runs-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Status</th>
+                  <th>Files</th>
+                  <th>Chunks</th>
+                  <th>Stale</th>
+                  <th>Errors</th>
+                  <th>Duration</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- CAG & Graph Tab -->
+      <section class="tab-content" id="tab-cag">
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-pack-hit-rate">—</div>
+            <div class="kpi-label">Pack Hit Rate</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-response-cache">—</div>
+            <div class="kpi-label">Response Cache %</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-avg-nodes">—</div>
+            <div class="kpi-label">Avg Nodes/Query</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-avg-communities">—</div>
+            <div class="kpi-label">Avg Communities</div>
+          </div>
+        </div>
+        <div class="charts-row">
+          <div class="chart-container">
+            <h3 class="chart-title">CAG Hits vs Misses</h3>
+            <canvas id="chart-cag-timeline"></canvas>
+          </div>
+          <div class="chart-container">
+            <h3 class="chart-title">Pack Type Distribution</h3>
+            <canvas id="chart-pack-types"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <!-- Infrastructure Tab -->
+      <section class="tab-content" id="tab-infra">
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-cpu">—</div>
+            <div class="kpi-label">CPU %</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-ram">—</div>
+            <div class="kpi-label">RAM %</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-vram">—</div>
+            <div class="kpi-label">VRAM %</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-disk">—</div>
+            <div class="kpi-label">Disk Free</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-store-latency">—</div>
+            <div class="kpi-label">Store Latency</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-embed-rate">—</div>
+            <div class="kpi-label">Embed Rate</div>
+          </div>
+        </div>
+        <div class="gauges-row">
+          <div class="gauge-container">
+            <svg viewBox="0 0 120 120" class="gauge-svg">
+              <circle cx="60" cy="60" r="50" class="gauge-bg" />
+              <circle
+                cx="60"
+                cy="60"
+                r="50"
+                class="gauge-fill"
+                id="gauge-cpu"
+              />
+              <text x="60" y="60" class="gauge-text" id="gauge-cpu-text">
+                —
+              </text>
+              <text x="60" y="78" class="gauge-label">CPU</text>
+            </svg>
+          </div>
+          <div class="gauge-container">
+            <svg viewBox="0 0 120 120" class="gauge-svg">
+              <circle cx="60" cy="60" r="50" class="gauge-bg" />
+              <circle
+                cx="60"
+                cy="60"
+                r="50"
+                class="gauge-fill"
+                id="gauge-ram"
+              />
+              <text x="60" y="60" class="gauge-text" id="gauge-ram-text">
+                —
+              </text>
+              <text x="60" y="78" class="gauge-label">RAM</text>
+            </svg>
+          </div>
+          <div class="gauge-container">
+            <svg viewBox="0 0 120 120" class="gauge-svg">
+              <circle cx="60" cy="60" r="50" class="gauge-bg" />
+              <circle
+                cx="60"
+                cy="60"
+                r="50"
+                class="gauge-fill"
+                id="gauge-vram"
+              />
+              <text x="60" y="60" class="gauge-text" id="gauge-vram-text">
+                —
+              </text>
+              <text x="60" y="78" class="gauge-label">VRAM</text>
+            </svg>
+          </div>
+        </div>
+        <div class="charts-row">
+          <div class="chart-container">
+            <h3 class="chart-title">Resource Usage History</h3>
+            <canvas id="chart-resources-history"></canvas>
+          </div>
+          <div class="chart-container">
+            <h3 class="chart-title">Store Latency (Query vs Upsert)</h3>
+            <canvas id="chart-store-latency"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <!-- Live Events Tab -->
+      <section class="tab-content" id="tab-live">
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-events-count">0</div>
+            <div class="kpi-label">Events</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-events-errors">0</div>
+            <div class="kpi-label">Errors</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-events-rate">—</div>
+            <div class="kpi-label">Events/min</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpi-sse-status">—</div>
+            <div class="kpi-label">SSE Status</div>
+          </div>
+        </div>
+        <div class="full-width-section">
+          <div class="table-wrapper">
+            <table class="data-table" id="events-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Event</th>
+                  <th>Latency</th>
+                  <th>Status</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span>Obsidian RAG Observability</span>
+      <span id="last-updated">—</span>
+    </footer>
+
+    <script src="/dashboard/assets/dashboard.js"></script>
+  </body>
+</html>

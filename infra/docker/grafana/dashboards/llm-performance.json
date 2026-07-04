@@ -1,0 +1,226 @@
+{
+  "uid": "orc-llm-perf",
+  "title": "AI Symbiont \u2014 LLM Performance",
+  "tags": [
+    "ai-symbiont",
+    "performance"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "model",
+        "type": "query",
+        "datasource": {
+          "type": "grafana-clickhouse-datasource",
+          "uid": "clickhouse"
+        },
+        "query": "SELECT DISTINCT model FROM ai_symbiont.llm_events WHERE timestamp > now() - INTERVAL 7 DAY AND model != '' ORDER BY model",
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "p95 Latency by Model",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT toStartOfFiveMinutes(timestamp) AS time, model, quantile(0.95)(total_latency_ms) AS p95 FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND timestamp >= $__fromTime AND timestamp <= $__toTime AND model IN ($model) GROUP BY time, model ORDER BY time",
+          "format": 2,
+          "queryType": "sql"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Avg Latency by Model",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT toStartOfFiveMinutes(timestamp) AS time, model, avg(total_latency_ms) AS avg_ms FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND timestamp >= $__fromTime AND timestamp <= $__toTime AND model IN ($model) GROUP BY time, model ORDER BY time",
+          "format": 2,
+          "queryType": "sql"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Latency Breakdown (Stacked)",
+      "type": "barchart",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT model, avg(model_load_latency_ms) AS load_ms, avg(prompt_eval_latency_ms) AS prompt_eval_ms, avg(generation_latency_ms) AS generation_ms, avg(context_build_latency_ms) AS context_ms FROM ai_symbiont.llm_events WHERE event IN ('request_completed', 'request_completed') AND timestamp >= $__fromTime AND timestamp <= $__toTime AND model IN ($model) GROUP BY model ORDER BY load_ms + prompt_eval_ms + generation_ms DESC",
+          "format": 1,
+          "queryType": "sql"
+        }
+      ],
+      "options": {
+        "stacking": {
+          "mode": "normal"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Tokens/sec by Model",
+      "type": "barchart",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT model, avg(prompt_tokens_per_second) AS prompt_tps, avg(generation_tokens_per_second) AS gen_tps FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND timestamp >= $__fromTime AND timestamp <= $__toTime AND generation_tokens_per_second > 0 AND model IN ($model) GROUP BY model ORDER BY gen_tps DESC",
+          "format": 1,
+          "queryType": "sql"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Cold Starts Over Time",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT toStartOfFiveMinutes(timestamp) AS time, model, countIf(cold_start = 1) AS cold_starts FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND timestamp >= $__fromTime AND timestamp <= $__toTime GROUP BY time, model HAVING cold_starts > 0 ORDER BY time",
+          "format": 2,
+          "queryType": "sql"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "First Token Latency",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT toStartOfFiveMinutes(timestamp) AS time, model, avg(prompt_eval_latency_ms) AS first_token_ms FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND prompt_eval_latency_ms > 0 AND timestamp >= $__fromTime AND timestamp <= $__toTime GROUP BY time, model ORDER BY time",
+          "format": 2,
+          "queryType": "sql"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Model Load Time Distribution",
+      "type": "histogram",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT model_load_latency_ms FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND model_load_latency_ms > 0 AND timestamp >= $__fromTime AND timestamp <= $__toTime AND model IN ($model)",
+          "format": 1,
+          "queryType": "sql"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Prompt Eval vs Generation Time",
+      "type": "table",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT prompt_eval_latency_ms, generation_latency_ms, model FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND prompt_eval_latency_ms > 0 AND generation_latency_ms > 0 AND timestamp >= $__fromTime AND timestamp <= $__toTime LIMIT 500",
+          "format": 1,
+          "queryType": "sql"
+        }
+      ]
+    }
+  ]
+}

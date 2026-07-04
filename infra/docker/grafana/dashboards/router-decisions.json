@@ -1,0 +1,138 @@
+{
+  "uid": "orc-router",
+  "title": "AI Symbiont \u2014 Router Decisions",
+  "tags": [
+    "ai-symbiont",
+    "router"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Selected Model by Intent",
+      "type": "barchart",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT intent, model AS selected_model, count() AS cnt FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND intent != '' AND timestamp >= $__fromTime AND timestamp <= $__toTime GROUP BY intent, model ORDER BY cnt DESC",
+          "format": 1,
+          "queryType": "sql"
+        }
+      ],
+      "options": {
+        "stacking": {
+          "mode": "normal"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Selected Backend by Intent",
+      "type": "barchart",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT intent, backend AS selected_backend, count() AS cnt FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND intent != '' AND timestamp >= $__fromTime AND timestamp <= $__toTime GROUP BY intent, backend ORDER BY cnt DESC",
+          "format": 1,
+          "queryType": "sql"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Fallbacks Over Time",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT toStartOfFiveMinutes(timestamp) AS time, countIf(fallback_used = 1) AS fallbacks, count() AS total FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND timestamp >= $__fromTime AND timestamp <= $__toTime GROUP BY time ORDER BY time",
+          "format": 2,
+          "queryType": "sql"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Fallback Reasons",
+      "type": "piechart",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT fallback_reason, count() AS cnt FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND fallback_used = 1 AND timestamp >= $__fromTime AND timestamp <= $__toTime AND fallback_reason != '' GROUP BY fallback_reason ORDER BY cnt DESC",
+          "format": 1,
+          "queryType": "sql"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Requested vs Selected Model",
+      "type": "table",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT model AS selected_model, backend AS selected_backend, intent, count() AS cnt, round(avg(total_latency_ms)) AS avg_latency FROM ai_symbiont.llm_events WHERE event = 'request_completed' AND timestamp >= $__fromTime AND timestamp <= $__toTime GROUP BY model, backend, intent ORDER BY cnt DESC",
+          "format": 1,
+          "queryType": "sql"
+        }
+      ]
+    }
+  ]
+}

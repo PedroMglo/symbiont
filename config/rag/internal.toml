@@ -1,0 +1,198 @@
+# Obsidian RAG — Configuração Interna / Defaults
+# Não edites este ficheiro directamente. Usa user.toml para overrides.
+# Todas as opções podem ser overridden via env vars com prefixo RAG_
+# Ex: RAG_RETRIEVAL_TOP_K=15 sobrepõe [retrieval] top_k
+
+# Data/cache paths are inferred by obsidian_rag.config and generated storage
+# env. Override only with RAG_PATHS_DATA_DIR when needed.
+
+[sync]
+# Backend único: direct (leitura in-place do vault)
+
+[chunking]
+max_chars = 2000
+overlap_chars = 200
+min_chars = 50
+strip_frontmatter = true
+contextual_prefix = true
+
+[retrieval]
+embedding_cache_size = 128
+# Graph context: max vizinhos por nó e max comunidades no contexto
+graph_max_neighbors = 5
+graph_max_communities = 3
+# Score thresholds are inferred by obsidian_rag.config.
+
+[router]
+# Timeout is inferred by config.rag and passed as RAG_ROUTER_TIMEOUT.
+
+[reranker]
+# Candidate budgets are inferred by obsidian_rag.config.
+# Score mínimo do reranker (0.0–1.0)
+min_score = 0.3
+# Cross-encoder model (sentence-transformers) — fast batch reranking
+cross_encoder_model = "BAAI/bge-reranker-v2-m3"
+
+# =============================================================================
+# CONTEXT POLICY — política de injecção de contexto
+# =============================================================================
+[context_policy]
+min_relevance_score = 0.50
+min_relevant_chunks = 1
+log_weak_context = true
+
+# =============================================================================
+# PIPELINE — opções de sincronização
+# =============================================================================
+[pipeline]
+# Motor de execução do pipeline:
+#   local — ProcessPoolExecutor (default, sem dependências extras)
+#   dask  — Dask distributed (requer: pip install obsidian-rag[dask])
+engine = "local"
+# Endereço do Dask scheduler (vazio = cria cluster local temporário)
+dask_scheduler = ""
+
+# =============================================================================
+# PERFORMANCE — auto-tuning e limites de recursos
+# =============================================================================
+[performance]
+auto_tune = true
+# CPU/memory/swap/job/batch/timeout values are inferred by config.rag and
+# obsidian_rag.config, then emitted as RAG_PERFORMANCE_* env vars.
+
+# =============================================================================
+# CAG — Cached Augmented Generation
+# =============================================================================
+[cag]
+enabled = true
+response_cache_enabled = false
+max_pack_tokens = 2000
+generate_on_sync = true
+# CAG db path and TTLs are inferred by obsidian_rag.config.
+
+# =============================================================================
+# WORKFLOWS — execução durável de jobs longos
+# =============================================================================
+[workflows]
+# temporal — default: submete /admin/reprocess para Temporal via worker RAG dedicado
+# direct   — fallback local sem infraestrutura extra, só para desenvolvimento isolado
+backend = "temporal"
+temporal_address = "localhost:7233"
+temporal_namespace = "default"
+temporal_task_queue = "rag-reprocess"
+# Job store path and Temporal timeout are inferred by obsidian_rag.config.
+
+# =============================================================================
+# VECTOR STORE — backend de armazenamento vectorial
+# =============================================================================
+[store]
+backend = "qdrant"
+
+# =============================================================================
+# REPOSITÓRIOS GIT — indexação de código no Qdrant
+# =============================================================================
+[repos]
+collection_name = "code_repos"
+
+[repos.chunking]
+strategy = "ast"
+max_chars = 2000
+overlap_chars = 200
+min_chars = 80
+contextual_prefix = true
+
+# =============================================================================
+# GRAPHIFY — knowledge graph estrutural dos repos
+# =============================================================================
+[graphify]
+# Output/cache paths and prefilter thresholds are inferred by
+# obsidian_rag.config.
+
+# Runtime graph query backend behind the RAG API:
+#   json     — read Graphify graph.json directly (default, no extra service)
+#   falkordb — import Graphify output into FalkorDB after graph builds
+query_backend = "json"
+import_on_build = true
+
+# FalkorDB connection used only when query_backend = "falkordb".
+falkor_host = "localhost"
+falkor_port = 6379
+falkor_graph = "obsidian_rag"
+falkor_username = ""
+falkor_password = ""
+falkor_ssl = false
+
+# --- Incremental processing ---
+# Cache de extracções LLM por ficheiro (SQLite)
+extraction_cache_db = "data/graph/extraction_cache.db"
+# Short-circuit: skip SHA256 se mtime+size não mudaram
+mtime_shortcircuit = true
+
+# --- Pre-filter: scoring de ficheiros antes de enviar ao LLM ---
+prefilter_enabled = true
+# Mínimo de caracteres de texto para considerar ficheiro relevante
+prefilter_min_chars = 200
+# Máximo de chunks LLM por documento
+prefilter_max_llm_chunks_per_doc = 20
+
+# --- Schema lock: filtragem pós-extracção ---
+schema_locked = false
+# Ficheiros JSON com tipos permitidos (relativo a config_dir)
+# Se vazio, usa os tipos embutidos em schema.py
+
+# --- Skip patterns: excluir ficheiros do processamento graph ---
+skip_patterns = [
+    ".git/**",
+    "**/__pycache__/**",
+    "**/.venv/**",
+    "**/venv/**",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/*.db",
+    "**/*.sqlite",
+    "**/*.parquet",
+    "**/*.mp3",
+    "**/*.wav",
+    "**/*.mp4",
+    "**/*.avi",
+    "**/*.mkv",
+    "**/cache/**",
+    "**/outputs/**",
+    "**/models/**",
+    "**/*.pkl",
+    "**/*.bin",
+    "**/*.pt",
+    "**/*.onnx",
+    "**/*.safetensors",
+    "**/*.gguf",
+    "**/.DS_Store",
+    "**/Thumbs.db",
+    "**/*.egg-info/**",
+    "**/.mypy_cache/**",
+    "**/.pytest_cache/**",
+    "**/.ruff_cache/**",
+]
+
+# --- Community summaries ---
+# Mínimo de membros para gerar sumário LLM
+community_min_members = 5
+# Community summary workers are inferred by config.rag.
+# Regenerar só comunidades cujo membership hash mudou
+community_incremental = true
+
+# --- Incremental export (obsidian vault) ---
+export_incremental = true
+
+# =============================================================================
+# OBSERVABILITY — ClickHouse metrics (disabled by default)
+# =============================================================================
+[observability]
+enabled = false
+clickhouse_database = "obsidian_rag"
+clickhouse_username = "default"
+clickhouse_password_env = "CLICKHOUSE_PASSWORD"
+queue_max_size = 10000
+fail_silent = true
+resource_sampling = true
+# Batch, flush, retention and sample interval are inferred by obsidian_rag.config.

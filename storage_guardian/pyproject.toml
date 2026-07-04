@@ -1,0 +1,33 @@
+[project]
+name = "storage-guardian"
+version = "0.1.0"
+description = "Autonomous lifecycle storage manager for ai-local"
+requires-python = ">=3.11"
+dependencies = [
+  "sharedai @ git+https://github.com/PedroMglo/sharedai.git@3bc5aed169e8da9d5297e6ae10a50cc906e2d27",
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "pydantic>=2",
+  "PyYAML>=6",
+  "requests>=2.32",
+  "zstandard>=0.22",
+  "pyarrow>=15",
+  "duckdb>=1.0",
+]
+
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+storage_guardian = ["sql/*.sql"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"

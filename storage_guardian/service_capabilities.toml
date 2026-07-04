@@ -1,0 +1,25 @@
+# Storage Guardian-owned agentic capability manifest.
+# The orchestrator consumes this file as runtime metadata only.
+
+[[service_capabilities]]
+service_name = "storage_guardian"
+capability_id = "feature.storage_guardian"
+kind = "feature"
+owner = "storage_guardian"
+capabilities = ["storage_control", "archive", "restore", "lifecycle_storage"]
+transport = { type = "dispatch", service = "storage_guardian", method = "POST", path = "/internal/storage/query", auth_profile = "storage_guardian_internal_token", tls_alias_profile = "storage_guardian_compose" }
+policy_action = "storage.lifecycle"
+risk_level = "high"
+supported_action_types = ["api_call"]
+resource_profile = { resource_class = "storage_io", lane = "background" }
+input_schema = { type = "object", contract = "StorageQueryRequest", schema_ref = "python:storage_guardian.contracts:StorageQueryRequest", required = [] }
+output_schema = { type = "object", contract = "StorageQueryResponse", schema_ref = "python:storage_guardian.contracts:StorageQueryResponse", fields = ["content", "source", "metadata"] }
+evidence_types = ["storage_plan", "chain_of_custody", "restore_plan"]
+writes_allowed = true
+idempotency_policy = "manifest_or_dry_run_required"
+dry_run_supported = true
+rollback_supported = true
+events_published = ["storage.plan.created", "storage.restore.dry_run.completed", "storage.lifecycle.changed", "service.degraded"]
+risk_review_criteria = ["managed_storage_owner_only", "manifest_or_dry_run_required", "rollback_supported_for_mutations", "chain_of_custody_required"]
+round_dependencies = ["policy_approval_for_mutation", "dry_run_before_write"]
+timeout_seconds = 60

@@ -1,0 +1,59 @@
+# AI Symbiont — Observability & Telemetry
+
+[observability]
+enabled = true
+service_name = "ai-symbiont"
+environment = "local"
+backend = "sqlite"  # "sqlite" | "clickhouse" | "both"
+instrumentation = "opentelemetry"
+
+[observability.clickhouse]
+enabled = false
+database = "ai_symbiont"
+username = "default"
+password_env = "CLICKHOUSE_PASSWORD"
+fail_silent = true
+
+[observability.otel]
+enabled = false
+protocol = "http/protobuf"
+fail_silent = true
+
+[observability.local_logs]
+enabled = true
+max_file_mb = 100
+backup_count = 10
+
+[observability.resources]
+enabled = true
+collect_ram = true
+collect_gpu = true
+gpu_backend = "nvidia-smi"
+
+[observability.privacy]
+record_prompts = false
+record_responses = false
+record_context = false
+record_prompt_preview = false
+record_response_preview = false
+prompt_preview_chars = 0
+response_preview_chars = 0
+hash_queries = true
+redact_secrets = true
+redact_paths = true
+
+[observability.gemilyni]
+enabled = true
+dashboard_enabled = true
+log_level = "INFO"
+capture_container_stats = true
+capture_bundle_metadata = true
+capture_context_metadata = true
+capture_file_metadata = true
+capture_policy_events = true
+capture_token_estimates = true
+capture_raw_context = false
+capture_raw_files = false
+capture_prompt_preview = false
+redact_sensitive_values = true
+max_preview_chars = 500

@@ -1,0 +1,204 @@
+# Agent-owned agentic capability manifests.
+# The orchestrator consumes this file as runtime metadata only.
+
+[[service_capabilities]]
+service_name = "reasoning_and_response"
+capability_id = "agent.reasoning_and_response"
+kind = "agent"
+owner = "agents/reasoning_and_response"
+owner_family = "reasoning_and_response"
+lifecycle_status = "active"
+capabilities = [
+  "agent.reasoning_and_response.respond",
+  "agent.reasoning_and_response.decompose",
+  "agent.reasoning_and_response.synthesize",
+  "agent.reasoning_and_response.critique",
+  "agent.reasoning_and_response.classify",
+  "chat",
+  "direct_response",
+  "planning",
+  "decomposition",
+  "synthesis",
+  "summarization",
+  "critique",
+  "evaluation",
+  "classification",
+  "reasoning_direct_response",
+  "reasoning_task_decomposition",
+  "reasoning_synthesis",
+  "reasoning_critique",
+  "reasoning_intent_classification",
+]
+transport = { type = "dispatch", service = "reasoning_and_response", method = "POST", path = "/v1/reasoning/respond", provider_paths = { respond = "/v1/reasoning/respond", decompose = "/v1/reasoning/decompose", synthesize = "/v1/reasoning/synthesize", critique = "/v1/reasoning/critique", classify = "/v1/reasoning/classify" } }
+policy_action = "agent.invoke"
+risk_level = "low"
+supported_action_types = ["agent_invoke", "agent_question"]
+resource_profile = { resource_class = "gpu_llm", lane = "interactive", model_profile = "default" }
+input_schema = { type = "object", contract = "AgentInvokeRequest", schema_ref = "python:orchestrator.dispatch.types:AgentInvokeRequest", required = ["query"], fields = ["query", "context", "metadata", "language_context"] }
+output_schema = { type = "object", contract = "AgentInvokeResponse", schema_ref = "python:orchestrator.dispatch.types:AgentInvokeResponse", fields = ["output", "confidence", "metadata"] }
+evidence_types = ["answer", "task_plan", "subtasks", "synthesis", "consensus_summary", "critique", "quality_score", "classification", "route_decision"]
+model_profile = "default"
+writes_allowed = false
+idempotency_policy = "read_only"
+dry_run_supported = false
+rollback_supported = false
+events_published = ["agent.invoke.completed", "agent.answer.recorded", "service.degraded"]
+risk_review_criteria = ["read_only_agent", "no_external_write", "reasoning_evidence_only"]
+round_dependencies = ["prior_agent_observations"]
+timeout_seconds = 120
+
+[[service_capabilities]]
+service_name = "execution_policy_operator"
+capability_id = "agent.execution_policy_operator"
+kind = "agent"
+owner = "agents/execution_policy_operator"
+owner_family = "execution_policy_operator"
+lifecycle_status = "active"
+capabilities = [
+  "execution_policy_operator",
+  "bash_safety",
+  "shell_static_analysis",
+  "command_risk_classification",
+  "destructive_command_detection",
+  "dry_run_planning",
+  "portable_shell_review",
+]
+transport = { type = "dispatch", service = "execution_policy_operator", method = "POST", path = "/v1/bash/static-safety" }
+policy_action = "shell.safety.review"
+risk_level = "low"
+supported_action_types = ["api_call", "agent_invoke"]
+resource_profile = { resource_class = "cpu", lane = "interactive" }
+input_schema = { type = "object", contract = "BashSafetyRequest", schema_ref = "python:bash_safety.types:BashSafetyRequest", required = [] }
+output_schema = { type = "object", contract = "BashSafetyResponse", schema_ref = "python:bash_safety.types:BashSafetyResponse", fields = ["content", "success", "metadata"] }
+evidence_types = ["shell_safety_report", "command_risk", "risk_findings"]
+writes_allowed = false
+idempotency_policy = "read_only"
+dry_run_supported = true
+rollback_supported = false
+events_published = ["execution_policy.review.completed", "policy.risk_detected", "service.degraded"]
+risk_review_criteria = ["static_review_only", "no_shell_execution", "destructive_patterns_reported"]
+round_dependencies = []
+timeout_seconds = 20
+
+[[service_capabilities]]
+service_name = "material_builder"
+capability_id = "agent.material_builder"
+kind = "agent"
+owner = "agents/material_builder"
+owner_family = "material_builder"
+lifecycle_status = "active"
+capabilities = [
+  "material_planning",
+  "material_file_generation",
+  "material_patch_proposal",
+  "chunk_protocol",
+  "schema_repair_contract",
+  "no_static_fallback",
+]
+transport = { type = "dispatch", service = "material_builder", method = "POST", path = "/v1/material-builder/plan" }
+policy_action = "material.builder.propose"
+risk_level = "low"
+supported_action_types = ["api_call", "agent_invoke"]
+resource_profile = { resource_class = "gpu_llm", lane = "background", model_profile = "material_plan" }
+input_schema = { type = "object", contract = "MaterialPlanRequest", schema_ref = "python:material_builder.types:MaterialPlanRequest", required = ["task_id", "working_query"], fields = ["task_id", "working_query", "original_query", "original_language", "working_language", "language_context"] }
+output_schema = { type = "object", contract = "MaterialPlanResponse", schema_ref = "python:material_builder.types:MaterialPlanResponse", fields = ["plan", "generation_backend", "static_fallback_used"] }
+evidence_types = ["material_plan", "file_proposal", "chunk_record", "patch_proposal", "schema_repair"]
+model_profile = "material_plan"
+writes_allowed = false
+idempotency_policy = "read_only_proposal_by_session"
+dry_run_supported = true
+rollback_supported = false
+events_published = ["material.plan.created", "material.file.completed", "material.patch.proposed", "service.degraded"]
+risk_review_criteria = ["proposal_only", "no_workspace_write", "no_command_execution", "no_static_fallback", "english_internal_contracts"]
+round_dependencies = []
+timeout_seconds = 120
+
+[[service_capabilities]]
+service_name = "audio_transcribe"
+capability_id = "agent.audio_transcribe"
+kind = "agent"
+owner = "agents/audio_transcribe"
+owner_family = "media_agent"
+lifecycle_status = "active"
+capabilities = ["transcription", "audio"]
+route_hints.action_signals = ["transcreve", "transcrever", "transcrição", "transcricao", "transcribe", "transcription", "transcribing", "legendas", "subtitles", "legenda", "subtitle"]
+route_hints.topic_signals = ["áudio", "audio", "áudios", "audios", "whisper"]
+route_hints.file_extensions = ["mp3", "wav", "m4a", "flac", "ogg", "mp4", "mkv", "webm", "mov", "avi"]
+route_hints.patterns = ["transcreve o", "transcreve este", "transcreve a", "transcreve as", "transcreve os", "transcrever o", "transcrever este", "transcreve o seguinte", "transcreve o audio", "transcreve todos", "transcreve tudo", "transcribe the", "transcribe this", "transcribe all", "gera legendas", "gerar legendas", "generate subtitles"]
+transport = { type = "dispatch", service = "audio_transcribe", method = "POST", path = "/v1/transcribe" }
+policy_action = "audio.transcribe"
+risk_level = "medium"
+supported_action_types = ["api_call"]
+resource_profile = { resource_class = "gpu_audio", lane = "background" }
+input_schema = { type = "object", contract = "AudioQueryRequest", schema_ref = "python:audio_transcribe.types:AudioQueryRequest", required = ["query"] }
+output_schema = { type = "object", contract = "AudioQueryResponse", schema_ref = "python:audio_transcribe.types:AudioQueryResponse", fields = ["content", "success", "metadata"] }
+evidence_types = ["transcript", "audio_segments"]
+writes_allowed = false
+idempotency_policy = "read_only"
+dry_run_supported = false
+rollback_supported = false
+events_published = ["audio.transcribe.completed", "service.degraded"]
+risk_review_criteria = ["read_only_input_ref", "personal_or_sensitive_audio_possible", "no_runtime_write"]
+round_dependencies = []
+timeout_seconds = 120
+
+[[service_capabilities]]
+service_name = "local_evidence_operator"
+capability_id = "agent.local_evidence_operator"
+kind = "agent"
+owner = "agents/local_evidence_operator"
+owner_family = "local_evidence_operator"
+lifecycle_status = "active"
+capabilities = [
+  "local_evidence_operator",
+  "code_analysis",
+  "graph",
+  "repo",
+  "git_regression",
+  "data_analysis",
+  "data_profile",
+  "data_quality",
+  "schema_drift",
+  "sqlite_reconcile",
+  "metric_reconcile",
+  "ops_diagnostics",
+  "log_performance",
+  "incident_timeline",
+  "compose_diagnostics",
+  "readiness_analysis",
+  "security_analysis",
+  "cache_correlation",
+  "tenant_isolation",
+  "redaction",
+  "local_security_evidence",
+  "workspace_sandbox_validation_plan",
+]
+transport = { type = "dispatch", service = "local_evidence_operator", method = "POST", path = "/v1/code/analyze" }
+policy_action = "local_evidence.read"
+risk_level = "low"
+supported_action_types = ["api_call", "agent_invoke"]
+resource_profile = { resource_class = "cpu", lane = "interactive" }
+input_schema = { type = "object", contract = "AnalyzeRequest", schema_ref = "python:code_analysis.types:AnalyzeRequest", required = ["query"] }
+output_schema = { type = "object", contract = "AnalyzeResponse", schema_ref = "python:code_analysis.types:AnalyzeResponse", fields = ["graph_context", "repo_context", "file_context", "status"] }
+evidence_types = [
+  "repo_snapshot",
+  "code_evidence",
+  "graph_evidence",
+  "data_profile",
+  "schema_drift",
+  "reconciliation_report",
+  "compose_evidence",
+  "readiness_report",
+  "incident_timeline",
+  "security_evidence",
+  "redacted_report",
+  "sandbox_validation_plan",
+]
+writes_allowed = false
+idempotency_policy = "read_only"
+dry_run_supported = true
+rollback_supported = false
+events_published = ["local_evidence.completed", "service.degraded"]
+risk_review_criteria = ["read_only_local_evidence", "no_workspace_write", "bounded_evidence", "redaction_required"]
+round_dependencies = ["workspace_execution"]
+timeout_seconds = 30

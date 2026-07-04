@@ -1,0 +1,23 @@
+# =============================================================================
+# Research Feature — Configuration
+# =============================================================================
+# Environment variables override all values (prefix: RESEARCH_)
+# =============================================================================
+
+[rag]
+# URL do serviço obsidian-rag
+# URL, timeout and circuit breaker threshold are derived by research.config.
+# Circuit breaker
+circuit_breaker_reset_seconds = 60
+
+[cag]
+# URL base é a mesma do RAG (endpoint /cag/packs)
+# Fallback para SQLite local
+# Local SQLite fallback path is derived by research.config.
+# Tipos de pack por defeito
+default_intent = "general"
+
+[search]
+# Top-K budgets are derived by research.config.
+# Budget de tokens por defeito
+default_budget_tokens = 2000

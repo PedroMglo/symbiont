@@ -1,0 +1,14 @@
+# ai-local root compose
+#
+# This file is intentionally small: it only wires the canonical infrastructure
+# definitions. Application code stays outside infra; runtime/deployment lives in
+# infra.
+
+include:
+  - path: ./infra/docker/compose/storage-guardian.yml
+  - path: ./infra/docker/compose/rag.yml
+  - path: ./infra/docker/compose/symbiont.yml
+  - path: ./infra/docker/compose/observability.yml
+  - path: ./infra/docker/compose/llm-serving.yml
+  - path: ./infra/docker/compose/rag-graph.yml
+  - path: ./infra/docker/compose/temporal.yml

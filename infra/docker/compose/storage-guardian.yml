@@ -1,0 +1,124 @@
+services:
+  storage_guardian:
+    build:
+      context: ../../..
+      dockerfile: infra/docker/images/storage-guardian/Dockerfile
+      ssh:
+        - default
+      secrets:
+        - github_token
+      args:
+        AI_LOCAL_GIT_URL_INSTEAD_OF: ${AI_LOCAL_GIT_URL_INSTEAD_OF:-}
+    image: ai-local-storage-guardian:${AI_LOCAL_IMAGE_TAG:-dev}
+    container_name: orc-storage-guardian
+    profiles: ["storage"]
+    restart: unless-stopped
+    init: true
+    labels:
+      ai.local.managed: "true"
+      ai.local.service: storage_guardian
+      ai.local.service_class: admin-local
+      ai.local.exposure_class: admin-local
+      ai.local.profile: storage
+      ai.local.owner: storage
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+      - /app/.cache:rw,noexec,nosuid,size=64m
+    ports:
+      - "${AI_LOCAL_BIND:-127.0.0.1}:8730:8730"
+    networks:
+      ai-local:
+        aliases:
+          - storage-guardian
+          - storage_guardian
+          - orc-storage-guardian
+    environment:
+      SERVICE_NAME: storage-guardian
+      AI_LOCAL_TLS_DIR: /run/ai-local-tls
+      SSL_CERT_FILE: /run/ai-local-tls/ca-bundle.crt
+      REQUESTS_CA_BUNDLE: /run/ai-local-tls/ca-bundle.crt
+      CURL_CA_BUNDLE: /run/ai-local-tls/ca-bundle.crt
+      STORAGE_GUARDIAN_CONFIG: /workspace/ai-local/config/storage_guardian.yaml
+      AI_LOCAL_PROJECT_ROOT: /workspace/ai-local
+      PROJECT_ROOT: /workspace/ai-local
+      STORAGE_GUARDIAN_INTERNAL_TOKEN_FILE: /run/secrets/internal_api_key
+      STORAGE_GUARDIAN_DATA_DIR: ${AI_STORAGE_GUARDIAN_ROOT:-/storage/ai-local}/data/storage_guardian
+      STORAGE_GUARDIAN_STATE_DIR: ${AI_STORAGE_CONTAINER_BIND_ROOT:-/storage/ai-local}/state/storage_guardian
+      STORAGE_GUARDIAN_CACHE_DIR: ${AI_STORAGE_CONTAINER_BIND_ROOT:-/storage/ai-local}/cache/storage_guardian
+      AUDIO_TRANSCRIBE_DATA_DIR: ${AI_STORAGE_CONTAINER_BIND_ROOT:-/storage/ai-local}/data/audio
+      EXTRATOR_DATA_DIR: ${AI_STORAGE_CONTAINER_BIND_ROOT:-/storage/ai-local}/data/extrator
+      GRAPHIFY_OUT_DIR: ${AI_STORAGE_CONTAINER_BIND_ROOT:-/storage/ai-local}/data/graphify
+      RAG_DATA_DIR: ${AI_STORAGE_CONTAINER_BIND_ROOT:-/storage/ai-local}/data/rag
+      QDRANT_DATA_DIR: ${AI_STORAGE_CONTAINER_BIND_ROOT:-/storage/ai-local}/data/docker-volumes/qdrant
+      LLM_MODELS_DIR: ${AI_STORAGE_CONTAINER_BIND_ROOT:-/storage/ai-local}/data/models/gguf
+      OLLAMA_MODELS: ${AI_STORAGE_CONTAINER_BIND_ROOT:-/storage/ai-local}/data/models/ollama
+      HF_CACHE_DIR: ${AI_STORAGE_CONTAINER_BIND_ROOT:-/storage/ai-local}/data/cache/hf
+      HF_HOME: ${AI_STORAGE_CONTAINER_BIND_ROOT:-/storage/ai-local}/data/cache/hf
+      AI_LOCAL_STORAGE_MODE: ${AI_LOCAL_STORAGE_MODE:-}
+      AI_LOCAL_STORAGE_ROOT: ${AI_STORAGE_CONTAINER_BIND_ROOT:-/storage/ai-local}
+      AI_STORAGE_EXTERNAL_ROOT: ${AI_STORAGE_EXTERNAL_ROOT:-}
+      AI_STORAGE_EXTERNAL_MOUNT_PARENT: ${AI_STORAGE_EXTERNAL_MOUNT_PARENT:-/mnt}
+      AI_STORAGE_HOST_BIND_ROOT: ${AI_STORAGE_HOST_BIND_ROOT:-}
+      AI_STORAGE_CONTAINER_BIND_ROOT: ${AI_STORAGE_CONTAINER_BIND_ROOT:-}
+      AI_STORAGE_GUARDIAN_ROOT: ${AI_STORAGE_GUARDIAN_ROOT:-/storage/ai-local}
+      AI_STORAGE_GUARDIAN_EXTERNAL_ROOT: ${AI_STORAGE_GUARDIAN_EXTERNAL_ROOT:-}
+      AI_STORAGE_REQUIRE_EXTERNAL: ${AI_STORAGE_REQUIRE_EXTERNAL:-false}
+      AI_STORAGE_ALLOW_LOCAL_HEAVY_FALLBACK: ${AI_STORAGE_ALLOW_LOCAL_HEAVY_FALLBACK:-true}
+      AI_RESOURCE_GOVERNOR_URL: ${AI_RESOURCE_GOVERNOR_URL:-https://symbiont:8585}
+      AI_RESOURCE_GOVERNOR_TOKEN_FILE: /run/secrets/internal_api_key
+      AI_LOCAL_EVENT_BUS_URL: ${AI_LOCAL_EVENT_BUS_URL:-https://symbiont:8585}
+      AI_LOCAL_EVENT_BUS_TOKEN_FILE: /run/secrets/internal_api_key
+      AI_LOCAL_EVENT_BUS_TIMEOUT_SECONDS: ${AI_LOCAL_EVENT_BUS_TIMEOUT_SECONDS:-2}
+      PYTHONUNBUFFERED: "1"
+    secrets:
+      - source: storage_guardian_internal_api_key
+        target: internal_api_key
+    volumes:
+      - ../../..:/project:ro,z
+      - ../../..:/workspace/ai-local:z
+      - ${AI_STORAGE_HOST_ACCESS_ROOT:-${AI_LOCAL_HOST_ALLOWED_ROOT:-${HOME}}}:/host_home:z
+      - ${AI_STORAGE_HOST_BIND_ROOT:-../../../.local}:${AI_STORAGE_CONTAINER_BIND_ROOT:-/storage/ai-local}:z
+      - ${AI_LOCAL_TLS_DIR_HOST:-../../../.local/tls}:/run/ai-local-tls:z
+      - type: bind
+        source: ${AI_STORAGE_EXTERNAL_MOUNT_PARENT:-/mnt}
+        target: ${AI_STORAGE_EXTERNAL_MOUNT_PARENT:-/mnt}
+        bind:
+          propagation: rslave
+    working_dir: /workspace/ai-local
+    command:
+      - uvicorn
+      - storage_guardian.app:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8730"
+    deploy:
+      resources:
+        limits:
+          memory: ${STORAGE_GUARDIAN_MEM_LIMIT:-768m}
+          cpus: "${STORAGE_GUARDIAN_CPUS_LIMIT:-0.5}"
+          pids: ${STORAGE_GUARDIAN_PIDS_LIMIT:-256}
+        reservations:
+          memory: ${STORAGE_GUARDIAN_MEM_RESERVATION:-128m}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request, ssl; urllib.request.urlopen('https://127.0.0.1:8730/health', timeout=2, context=ssl._create_unverified_context()).read()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+secrets:
+  storage_guardian_internal_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/internal_api_key
+  github_token:
+    environment: GITHUB_TOKEN
+
+networks:
+  ai-local:
+    driver: bridge
+    name: ai-local-net

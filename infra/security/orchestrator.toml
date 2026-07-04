@@ -1,0 +1,15 @@
+# AI Symbiont - Security Configuration
+
+[security]
+allowed_commands = [
+    "free", "nvidia-smi", "df", "ps", "uptime", "nproc",
+    "uname", "ip", "sensors", "git", "ollama", "docker",
+    "cat", "wc", "head", "tail", "lsblk",
+]
+injection_scanning = false
+agent_sandboxing = false
+secrets_scanning = false
+audit_trail = false
+opa_shadow_enabled = true
+opa_enforce_enabled = false
+per_agent_token_budget = 5000

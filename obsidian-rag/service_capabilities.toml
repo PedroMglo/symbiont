@@ -1,0 +1,26 @@
+# Obsidian RAG-owned agentic capability manifest.
+# The orchestrator consumes this file as runtime metadata only; runtime calls
+# still cross the RAG API or the research feature facade.
+
+[[service_capabilities]]
+service_name = "obsidian_rag"
+capability_id = "service.obsidian_rag"
+kind = "service"
+owner = "obsidian-rag"
+capabilities = ["rag_retrieval", "code_retrieval", "graph_context", "cag_lookup"]
+transport = { type = "https_api", service = "rag", method = "POST", path = "/query", auth_profile = "rag_api_key" }
+policy_action = "rag.query"
+risk_level = "low"
+supported_action_types = ["rag_query", "api_call"]
+resource_profile = { resource_class = "rag", lane = "interactive" }
+input_schema = { type = "object", contract = "QueryRequest", schema_ref = "python:obsidian_rag.api.schemas:QueryRequest", required = ["query"] }
+output_schema = { type = "object", contract = "QueryResponse", schema_ref = "python:obsidian_rag.api.schemas:QueryResponse", fields = ["results", "query", "elapsed_ms", "trace"] }
+evidence_types = ["rag_context", "citation", "graph_context", "cag_pack"]
+writes_allowed = false
+idempotency_policy = "read_only"
+dry_run_supported = false
+rollback_supported = false
+events_published = ["rag.query.completed", "rag.miss", "service.degraded"]
+risk_review_criteria = ["read_only_retrieval", "no_index_mutation", "citations_required", "rag_api_auth_required"]
+round_dependencies = []
+timeout_seconds = 10

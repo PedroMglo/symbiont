@@ -1,0 +1,20 @@
+# =============================================================================
+# Code Analysis Feature — Configuration
+# =============================================================================
+# Environment variables override all values (prefix: CODE_ANALYSIS_)
+# =============================================================================
+
+[graph]
+# URL do serviço RAG (endpoint /graph/context)
+# RAG URL and timeout are derived by code_analysis.config/service env.
+max_nodes = 20
+
+[repo]
+# Directórios de repositórios a analisar (pode conter subpastas com e sem .git)
+# No container: /projects e o mount do diretorio de projetos do user
+# Em desenvolvimento local: $HOME/_projects
+scan_paths = ["/projects"]
+# Máximo de ficheiros a listar por repo
+max_files_list = 50
+# Incluir git status
+include_git_status = true

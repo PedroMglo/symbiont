@@ -1,0 +1,147 @@
+# Data ownership and backup policy for local Docker/runtime state.
+
+[volumes.symbiont_data]
+owner = "symbiont"
+kind = "critical"
+reason = "Agentic ledger, runtime state and operator audit trail."
+backup_required = true
+restore_test_required = true
+env_path = "SYMBIONT_DATA_DIR"
+
+[volumes.extrator_data]
+owner = "features"
+kind = "critical"
+reason = "Extrator jobs, manifests and generated artifacts."
+backup_required = true
+restore_test_required = false
+env_path = "EXTRATOR_DATA_DIR"
+
+[volumes.translation_cache]
+owner = "features"
+kind = "cache"
+reason = "Translation runtime cache."
+backup_required = false
+restore_test_required = false
+env_path = "TRANSLATION_CACHE_DIR"
+
+[volumes.translation_models]
+owner = "features"
+kind = "large-regenerable"
+reason = "Translation models."
+backup_required = false
+restore_test_required = false
+env_path = "TRANSLATION_MODELS_DIR"
+
+[volumes.qdrant]
+owner = "rag"
+kind = "critical"
+reason = "Vector database storage."
+backup_required = true
+restore_test_required = true
+env_path = "QDRANT_DATA_DIR"
+
+[volumes.rag_data]
+owner = "rag"
+kind = "regenerable-with-cost"
+reason = "RAG data and indexes; can be rebuilt but may be expensive."
+backup_required = true
+restore_test_required = false
+env_path = "RAG_DATA_DIR"
+
+[volumes.graphify_out]
+owner = "rag"
+kind = "regenerable"
+reason = "Graphify outputs derived from source data."
+backup_required = false
+restore_test_required = false
+env_path = "GRAPHIFY_OUT_DIR"
+
+[volumes.rag_falkordb_data]
+owner = "rag"
+kind = "regenerable"
+reason = "Optional FalkorDB graph query index imported from Graphify outputs."
+backup_required = false
+restore_test_required = false
+compose_volume = "rag_falkordb_data"
+
+[volumes.temporal_dev_data]
+owner = "config"
+kind = "regenerable"
+reason = "Temporal development server history for local durable workflow testing."
+backup_required = false
+restore_test_required = false
+compose_volume = "temporal_dev_data"
+
+[volumes.clickhouse_data]
+owner = "observability"
+kind = "critical"
+reason = "Observability events and metrics."
+backup_required = true
+restore_test_required = true
+env_path = "CLICKHOUSE_DATA_DIR"
+
+[volumes.clickhouse_logs]
+owner = "observability"
+kind = "logs"
+reason = "ClickHouse service logs."
+backup_required = false
+restore_test_required = false
+env_path = "CLICKHOUSE_LOGS_DIR"
+
+[volumes.grafana_data]
+owner = "observability"
+kind = "critical"
+reason = "Dashboard state and user settings."
+backup_required = true
+restore_test_required = false
+env_path = "GRAFANA_DATA_DIR"
+
+[volumes.langfuse_db_data]
+owner = "observability"
+kind = "critical"
+reason = "Langfuse traces, prompts and eval metadata."
+backup_required = true
+restore_test_required = true
+env_path = "LANGFUSE_DB_DATA_DIR"
+
+
+[volumes.audio_data]
+owner = "audio"
+kind = "critical"
+reason = "Audio/transcription runtime data."
+backup_required = true
+restore_test_required = false
+env_path = "AUDIO_TRANSCRIBE_DATA_DIR"
+
+[volumes.llm_models]
+owner = "llm"
+kind = "large-regenerable"
+reason = "Downloaded GGUF models."
+backup_required = false
+restore_test_required = false
+env_path = "LLM_MODELS_DIR"
+
+[volumes.hf_cache]
+owner = "llm"
+kind = "cache"
+reason = "Hugging Face cache."
+backup_required = false
+restore_test_required = false
+env_path = "HF_CACHE_DIR"
+
+[volumes.redis_data]
+owner = "audio"
+kind = "ephemeral-state"
+reason = "Redis data for heavy/audio workflows."
+backup_required = false
+restore_test_required = false
+env_path = "REDIS_DATA_DIR"
+
+[volumes.storage_guardian_data]
+owner = "storage"
+kind = "critical"
+reason = "Storage Guardian manifests, control metadata and relocation records."
+backup_required = true
+restore_test_required = true
+env_path = "STORAGE_GUARDIAN_DATA_DIR"
+exclusive_writer = "storage_guardian"

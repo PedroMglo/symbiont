@@ -1,0 +1,26 @@
+# =============================================================================
+# Personal Context Feature — Configuration
+# =============================================================================
+# Environment variables override all values (prefix: PERSONAL_CONTEXT_)
+# =============================================================================
+
+[calendar]
+enabled = true
+# Paths para ficheiros .ics (ou directórios contendo .ics)
+# Fedora/GNOME: montado via compose volume do Evolution Data Server
+ics_paths = ["/calendar"]
+# Janela de eventos (dias antes e depois de hoje)
+window_days = 7
+
+[email]
+enabled = false
+# Configure personal IMAP accounts in config/private.local.yaml or through env/secrets.
+accounts = []
+
+[rss]
+enabled = false
+# Configure personal RSS/Atom feeds in config/private.local.yaml.
+feeds = []
+# Máximo de items por feed
+max_items_per_feed = 5
+# Timeout por feed is derived by personal_context.config.

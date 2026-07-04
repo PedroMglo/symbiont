@@ -1,0 +1,124 @@
+# ai-local API governance defaults.
+#
+# This file defines policy-level API behavior. Service-specific runtime config
+# still lives beside each service; this file is the shared contract used by
+# audits, gateway config, docs, and production validation.
+
+version: 1
+environment: local
+
+api:
+  default_version: v1
+  public_base_url: https://ai-local.localhost
+  docs_enabled: true
+  expose_docs_publicly: false
+  allow_anonymous_health: true
+  allow_anonymous_ready: true
+  required_endpoints:
+    - /health
+    - /ready
+    - /metrics
+    - /openapi.json
+  standard_error_shape:
+    wrapper: error
+    fields:
+      - code
+      - message
+      - request_id
+  pagination:
+    default_limit: 50
+    max_limit: 200
+  default_timeout_seconds: 30
+  max_body_mb: 25
+  upload_max_body_mb: 512
+  streaming_timeout_seconds: 600
+
+endpoint_classes:
+  health:
+    methods: ["GET"]
+    anonymous: true
+    timeout_seconds: 3
+    rate_limit: 120/minute
+    max_body_mb: 1
+  read:
+    methods: ["GET"]
+    anonymous: false
+    timeout_seconds: 30
+    rate_limit: 120/minute
+    max_body_mb: 5
+  write:
+    methods: ["POST", "PUT", "PATCH", "DELETE"]
+    anonymous: false
+    timeout_seconds: 60
+    rate_limit: 60/minute
+    max_body_mb: 25
+  expensive:
+    methods: ["POST"]
+    anonymous: false
+    timeout_seconds: 300
+    rate_limit: 30/minute
+    max_body_mb: 25
+    concurrency_limit: 2
+    queue_limit: 8
+  upload:
+    methods: ["POST"]
+    anonymous: false
+    timeout_seconds: 600
+    rate_limit: 10/minute
+    max_body_mb: 512
+    concurrency_limit: 1
+    queue_limit: 4
+  admin:
+    methods: ["GET", "POST", "DELETE"]
+    anonymous: false
+    timeout_seconds: 30
+    rate_limit: 20/minute
+    max_body_mb: 5
+    internal_only: true
+
+services:
+  symbiont:
+    classification: public_via_gateway
+    base_path: /
+    internal_url: https://symbiont:8585
+    direct_host_port: 8585
+    openapi: /openapi.json
+    owner: symbiont
+  rag:
+    classification: internal_gateway_optional
+    base_path: /rag
+    internal_url: https://rag:8484
+    direct_host_port: 8484
+    openapi: /openapi.json
+    owner: obsidian-rag
+  qdrant:
+    classification: private_admin
+    base_path: /qdrant
+    internal_url: https://qdrant:6333
+    direct_host_port: 16336
+    openapi: null
+    owner: obsidian-rag
+  audio-transcribe:
+    classification: internal
+    base_path: /audio
+    internal_url: https://audio-transcribe:8080
+    openapi: /openapi.json
+    owner: symbiont
+  audio-streaming:
+    classification: internal
+    base_path: /audio-streaming
+    internal_url: https://audio-streaming:8087
+    openapi: /openapi.json
+    owner: symbiont
+  agents:
+    classification: internal
+    base_path: /agents
+    internal_url: https://<agent>:8000
+    openapi: /openapi.json
+    owner: symbiont
+  features:
+    classification: internal
+    base_path: /features
+    internal_url: https://<feature>:8000
+    openapi: /openapi.json
+    owner: symbiont

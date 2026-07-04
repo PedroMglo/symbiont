@@ -1,0 +1,236 @@
+# Obsidian RAG — Docker Compose (Standalone)
+# Build context: ../../.. (ai-local repo root)
+# Usage:
+#   docker compose -f compose.yml --profile core up -d
+#   docker compose -f compose.yml --profile qdrant up -d
+#
+# Network modes:
+#   Standalone:    Uses its own bridge network (default).
+#   With symbiont: Set RAG_SHARED_NETWORK=true to join ai-local-net.
+#     This allows the symbiont to reach this RAG instance via https://rag:8484.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+x-secure-service: &secure-service
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  pids_limit: ${RAG_DEFAULT_PIDS_LIMIT:-512}
+  stop_grace_period: 30s
+x-common-labels: &common-labels
+  ai.local.managed: "true"
+x-tls-volume: &tls-volume ${AI_LOCAL_TLS_DIR_HOST:-../../../.local/tls}:/run/ai-local-tls:z
+networks:
+  ai-local:
+    driver: bridge
+    name: ai-local-net
+services:
+  rag:
+    !!merge <<: *secure-service
+    build:
+      context: ../../..
+      dockerfile: infra/docker/images/obsidian-rag/rag/rag.Dockerfile
+      ssh:
+        - default
+      secrets:
+        - github_token
+      args:
+        AI_LOCAL_GIT_URL_INSTEAD_OF: ${AI_LOCAL_GIT_URL_INSTEAD_OF:-}
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: rag
+      ai.local.service_class: gateway-public
+      ai.local.exposure_class: gateway-public
+      ai.local.component: core
+      ai.local.profile: core
+      ai.local.owner: rag
+    ports:
+      - "${AI_LOCAL_BIND:-127.0.0.1}:${ORC_PORT_RAG:-8484}:8484"
+    volumes:
+      - ${RAG_DATA_DIR:-../../../.local/data/rag}:/app/data:z
+      - ${GRAPHIFY_OUT_DIR:-../../../.local/data/graphify}:/app/data/graphify:z
+      - ${AI_RAG_SETTINGS_DIR_HOST:-../../../config/rag}:/app/config/rag:ro
+      - ${RAG_MODELS_CONFIG:-../../../config/models/rag.config.json}:/app/config/models/rag.config.json:ro
+      - ${AI_RAG_HOST_SOURCE_ROOT:-${HOME}}:${AI_RAG_HOST_HOME:-/app/sources/host_home}:ro
+      - ${AUDIO_TRANSCRIBE_DATA_DIR:-../../../.local/data/audio}/output:/app/sources/audio_transcribe/output:ro
+      - *tls-volume
+    environment:
+      - RAG_OLLAMA_BASE_URL=${RAG_OLLAMA_BASE_URL:-https://ollama-proxy:11434}
+      - AI_LOCAL_TLS_DIR=/run/ai-local-tls
+      - AI_LOCAL_TLS_DNS_NAMES=rag,orc-rag,localhost
+      - SSL_CERT_FILE=/run/ai-local-tls/ca-bundle.crt
+      - REQUESTS_CA_BUNDLE=/run/ai-local-tls/ca-bundle.crt
+      - CURL_CA_BUNDLE=/run/ai-local-tls/ca-bundle.crt
+      - OLLAMA_API_KEY_FILE=/run/secrets/ollama_api_key
+      - RAG_API_HOST=${RAG_API_HOST:-0.0.0.0}
+      - RAG_API_PORT=${RAG_API_PORT:-8484}
+      - AI_RAG_SETTINGS_DIR=/app/config/rag
+      - AI_MODELS_REGISTRY=/app/config/models/rag.config.json
+      - RAG_API_API_KEY_FILE=/run/secrets/rag_api_key
+      - RAG_STORE_QDRANT_URL=${RAG_STORE_QDRANT_URL:-https://qdrant:6333}
+      - RAG_STORE_QDRANT_API_KEY_FILE=/run/secrets/qdrant_api_key
+      - RAG_OBSERVABILITY_CLICKHOUSE_URL=${RAG_OBSERVABILITY_CLICKHOUSE_URL:-https://clickhouse:8123}
+      - RAG_WORKFLOWS_BACKEND=${RAG_WORKFLOWS_BACKEND:-direct}
+      - RAG_WORKFLOWS_TEMPORAL_ADDRESS=${RAG_WORKFLOWS_TEMPORAL_ADDRESS:-temporal:7233}
+      - RAG_WORKFLOWS_TEMPORAL_NAMESPACE=${RAG_WORKFLOWS_TEMPORAL_NAMESPACE:-default}
+      - RAG_WORKFLOWS_TEMPORAL_TASK_QUEUE=${RAG_WORKFLOWS_TEMPORAL_TASK_QUEUE:-rag-reprocess}
+      - RAG_WORKFLOWS_TEMPORAL_WORKFLOW_TIMEOUT_SECONDS=${RAG_WORKFLOWS_TEMPORAL_WORKFLOW_TIMEOUT_SECONDS:-7200}
+      - RAG_ROUTER_TIMEOUT=${RAG_ROUTER_TIMEOUT:-15.0}
+      - RAG_PERFORMANCE_MAX_CPU_PERCENT=${RAG_PERFORMANCE_MAX_CPU_PERCENT:-45}
+      - RAG_PERFORMANCE_MAX_MEMORY_PERCENT=${RAG_PERFORMANCE_MAX_MEMORY_PERCENT:-70}
+      - RAG_PERFORMANCE_MAX_PARALLEL_JOBS=${RAG_PERFORMANCE_MAX_PARALLEL_JOBS:-4}
+      - RAG_PERFORMANCE_GRAPH_PARALLEL_JOBS=${RAG_PERFORMANCE_GRAPH_PARALLEL_JOBS:-2}
+      - RAG_PERFORMANCE_PARSER_WORKERS=${RAG_PERFORMANCE_PARSER_WORKERS:-1}
+      - RAG_PERFORMANCE_EMBEDDING_BATCH_SIZE=${RAG_PERFORMANCE_EMBEDDING_BATCH_SIZE:-8}
+      - RAG_PERFORMANCE_EMBEDDING_BATCH_MAX_CHARS=${RAG_PERFORMANCE_EMBEDDING_BATCH_MAX_CHARS:-12000}
+      - RAG_PERFORMANCE_CHUNKS_QUEUE_MAX=${RAG_PERFORMANCE_CHUNKS_QUEUE_MAX:-64}
+      - RAG_PERFORMANCE_FILES_QUEUE_MAX=${RAG_PERFORMANCE_FILES_QUEUE_MAX:-128}
+      - RAG_PERFORMANCE_MANIFEST_BATCH_SIZE=${RAG_PERFORMANCE_MANIFEST_BATCH_SIZE:-50}
+      - RAG_PERFORMANCE_EMBEDDING_CONCURRENCY=${RAG_PERFORMANCE_EMBEDDING_CONCURRENCY:-1}
+      - RAG_PERFORMANCE_EMBEDDING_TIMEOUT=${RAG_PERFORMANCE_EMBEDDING_TIMEOUT:-120}
+      - RAG_PERFORMANCE_QUERY_TIMEOUT_SECONDS=${RAG_PERFORMANCE_QUERY_TIMEOUT_SECONDS:-30}
+      - RAG_PERFORMANCE_GRAPH_TIMEOUT=${RAG_PERFORMANCE_GRAPH_TIMEOUT:-7200}
+      - RAG_PERFORMANCE_PIPELINE_TIMEOUT=${RAG_PERFORMANCE_PIPELINE_TIMEOUT:-7200}
+      - RAG_PERFORMANCE_ENRICH_TIMEOUT=${RAG_PERFORMANCE_ENRICH_TIMEOUT:-300}
+      - RAG_GRAPHIFY_MAX_CONCURRENCY=${RAG_GRAPHIFY_MAX_CONCURRENCY:-1}
+      - RAG_GRAPHIFY_COMMUNITY_MAX_WORKERS=${RAG_GRAPHIFY_COMMUNITY_MAX_WORKERS:-3}
+      - RAG_GRAPHIFY_QUERY_BACKEND=${RAG_GRAPHIFY_QUERY_BACKEND:-json}
+      - RAG_GRAPHIFY_IMPORT_ON_BUILD=${RAG_GRAPHIFY_IMPORT_ON_BUILD:-true}
+      - RAG_GRAPHIFY_FALKOR_HOST=${RAG_GRAPHIFY_FALKOR_HOST:-rag-falkordb}
+      - RAG_GRAPHIFY_FALKOR_PORT=${RAG_GRAPHIFY_FALKOR_PORT:-6379}
+      - RAG_GRAPHIFY_FALKOR_GRAPH=${RAG_GRAPHIFY_FALKOR_GRAPH:-obsidian_rag}
+      - AI_RAG_HOST_HOME=${AI_RAG_HOST_HOME:-/app/sources/host_home}
+      - RAG_SYNC_AUTO_REPROCESS=${RAG_SYNC_AUTO_REPROCESS:-true}
+      - RAG_SYNC_WATCH_INTERVAL_SECONDS=${RAG_SYNC_WATCH_INTERVAL_SECONDS:-60}
+      - RAG_SYNC_STARTUP_DELAY_SECONDS=${RAG_SYNC_STARTUP_DELAY_SECONDS:-10}
+      - RAG_SYNC_AGENT_WAKEUP_ENABLED=${RAG_SYNC_AGENT_WAKEUP_ENABLED:-true}
+      - RAG_SYNC_LIFECYCLE_URL=${RAG_SYNC_LIFECYCLE_URL:-https://symbiont:8585}
+      - RAG_SYNC_LIFECYCLE_API_KEY_FILE=/run/secrets/orc_api_key
+      - RAG_SYNC_LIFECYCLE_START_TIMEOUT_SECONDS=${RAG_SYNC_LIFECYCLE_START_TIMEOUT_SECONDS:-60}
+      - RAG_SYNC_EXTRATOR_URL=${RAG_SYNC_EXTRATOR_URL:-https://extrator:8000}
+      - RAG_SYNC_EXTRATOR_API_KEY_FILE=/run/secrets/internal_api_key
+      - RAG_SYNC_EXTRATOR_TIMEOUT_SECONDS=${RAG_SYNC_EXTRATOR_TIMEOUT_SECONDS:-120}
+      - RAG_SYNC_AUDIO_TRANSCRIBE_URL=${RAG_SYNC_AUDIO_TRANSCRIBE_URL:-https://audio-transcribe:8080}
+      - RAG_SYNC_AUDIO_TRANSCRIBE_API_KEY_FILE=/run/secrets/audio_transcribe_api_key
+      - RAG_SYNC_AUDIO_TRANSCRIBE_OUTPUT_DIR=/app/sources/audio_transcribe/output
+      - RAG_SYNC_AUDIO_TRANSCRIBE_TIMEOUT_SECONDS=${RAG_SYNC_AUDIO_TRANSCRIBE_TIMEOUT_SECONDS:-30}
+      - AI_RESOURCE_GOVERNOR_URL=${AI_RESOURCE_GOVERNOR_URL:-https://symbiont:8585}
+      - AI_RESOURCE_GOVERNOR_TOKEN_FILE=/run/secrets/internal_api_key
+    secrets:
+      - source: rag_ollama_api_key
+        target: ollama_api_key
+      - source: rag_service_api_key
+        target: rag_api_key
+      - source: rag_qdrant_api_key
+        target: qdrant_api_key
+      - source: rag_internal_api_key
+        target: internal_api_key
+      - source: rag_symbiont_api_key
+        target: orc_api_key
+      - source: rag_audio_transcribe_api_key
+        target: audio_transcribe_api_key
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - ai-local
+    deploy:
+      resources:
+        limits:
+          memory: ${RAG_MEM_LIMIT:-2g}
+          cpus: "${RAG_CPUS_LIMIT:-2.0}"
+          pids: ${RAG_PIDS_LIMIT:-512}
+        reservations:
+          memory: ${RAG_MEM_RESERVATION:-512m}
+    healthcheck:
+      test: ["CMD", "curl", "-skf", "https://localhost:8484/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    profiles:
+      - core
+    container_name: orc-rag
+  qdrant:
+    !!merge <<: *secure-service
+    image: qdrant/qdrant:${QDRANT_IMAGE_TAG:-v1.12.6}
+    user: "${AI_LOCAL_UID:-1000}:${AI_LOCAL_GID:-1000}"
+    logging: *logging
+    labels:
+      !!merge <<: *common-labels
+      ai.local.service: qdrant
+      ai.local.service_class: admin-local
+      ai.local.exposure_class: admin-local
+      ai.local.component: storage
+      ai.local.profile: qdrant
+      ai.local.owner: rag
+    expose:
+      - "6333"
+      - "6334"
+    volumes:
+      - ${QDRANT_DATA_DIR:-../../../.local/data/docker-volumes/qdrant}:/qdrant/storage:z
+      - *tls-volume
+      - ../../../infra/docker/images/obsidian-rag/rag/base/tls-cert.sh:/usr/local/bin/ai-local-tls-cert.sh:ro
+    environment:
+      - SERVICE_NAME=qdrant
+      - AI_LOCAL_TLS_DIR=/run/ai-local-tls
+      - AI_LOCAL_TLS_DNS_NAMES=qdrant,orc-qdrant,localhost
+      - AI_LOCAL_TLS_CERT_FILE=/run/ai-local-tls/services/qdrant/tls.crt
+      - AI_LOCAL_TLS_KEY_FILE=/run/ai-local-tls/services/qdrant/tls.key
+      - SSL_CERT_FILE=/run/ai-local-tls/ca-bundle.crt
+      - REQUESTS_CA_BUNDLE=/run/ai-local-tls/ca-bundle.crt
+      - CURL_CA_BUNDLE=/run/ai-local-tls/ca-bundle.crt
+      - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__SERVICE__ENABLE_TLS=true
+      - QDRANT__TLS__CERT=/run/ai-local-tls/services/qdrant/tls.crt
+      - QDRANT__TLS__KEY=/run/ai-local-tls/services/qdrant/tls.key
+      - QDRANT__STORAGE__ON_DISK_PAYLOAD=true
+      - QDRANT__STORAGE__MMAP_THRESHOLD_KB=20480
+      - QDRANT__STORAGE__SNAPSHOTS_PATH=/qdrant/storage/snapshots
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - . /usr/local/bin/ai-local-tls-cert.sh && export QDRANT__SERVICE__API_KEY="$$(cat /run/secrets/qdrant_api_key)" && exec ./entrypoint.sh
+    secrets:
+      - source: rag_qdrant_api_key
+        target: qdrant_api_key
+    mem_limit: ${QDRANT_MEM_LIMIT:-512m}
+    mem_reservation: ${QDRANT_MEM_RESERVATION:-256m}
+    cpus: "${QDRANT_CPUS_LIMIT:-1.0}"
+    pids_limit: ${QDRANT_PIDS_LIMIT:-512}
+    healthcheck:
+      test: ["CMD-SHELL", "openssl s_client -connect 127.0.0.1:6333 -servername qdrant -brief </dev/null >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - ai-local
+    profiles:
+      - core
+      - qdrant
+    container_name: orc-qdrant
+    ports:
+      - ${AI_LOCAL_BIND:-127.0.0.1}:${ORC_PORT_QDRANT_HTTP:-16336}:6333
+      - ${AI_LOCAL_BIND:-127.0.0.1}:${ORC_PORT_QDRANT_GRPC:-16337}:6334
+secrets:
+  rag_ollama_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/ollama_api_key
+  rag_service_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/rag_api_key
+  rag_qdrant_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/qdrant_api_key
+  rag_internal_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/internal_api_key
+  rag_symbiont_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/orc_api_key
+  rag_audio_transcribe_api_key:
+    file: ${ORC_SECRETS_DIR:-../../../infra/docker/secrets}/audio_transcribe_api_key
+  github_token:
+    environment: GITHUB_TOKEN

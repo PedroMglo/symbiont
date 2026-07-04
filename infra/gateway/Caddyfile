@@ -1,0 +1,100 @@
+{
+	admin off
+	local_certs
+}
+
+(ai_local_secure_headers) {
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Cache-Control "no-store"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+}
+
+:443 {
+	tls internal
+	encode zstd gzip
+	import ai_local_secure_headers
+
+	request_body {
+		max_size 25MB
+	}
+
+	handle_path /audio/* {
+		request_body {
+			max_size 512MB
+		}
+		reverse_proxy https://audio-transcribe:8080 {
+			transport http {
+				tls_insecure_skip_verify
+			}
+		}
+	}
+
+	handle_path /rag/* {
+		reverse_proxy https://rag:8484 {
+			transport http {
+				tls_insecure_skip_verify
+			}
+		}
+	}
+
+	handle /rag {
+		reverse_proxy https://rag:8484 {
+			transport http {
+				tls_insecure_skip_verify
+			}
+		}
+	}
+
+	handle_path /qdrant/* {
+		reverse_proxy https://qdrant:6333 {
+			transport http {
+				tls_insecure_skip_verify
+			}
+		}
+	}
+
+	handle_path /audio-streaming/* {
+		reverse_proxy https://audio-streaming:8087 {
+			transport http {
+				tls_insecure_skip_verify
+			}
+		}
+	}
+
+	handle_path /translation/* {
+		reverse_proxy https://translation:8590 {
+			transport http {
+				tls_insecure_skip_verify
+			}
+		}
+	}
+
+	handle /v1/* {
+		reverse_proxy https://symbiont:8585 {
+			transport http {
+				tls_insecure_skip_verify
+			}
+		}
+	}
+
+	handle /query {
+		reverse_proxy https://symbiont:8585 {
+			transport http {
+				tls_insecure_skip_verify
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy https://symbiont:8585 {
+			transport http {
+				tls_insecure_skip_verify
+			}
+		}
+	}
+}

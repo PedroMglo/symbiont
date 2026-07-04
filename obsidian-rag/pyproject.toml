@@ -1,0 +1,137 @@
+[project]
+name = "obsidian-rag"
+version = "0.5.3"
+description = "Local RAG pipeline — Obsidian Vault + Git repos + Graphify knowledge graph"
+requires-python = ">=3.11"
+
+dependencies = [
+    "sharedai @ git+https://github.com/PedroMglo/sharedai.git@3bc5aed169e8da9d5297e6ae10a50cc906e2d27",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "httpx>=0.27",
+    "slowapi>=0.1.9",  # rate limiting
+    "graphifyy>=0.7",   # knowledge graph (pure Python, opt-in na execução)
+    "psutil>=5.9",     # detecção de recursos (RAM, CPU, disco)
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "coverage>=7.0",
+    "mypy>=1.10",
+    "ruff>=0.4",
+    "types-requests>=2.31",
+    "pre-commit>=3.2",
+]
+evals = [
+    "ragas>=0.4",
+    "deepeval>=4.0",
+]
+falkordb = [
+    "FalkorDB>=1.6",
+]
+temporal = [
+    "temporalio>=1.9",
+]
+qdrant = [
+    "qdrant-client>=1.9",
+    "openai>=1.0",   # litellm/graphify backend ollama requires openai package
+]
+treesitter = [
+    "tree-sitter>=0.23",
+    "tree-sitter-javascript>=0.23",
+    "tree-sitter-typescript>=0.23",
+    "tree-sitter-java>=0.23",
+    "tree-sitter-go>=0.23",
+    "tree-sitter-rust>=0.23",
+    "tree-sitter-c>=0.23",
+    "tree-sitter-cpp>=0.23",
+    "tree-sitter-c-sharp>=0.23",
+    "tree-sitter-ruby>=0.23",
+]
+dask = [
+    "dask[distributed]>=2024.1",
+]
+gpu = [
+    "nvidia-ml-py>=12.0",
+]
+reranker = [
+    "sentence-transformers>=3.0",
+]
+profile = [
+    "memray>=1.13",
+    "pytest-timeout>=2.3",
+]
+
+[tool.setuptools.packages.find]
+include = ["obsidian_rag*"]
+
+[tool.setuptools.package-data]
+"obsidian_rag.api" = ["sql/*.sql"]
+"obsidian_rag.cag" = ["sql/*.sql"]
+"obsidian_rag.embeddings" = ["sql/*.sql"]
+"obsidian_rag.observability" = ["sql/*.sql"]
+"obsidian_rag.pipeline" = ["sql/*.sql"]
+"obsidian_rag.pipeline.graph" = ["cypher/*.cypher", "sql/*.sql"]
+"obsidian_rag.retrieval" = ["prompt/*.md"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+norecursedirs = [".git", ".venv", "data", "models", "qdrant_storage", "storage", "embeddings"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+exclude = ["tests/", "\\.venv/"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.coverage.run]
+source = ["obsidian_rag"]
+omit = [
+    "tests/*",
+    "obsidian_rag/graph/*",
+    "obsidian_rag/pipeline/sync.py",
+    "obsidian_rag/cli/*",
+]
+
+[tool.bandit]
+exclude_dirs = [
+  ".git",
+  ".venv",
+  "venv",
+  "env",
+  "__pycache__",
+  "tests",
+  "build",
+  "dist",
+  "data",
+  "models",
+  "qdrant_storage",
+  "storage",
+  "embeddings"
+]
+
+skips = [
+  "B101",   # assert used (expected in tests)
+  "B104",   # bind all interfaces — guarded by api_key check in code
+  "B108",   # hardcoded tmp — frozenset of dangerous paths, not a temp file
+  "B110",   # try/except/pass (intentional silent fallback patterns)
+  "B112",   # try/except/continue (intentional)
+  "B310",   # urllib.urlopen — URL is a controlled local Ollama endpoint
+  "B404",   # import subprocess (required for system commands)
+  "B603",   # subprocess without shell=True (safe — no user input)
+  "B607",   # partial executable path (controlled paths)
+  "B608"    # SQL string formatting — placeholders are parameterised, not user input
+]

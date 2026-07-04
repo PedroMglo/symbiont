@@ -1,0 +1,6 @@
+SELECT {0}, COUNT(*) AS row_count
+FROM {1}
+WHERE {2} IS NOT NULL
+GROUP BY {3}
+HAVING COUNT(*) > 1
+ORDER BY row_count DESC;

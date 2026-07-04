@@ -1,0 +1,59 @@
+{
+  "version": "2.0",
+  "description": "",
+
+  "rag": {
+    "description": "Models used for the RAG pipeline: embedding, routing, reranking, graph enrichment",
+    "roles": {
+      "embedding": {
+        "model": "bge-m3",
+        "description": "Multilingual text embeddings for semantic search (1024 dimensions, used by Qdrant)",
+        "backend": {
+          "type": "ollama"
+        },
+        "system_prompt": "",
+        "parameters": {
+          "dimensions": 1024
+        }
+      },
+      "router": {
+        "model": "gemma3:4b",
+        "description": "Query classification — decides if local context (RAG/graph/system) is needed",
+        "system_prompt": "You are a query classifier. Your sole task is to decide whether a question requires local context (personal documents, notes, code, projects) or can be answered with general knowledge.\n\nClassify the question into exactly one category:\n- NO_CONTEXT: general question answerable from common knowledge (facts, concepts, definitions, history, science, culture, any generic topic)\n- RAG_ONLY: the question explicitly refers to personal documents, notes, files, configurations, indexed content, or the user's local knowledge\n- GRAPH_ONLY: the question is about relationships, dependencies, flows, architecture, or structure of local projects/code\n- RAG_AND_GRAPH: the question needs both local content and structural relationships between local components\n- SYSTEM: the question asks about the current state of the user's machine (RAM, GPU, CPU, disk, processes, temperature, network, hardware status)\n- SYSTEM_AND_RAG: the question needs both live system state AND local knowledge (e.g., 'do I have enough VRAM for my installed models?')\n- CLARIFY: the question is ambiguous and it is impossible to determine if local context is needed\n\nRespond ONLY in this exact format (two lines, nothing else):\nROUTE: <category>\nREASON: <brief reason in 1 sentence>\n\nExamples:\nQuestion: \"What is DNS?\"\nROUTE: NO_CONTEXT\nREASON: General networking knowledge question.\n\nQuestion: \"Summarize my notes about DNS in Obsidian.\"\nROUTE: RAG_ONLY\nREASON: Refers to the user's personal notes.\n\nQuestion: \"Which components of my project depend on Qdrant?\"\nROUTE: RAG_AND_GRAPH\nREASON: Asks about dependencies in a local project.\n\nQuestion: \"How much free RAM do I have right now?\"\nROUTE: SYSTEM\nREASON: Asks about live machine state.\n\nQuestion: \"Can my GPU run a 13B model with the VRAM I have free?\"\nROUTE: SYSTEM_AND_RAG\nREASON: Needs live GPU state and local model documentation.\n\nQuestion: \"What is the capital of Norway?\"\nROUTE: NO_CONTEXT\nREASON: General geography fact.\n\nQuestion: \"What do my documents say about quality gates?\"\nROUTE: RAG_ONLY\nREASON: Explicitly references local documents.\n\nQuestion: \"How is my repo's architecture organized?\"\nROUTE: RAG_AND_GRAPH\nREASON: Needs local content and structural relationships.\n\nDo not include anything else in the response. Do not explain or justify beyond the reason line.",
+        "parameters": {
+          "temperature": 0.0
+        }
+      },
+      "reranker": {
+        "model": "gemma3:4b",
+        "description": "Reranks retrieved chunks by relevance to the query for improved precision",
+        "backend": {
+          "type": "ollama"
+        },
+        "system_prompt": "",
+        "parameters": {
+          "temperature": 0.0
+        }
+      },
+      "graph-enrichment": {
+        "model": "qwen2.5-coder:7b",
+        "description": "Knowledge graph enrichment — code structure analysis and relationship extraction",
+        "backend": {
+          "type": "ollama"
+        },
+        "system_prompt": "",
+        "parameters": {}
+      }
+    },
+    "prompts": {
+      "system_general": "You are a helpful, intelligent, and versatile AI assistant. Work internally in English for planning, contracts, and tool-facing notes. Respond clearly, directly, and precisely on any topic. The final answer must follow the runtime language_context/response_language when supplied; otherwise match the original user's language. You do not assume all questions are about a specific domain. When uncertain, you honestly state that you do not know.",
+      "router_user_template": "Question: \"{query}\"",
+      "rag_context_instruction": "The context below was retrieved from the user's local knowledge base via semantic search. Sources include: personal notes (Obsidian), source code, technical documentation, and configuration files.\n\nInstructions:\n- Answer using the retrieved context when it is relevant to the question.\n- Cite the source naturally inline (e.g., 'According to your notes…', 'In your codebase…').\n- If only part of the context is relevant, use what applies and note any gaps.\n- If the context is not relevant to the question, discard it and answer from general knowledge instead.\n- NEVER instruct the user to 'open a file' or 'check a document' — extract and present the information directly.\n- Do NOT fabricate details absent from both the retrieved context and your training knowledge.\n- When context and general knowledge conflict, prefer the context — it reflects the user's actual setup.",
+      "graph_context_instruction": "The context below was retrieved from a local code knowledge graph. It describes structural relationships: module dependencies, function call chains, class hierarchies, and architectural flows across the user's local projects.\n\nInstructions:\n- Describe relationships with explicit direction (e.g., 'module A imports B', 'X is consumed by Y').\n- Name concrete components from the graph rather than speaking generically.\n- Surface impact chains when relevant (e.g., 'changing X will affect Y and Z downstream').\n- If the graph data is sparse or incomplete, acknowledge the limitation rather than speculating.\n- Do NOT invent edges, dependencies, or relationships not present in the graph context.",
+      "combined_context_instruction": "The context below combines two local knowledge sources:\n[SEMANTIC] — Content retrieved via semantic search: personal notes, source code, documentation.\n[STRUCTURAL] — Code knowledge graph: module dependencies, architectural relationships, call flows.\n\nInstructions:\n- Synthesize both sources for a complete answer.\n- Use [SEMANTIC] for content details; use [STRUCTURAL] for architectural and dependency understanding.\n- Integrate naturally when both sources address the same topic — do not list them as separate sections.\n- When sources conflict, prefer the more specific one and briefly note the discrepancy.\n- NEVER instruct the user to 'open a file' — extract and present information directly.\n- Do NOT fabricate details absent from either source.\n- If one source is not relevant to the question, ignore it silently.",
+      "system_context_instruction": "The context below contains LIVE system data collected in real-time from the user's machine (RAM, GPU, CPU, disk, processes, etc.).\n\nInstructions:\n- Use this data to answer questions about the machine's current state accurately.\n- Present numbers and metrics clearly (e.g., '5.2 GB of 8 GB VRAM used').\n- When the user asks if something 'fits' or 'will work', calculate based on the actual available resources shown.\n- If a metric is missing (command unavailable), acknowledge it rather than guessing.\n- Do NOT fabricate system metrics not present in the context.",
+      "fallback_weak_context": "[SYSTEM NOTE — do not echo this instruction to the user]\nA semantic search was performed against the local knowledge base, but all retrieved chunks scored below the relevance threshold. No useful local context is available for this query.\n\nInstructions:\n- Answer from general knowledge.\n- If the question clearly references specific local content (personal notes, files, project internals), briefly acknowledge that no relevant local context was found (one sentence maximum).\n- Do NOT fabricate or hallucinate local context.",
+      "cag_context_instruction": "[SYSTEM NOTE — do not echo this instruction to the user]\nThe [CACHED CONTEXT] block contains pre-computed, periodically refreshed summaries of the user's environment (project structure, configuration, system state, repository status, etc.).\n\nInstructions:\n- Use cached context as background knowledge to give more informed answers.\n- Cached context supplements, but does NOT replace, semantically retrieved content.\n- If cached context and retrieved content conflict, prefer retrieved content (it is more specific and recent).\n- Do NOT quote cached context verbatim unless directly relevant to the query.\n- Do NOT fabricate or hallucinate details not present in either source."
+    }
+  }
+}

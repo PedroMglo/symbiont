@@ -1,0 +1,481 @@
+# Predictive Prewarming — Feature Catalog
+# All service metadata for the prewarm prediction engine.
+# Keywords, patterns, and costs are used by the rule router and embedding router.
+# Modify this file to add/remove services or adjust prediction accuracy.
+
+[features.audio_transcribe]
+display_name = "Audio Transcription"
+description = "Speech and media processing service for transcription, subtitles, diarization, and spoken-audio extraction."
+container_name = "audio-transcribe"
+startup_cost = "high"
+uses_gpu = true
+prewarm_policy = "standard"
+prewarm_threshold = 0.70
+ttl_idle = 900
+priority = 3
+capabilities = ["speech-to-text", "audio transcription", "video subtitles", "speaker diarization", "recording analysis"]
+inputs = ["audio files", "video files", "recordings", "media attachments"]
+operations = ["transcribe", "generate subtitles", "detect speakers", "extract spoken text"]
+keywords = [
+    "transcreve", "transcrever", "transcrição", "transcricao",
+    "transcribe", "transcription", "transcribing",
+    "áudio", "audio", "áudios", "audios",
+    "whisper", "legendas", "subtitles", "legenda", "subtitle",
+    "speaker", "diarization", "diarização",
+]
+file_extensions = ["mp3", "wav", "m4a", "flac", "ogg", "mp4", "mkv", "webm", "mov", "avi"]
+patterns = [
+    "transcreve[r]?\\s+(o|este|a|as|os|todos|tudo)",
+    "transcribe\\s+(the|this|all)",
+    "gera[r]?\\s+legendas",
+    "generate\\s+subtitles",
+]
+negative_keywords = []
+negative_patterns = []
+example_queries = [
+    "Transcreve este ficheiro de áudio",
+    "Transcribe this MP3 file",
+    "Gera legendas para este vídeo",
+    "Quem fala neste áudio?",
+    "Transcreve a reunião gravada",
+    "Generate subtitles for this recording",
+]
+
+[features.local_evidence_operator]
+display_name = "Local Evidence Operator"
+description = "Consolidated read-only local evidence service for code, repositories, data, ops, Compose, and local security diagnostics."
+container_name = "local-evidence-operator"
+startup_cost = "medium"
+uses_gpu = false
+prewarm_policy = "standard"
+prewarm_threshold = 0.85
+ttl_idle = 600
+priority = 4
+capabilities = [
+    "code understanding",
+    "repository analysis",
+    "dependency analysis",
+    "data profiling",
+    "schema drift",
+    "SQLite introspection",
+    "log diagnostics",
+    "Docker Compose analysis",
+    "local security evidence",
+    "redaction",
+]
+inputs = ["source files", "repositories", "stack traces", "datasets", "SQLite databases", "logs", "Compose files", "local evidence"]
+operations = ["analyze code", "trace callers", "inspect imports", "profile dataset", "detect schema drift", "inspect Compose", "correlate security evidence", "redact sensitive data"]
+keywords = [
+    "código", "code", "script", "programa", "program",
+    "função", "function", "method", "método",
+    "classe", "class", "refactor", "refactora", "refatorar",
+    "bug", "bugs", "debug", "debugging", "depurar",
+    "implementa", "implement", "escreve", "write",
+    "repo", "repositório", "repository", "codebase",
+    "depende", "dependência", "dependências", "depends", "dependency",
+    "importa", "imports", "importação",
+    "arquitectura", "arquitetura", "architecture", "structure", "estrutura",
+    "módulo", "módulos", "module", "modules",
+    "grafo", "graph", "upstream", "downstream",
+    "dataset", "dados", "csv", "tsv", "jsonl", "ndjson",
+    "sqlite", "sql", "schema", "esquema", "drift", "qualidade",
+    "quality", "duplicates", "duplicados", "malformed", "reconcile",
+    "logs", "log", "incidente", "incident", "timeline", "docker",
+    "compose", "readiness", "healthcheck", "ambiente", "environment",
+    "latência", "latency", "performance", "ops", "diagnostics",
+    "security", "segurança", "vulnerability", "vulnerabilidade",
+    "cve", "secret", "secrets", "token", "redact", "redação",
+    "xss", "csrf", "sql injection", "auth", "trace", "traces",
+]
+file_extensions = ["py", "ts", "js", "rs", "go", "java", "c", "cpp", "h", "tsx", "jsx", "csv", "tsv", "jsonl", "ndjson", "sqlite", "db", "sqlite3", "gz", "zst", "log", "env", "yml", "yaml", "sarif"]
+patterns = [
+    "analisa\\s+(este|o|a)\\s+(código|repo|projeto|ficheiro)",
+    "analyze\\s+(this|the)\\s+(code|repo|project|file)",
+    "refactor[a]?\\s+",
+    "como\\s+funciona\\s+(este|o)",
+    "what\\s+(calls|depends|imports)",
+    "quem\\s+(chama|depende|importa)",
+    "analisa\\s+.*\\.(csv|tsv|jsonl|ndjson|sqlite|db)",
+    "profile\\s+.*\\.(csv|tsv|jsonl|ndjson|sqlite|db)",
+    "schema\\s+drift",
+    "data\\s+quality",
+    "docker\\s+compose",
+    "incident\\s+timeline",
+    "security\\s+(analysis|review)",
+    "analisa\\s+.*seguran[çc]a",
+    "redact\\s+.*(secret|token)",
+]
+negative_keywords = [
+    "conceito", "teoria", "paradigma", "definição",
+    "o que é", "what is", "explain what",
+    "exemplo de", "example of",
+    "notas", "notes", "vault", "obsidian",
+]
+negative_patterns = [
+    "explica[r]?\\s+(o\\s+que|como)\\s+(é|são|funciona)\\s+(um|uma|o|a|programação|coding)",
+    "(what|how)\\s+is\\s+(a|an|the)\\s+\\w+\\s+(in programming|in computer science)",
+    "(nas?|no)\\s+(meu|minha|minhas|meus)\\s+(notas|vault|obsidian)",
+    "(procura|search|find)\\s+.*(notas|notes|vault)",
+    "(o\\s+que|que\\s+\\w+)\\s+(depende|chama|importa)\\s+d[oe]",
+]
+example_queries = [
+    "Analisa este ficheiro Python",
+    "O que depende deste módulo?",
+    "Refactora esta função",
+    "How does this pipeline work?",
+    "What calls this function?",
+    "Show the dependency graph",
+    "Qual a arquitectura deste projecto?",
+    "Profile this CSV dataset",
+    "Diagnose this Docker Compose file",
+    "Correlate local security evidence",
+]
+
+[features.personal_context]
+display_name = "Personal Context"
+description = "Personal context service for calendar, email, RSS, events, and user-specific briefings."
+container_name = "personal-context"
+startup_cost = "low"
+uses_gpu = false
+prewarm_policy = "standard"
+prewarm_threshold = 0.72
+ttl_idle = 900
+priority = 4
+capabilities = ["calendar lookup", "email lookup", "RSS lookup", "personal briefing", "event summary"]
+inputs = ["calendar", "email", "RSS feeds", "dates", "personal account context"]
+operations = ["show agenda", "summarize emails", "summarize news", "find meetings", "prepare briefing"]
+keywords = [
+    "calendário", "calendario", "calendar", "agenda",
+    "eventos", "events", "evento", "event",
+    "reunião", "reuniões", "meeting", "meetings",
+    "email", "emails", "correio", "mail", "mails",
+    "notícias", "noticias", "news", "feeds", "rss",
+    "resumo", "briefing", "summary",
+    "hoje", "today", "amanhã", "tomorrow",
+    "semana", "week",
+]
+patterns = [
+    "o\\s+que\\s+tenho\\s+(hoje|amanhã|esta\\s+semana)",
+    "what\\s+(do\\s+I\\s+have|is\\s+on\\s+my)\\s+(today|tomorrow|this\\s+week)",
+    "mostra\\s+(o\\s+)?(meu\\s+)?(calendário|agenda|emails|rss)",
+    "show\\s+(my\\s+)?(calendar|agenda|emails|news|rss)",
+    "resum[eo]\\s+(d[oa]s?\\s+)?(dia|semana|emails|notícias)",
+]
+negative_keywords = [
+    "conceito", "teoria", "exemplo", "explicar",
+    "o que é", "what is", "how does",
+]
+negative_patterns = [
+    "o\\s+que\\s+(é|são|significa)\\s+(um|uma|o|a)",
+    "explica[r]?\\s+(o\\s+que|como)",
+]
+example_queries = [
+    "O que tenho na agenda hoje?",
+    "Mostra os meus emails recentes",
+    "What meetings do I have this week?",
+    "Resumo das notícias de hoje",
+    "Show my RSS feeds",
+    "Tenho algum evento amanhã?",
+]
+
+[features.research]
+display_name = "Research / RAG"
+description = "Research and retrieval service for user notes, knowledge bases, documents, and indexed vault content."
+container_name = "research"
+startup_cost = "low"
+uses_gpu = false
+prewarm_policy = "standard"
+prewarm_threshold = 0.70
+ttl_idle = 1200
+priority = 1
+capabilities = ["retrieval augmented generation", "note search", "document retrieval", "knowledge-base lookup", "vault search"]
+inputs = ["notes", "vaults", "indexed documents", "knowledge base", "query text"]
+operations = ["search notes", "retrieve documents", "answer from knowledge base", "find related context"]
+keywords = [
+    "obsidian", "vault", "notas", "notes",
+    "pesquisa", "pesquisar", "search", "procura", "procurar",
+    "knowledge", "conhecimento",
+    "documentos", "documents", "docs",
+    "indexado", "indexed",
+    "encontra", "find",
+]
+patterns = [
+    "nas\\s+minhas\\s+notas",
+    "no\\s+meu\\s+(vault|obsidian)",
+    "in\\s+my\\s+(notes|vault|obsidian)",
+    "procura\\s+(nas?|no)\\s+(meu|minha|minhas|meus)",
+    "search\\s+(my|the)\\s+(notes|vault|docs)",
+]
+negative_keywords = [
+    "teoria", "conceito", "definição", "explicar",
+    "o que é", "what is", "how does", "define",
+]
+negative_patterns = [
+    "o\\s+que\\s+(é|são|significa)\\s+(um|uma|o|a)",
+    "explica[r]?\\s+(o\\s+que|como)\\s+(é|funciona)",
+    "(what|how)\\s+(is|does|do)\\s+(a|an|the)",
+]
+example_queries = [
+    "Procura nas minhas notas sobre Kubernetes",
+    "O que tenho escrito sobre Docker?",
+    "Search my vault for Python patterns",
+    "Find notes about architecture",
+    "O que é que as minhas notas dizem sobre RAG?",
+]
+
+[features.extrator]
+display_name = "Extrator"
+description = "Document extraction and conversion service for structured/unstructured files and RAG ingestion bundles."
+container_name = "extrator"
+startup_cost = "medium"
+uses_gpu = false
+prewarm_policy = "standard"
+prewarm_threshold = 0.70
+ttl_idle = 1800
+priority = 2
+capabilities = ["document extraction", "file conversion", "RAG chunking", "bundle creation", "structured data extraction"]
+inputs = ["PDF", "DOCX", "PPTX", "XLSX", "CSV", "Markdown", "HTML", "folders"]
+operations = ["extract text", "convert files", "chunk documents", "create ingestion bundle", "process folder"]
+keywords = [
+    "extrator", "extract", "etl", "converter", "convert", "conversao",
+    "pdf", "docx", "xlsx", "csv", "markdown", "html", "parquet",
+    "documento", "documentos",
+    "processa", "processar",
+    "indexa", "indexar", "bundle", "chunks",
+]
+file_extensions = [
+    "pdf", "docx", "pptx", "xlsx", "csv", "md", "html", "htm",
+]
+patterns = [
+    "converter\\s+.*\\s+para",
+    "convert\\s+.*\\s+to",
+    "processa[r]?\\s+.*(/|ficheiro|pasta|folder|documento)",
+    "indexa[r]?\\s+.*(/|ficheiro|pasta|folder|documento)",
+    "extrair\\s+.*\\s+(pdf|docx|xlsx|csv)",
+    "extract\\s+.*\\s+(pdf|docx|xlsx|csv)",
+    "/[^\\s]+\\.(pdf|docx|xlsx|csv|md|html|json|txt)",
+]
+negative_keywords = [
+    "definicao", "explicar", "what is", "how does",
+]
+negative_patterns = []
+example_queries = [
+    "Converte este PDF para Markdown",
+    "Extrai chunks deste DOCX para RAG",
+    "Converter CSV para Parquet",
+    "Criar bundle RAG a partir de documentos",
+]
+
+[features.execution_policy_operator]
+display_name = "Execution Policy Operator"
+description = "Read-only execution policy service for shell and command risk classification, destructive-pattern detection, dry-run gates, and portability review."
+container_name = "execution-policy-operator"
+startup_cost = "low"
+uses_gpu = false
+prewarm_policy = "standard"
+prewarm_threshold = 0.72
+ttl_idle = 900
+priority = 3
+capabilities = ["shell safety review", "destructive command detection", "dry-run analysis", "script validation", "portability review"]
+inputs = ["bash scripts", "shell commands", "command plans", "Makefile snippets"]
+operations = ["review shell script", "detect destructive patterns", "check dry run", "validate bash", "suggest shell safety fixes"]
+keywords = [
+    "bash", "shell", "script", "scripts", "comando", "command",
+    "rm", "sudo", "chmod", "chown", "curl", "wget", "tar",
+    "dry-run", "dryrun", "shellcheck", "bash -n", "seguro", "unsafe",
+    "destrutivo", "destructive",
+]
+file_extensions = ["sh", "bash", "zsh", "fish"]
+patterns = [
+    "rev[eê]s?\\s+.*(bash|shell|script|comando)",
+    "review\\s+.*(bash|shell|script|command)",
+    "é\\s+seguro\\s+.*(executar|correr)",
+    "is\\s+it\\s+safe\\s+to\\s+run",
+    "shellcheck",
+]
+negative_keywords = ["csv", "dataset", "calendar", "obsidian"]
+negative_patterns = []
+example_queries = []
+
+[features.workspace_execution]
+display_name = "Workspace Execution"
+description = "Active VM-backed sandbox runtime for governed workspace sessions, batch writes, patch application, command runs, validation profiles, transient artifacts, and cleanup evidence."
+container_name = "workspace-execution"
+startup_cost = "medium"
+uses_gpu = false
+prewarm_policy = "standard"
+prewarm_threshold = 0.76
+ttl_idle = 900
+priority = 3
+capabilities = ["VM-backed sandbox", "batch file write", "patch apply", "command validation", "artifact packaging", "cleanup evidence"]
+inputs = ["material workspace files", "patch proposals", "command plans", "validation profiles", "artifact requests"]
+operations = ["allocate VM session", "write generated files", "apply patch", "run validation command", "package artifact", "cleanup VM workspace"]
+keywords = [
+    "workspace", "sandbox", "vm", "microvm", "command", "comando",
+    "execute", "executa", "run", "correr", "pytest", "compileall",
+    "patch", "diff", "artifact", "artefacto", "artefato", "docker compose",
+    "validation profile", "validação", "validacao", "cleanup",
+]
+file_extensions = ["py", "toml", "yaml", "yml", "md", "dockerfile", "sh"]
+patterns = [
+    "(run|execute)\\s+.*(test|command|validation)",
+    "(apply|aplica)\\s+.*(patch|diff)",
+    "(sandbox|vm|microvm)\\s+.*(workspace|command|validation)",
+    "(executa|corre)\\s+.*(teste|comando|valida[cç][aã]o)",
+]
+negative_keywords = ["calendar", "agenda", "email", "obsidian", "notes"]
+negative_patterns = []
+example_queries = []
+
+[features.material_builder]
+display_name = "Material Builder"
+description = "Proposal-only material agent for structured project plans, file proposals, chunk contracts, repair proposals, and schema repair."
+container_name = "material-builder"
+startup_cost = "medium"
+uses_gpu = false
+prewarm_policy = "standard"
+prewarm_threshold = 0.76
+ttl_idle = 900
+priority = 3
+capabilities = ["material planning", "file proposal", "patch proposal", "chunk protocol", "schema repair"]
+inputs = ["software build goals", "material task constraints", "validation logs", "issue contracts"]
+operations = ["propose material plan", "propose files", "propose patches", "repair proposal schema"]
+keywords = [
+    "build", "create", "generate", "implement", "project", "app", "service",
+    "constrói", "constroi", "cria", "gera", "implementa", "projeto", "projecto",
+    "ficheiros", "files", "dockerfile", "docker compose", "pytest", "fastapi",
+]
+file_extensions = ["py", "toml", "yaml", "yml", "md", "dockerfile"]
+patterns = [
+    "build\\s+.*(project|app|service|cli)",
+    "create\\s+.*(project|app|service|cli)",
+    "generate\\s+.*(files|project|app)",
+    "constr[óo]i\\s+.*(projeto|projecto|app|servi[cç]o)",
+    "cria\\s+.*(projeto|projecto|app|servi[cç]o)",
+]
+negative_keywords = ["calendar", "agenda", "email", "obsidian", "notes"]
+negative_patterns = []
+example_queries = []
+
+[features.material_execution_kernel]
+display_name = "Material Execution Kernel"
+description = "Material session coordinator for manifests, event streams, VM-backed sandbox validation, repair loops, and completion evidence."
+container_name = "material-execution-kernel"
+startup_cost = "medium"
+uses_gpu = false
+prewarm_policy = "standard"
+prewarm_threshold = 0.76
+ttl_idle = 900
+priority = 3
+capabilities = ["material sessions", "incremental manifest", "event stream", "VM-backed validation", "repair loop", "completion evidence"]
+inputs = ["material task goals", "workspace validation requirements", "sandbox constraints", "artifact requirements"]
+operations = ["start material session", "advance material phase", "record material events", "coordinate sandbox validation", "package artifact evidence"]
+keywords = [
+    "artifact", "artefacto", "artefato", "workspace", "sandbox", "validated",
+    "validate", "repair", "recover", "retry", "timeline", "docker compose",
+    "execução", "execucao", "valida", "corrige", "recupera", "evidência", "evidencia",
+]
+file_extensions = ["py", "toml", "yaml", "yml", "md", "dockerfile"]
+patterns = [
+    "(validated|working|ready)\\s+(artifact|project|app)",
+    "(repair|recover|retry)\\s+.*(project|build|test|validation)",
+    "(valida|corrige|recupera)\\s+.*(projeto|projecto|build|teste)",
+]
+negative_keywords = ["calendar", "agenda", "email", "obsidian", "notes"]
+negative_patterns = []
+example_queries = []
+
+[features.translation]
+display_name = "Translation"
+description = "Language normalization, PT-PT linting, spellcheck, and optional translation service."
+container_name = "translation"
+startup_cost = "medium"
+uses_gpu = false
+prewarm_policy = "standard"
+prewarm_threshold = 0.74
+ttl_idle = 900
+priority = 4
+capabilities = ["language normalization", "translation", "PT-PT lint", "spellcheck", "language detection"]
+inputs = ["plain text", "Portuguese text", "multilingual text"]
+operations = ["normalize language", "translate text", "lint PT-PT", "spellcheck", "detect language"]
+keywords = [
+    "traduz", "translate", "translation", "normaliza", "normalize",
+    "spellcheck", "ortografia", "pt-pt", "português", "portugues",
+    "inglês", "ingles", "language", "idioma",
+]
+file_extensions = []
+patterns = [
+    "traduz\\s+.*\\s+para",
+    "translate\\s+.*\\s+to",
+    "normaliza\\s+.*(pt-pt|portugu[eê]s)",
+    "spellcheck",
+]
+negative_keywords = ["code", "repo", "bash", "dataset"]
+negative_patterns = []
+example_queries = []
+
+[features.storage_guardian]
+display_name = "Storage Guardian"
+description = "Managed storage lifecycle service for mounts, archives, restores, upload sessions, policies, and filesystem custody."
+container_name = "storage_guardian"
+startup_cost = "medium"
+uses_gpu = false
+prewarm_policy = "standard"
+prewarm_threshold = 0.70
+ttl_idle = 600
+priority = 3
+capabilities = ["managed storage", "mount inspection", "archive and restore", "storage policy", "chain of custody"]
+inputs = ["storage paths", "mounts", "external disks", "archive requests", "restore requests", "upload sessions"]
+operations = ["inspect storage", "check mounts", "archive data", "restore data", "validate storage policy"]
+keywords = [
+    "storage_guardian", "storage guardian", "storage",
+    "prewarning", "prewarnings", "pre-aviso", "pre-avisos",
+    "mount", "mounts", "ssd", "externo", "external",
+    "archive", "restore", "arquivo", "restauro",
+    "approval", "aprovacao", "aprovação", "policy", "politica", "política",
+]
+file_extensions = []
+patterns = [
+    "storage[_\\s-]?guardian",
+    "storage\\s+status",
+    "archive\\s*/\\s*restore",
+    "mounts?\\s+(externos?|external)",
+    "pre[-\\s]?warnings?",
+]
+negative_keywords = [
+    "memoria", "memória", "ram", "vram", "cpu", "gpu",
+]
+negative_patterns = [
+    "quanto\\s+.*(ram|vram|cpu|gpu)",
+    "recursos\\s+.*(ram|vram|cpu|gpu)",
+]
+example_queries = [
+    "Verifica storage_guardian, mounts externos e prewarnings",
+    "Check storage status and archive/restore policy",
+    "Os mounts do SSD externo estão visíveis?",
+]
+
+[features.reasoning_and_response]
+display_name = "Reasoning And Response"
+description = "Consolidated owner for direct answer, synthesis, decomposition, critique, and intent classification."
+container_name = "reasoning-and-response"
+startup_cost = "medium"
+uses_gpu = true
+prewarm_policy = "never"
+prewarm_threshold = 1.01
+ttl_idle = 1200
+priority = 1
+capabilities = ["direct answer", "conversation", "general explanation", "translation", "simple reasoning", "synthesis", "critique", "decomposition", "classification"]
+inputs = ["plain text prompt"]
+operations = ["answer directly", "explain", "translate", "summarize short text", "combine sources", "review answer quality", "plan subtasks", "classify intent"]
+keywords = []
+file_extensions = []
+patterns = []
+negative_keywords = []
+negative_patterns = []
+example_queries = [
+    "Olá, como estás?",
+    "Explica-me o que é machine learning",
+    "What is the difference between TCP and UDP?",
+    "Traduz isto para inglês",
+]

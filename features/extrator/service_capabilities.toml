@@ -1,0 +1,28 @@
+# Extrator-owned capability manifest.
+# The orchestrator consumes this as metadata; behavior remains inside features/extrator.
+
+[[service_capabilities]]
+service_name = "extrator"
+capability_id = "feature.extrator"
+kind = "feature"
+owner = "features/extrator"
+owner_family = "document_pipeline"
+lifecycle_status = "active"
+consolidation_target = "features/document_runtime"
+capabilities = ["document_etl", "document_diagnosis", "document_workflow_selection", "document_extraction", "file_conversion", "rag_bundle", "workspace_sandbox_preparation_plan"]
+transport = { type = "dispatch", service = "extrator", method = "POST", path = "/v1/extrator/query" }
+policy_action = "document.extract"
+risk_level = "medium"
+supported_action_types = ["api_call", "document_diagnosis", "document_extraction", "file_conversion", "sandbox_plan"]
+resource_profile = { resource_class = "cpu_io", lane = "background" }
+input_schema = { type = "object", contract = "ExtratorQueryRequest", schema_ref = "python:extrator.types:ExtratorQueryRequest", required = ["query"] }
+output_schema = { type = "object", contract = "ExtratorQueryResponse", schema_ref = "python:extrator.types:ExtratorQueryResponse", fields = ["content", "source", "action", "metadata", "success", "error"] }
+evidence_types = ["document_diagnostic", "document_extract", "document_evidence", "rag_bundle", "conversion_report", "sandbox_preparation_plan"]
+writes_allowed = false
+idempotency_policy = "idempotent_by_input_ref"
+dry_run_supported = true
+rollback_supported = false
+events_published = ["document.diagnostic.completed", "document.extract.completed", "service.degraded"]
+risk_review_criteria = ["input_ref_required", "diagnostic_preflight_available", "no_managed_storage_write", "sandbox_required_for_risky_conversion", "dry_run_or_idempotent_artifacts"]
+round_dependencies = ["workspace_execution"]
+timeout_seconds = 60

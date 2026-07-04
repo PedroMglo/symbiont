@@ -1,0 +1,125 @@
+# =============================================================================
+# ai-local — Docker build context exclusions
+# =============================================================================
+# Reduces build context size. Build context is repo root (.).
+# Docker builds use the workspace root as context from repo-owned compose files.
+# =============================================================================
+
+# --- Version control ---
+.git
+.gitignore
+.github
+.agents
+.codex
+.local
+.tmp
+graphify-out/
+fulldocagi/
+
+# --- Python artifacts ---
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.egg-info
+**/dist
+**/build
+**/.eggs
+
+# --- Virtual environments ---
+**/.venv
+**/.venv*
+**/venv
+**/env
+**/ENV
+
+# --- IDE / Editor ---
+.idea
+.vscode
+**/*.swp
+**/*.swo
+
+# --- Test / QA ---
+tests/
+benchmarks/
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+.cache
+**/.cache
+.uv-cache
+**/.coverage
+**/htmlcov
+
+# --- Large data / models (never needed in images) ---
+**/*.db
+**/*.sqlite
+**/*.parquet
+**/*.onnx
+**/*.pt
+**/*.bin
+**/*.gguf
+**/*.safetensors
+obsidian-rag/data/qdrant
+obsidian-rag/data/qdrant_server
+obsidian-rag/data
+obsidian-rag/graphify-out
+obsidian-rag/source
+infra/docker/data/
+agents/audio_transcribe/data/
+agents/*/data/
+agents/*/models/
+
+# --- Docker secrets (NEVER copy into images) ---
+infra/docker/secrets/
+
+# --- Environment files ---
+infra/docker/.env
+infra/docker/.env.*
+.env
+.env.local
+.env.*.local
+.env.llm-serving
+.env.storage.generated
+.env.llm.generated
+.env.services.generated
+.env.docker.resources.generated
+
+# --- Node.js ---
+**/node_modules
+
+# --- Web frontends (not needed for Python services) ---
+web/
+
+# --- OS files ---
+**/.DS_Store
+**/Thumbs.db
+
+# --- Logs ---
+**/*.log
+**/logs/
+logs/
+
+# --- Documentation (not needed in images) ---
+docs/
+**/*.md
+!agents/*/README.md
+!obsidian-rag/README.md
+!orchestrator/**/prompt/*.md
+!orchestrator/**/prompt/**/*.md
+!agents/**/prompt/*.md
+!agents/**/prompt/**/*.md
+!features/**/prompt/*.md
+!features/**/prompt/**/*.md
+
+# --- Config dirs that are mounted as volumes ---
+.config/
+
+# =============================================================================
+# KEEP (do NOT ignore):
+#   orchestrator/       — runtime source
+#   agents/             — agent source
+#   features/           — feature source
+#   obsidian-rag/       — RAG service source
+#   infra/docker/images/          — Dockerfiles, entrypoints and workers
+#   infra/docker/compose/         — Compose fragments used by root compose.yml
+# =============================================================================

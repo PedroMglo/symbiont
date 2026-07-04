@@ -1,0 +1,144 @@
+version = 1
+default_domain = "dispatch"
+
+[[routing_rules]]
+match = "signal.kind"
+equals = "agent_bypass"
+domain = "dispatch"
+
+[[routing_rules]]
+match = "signal.kind"
+equals = "rag_miss"
+domain = "rag"
+
+[[routing_rules]]
+match = "reason.contains_any"
+values = ["rag", "retrieval"]
+domain = "rag"
+
+[[routing_rules]]
+match = "reason.contains_any"
+values = ["storage"]
+domain = "storage"
+
+[[routing_rules]]
+match = "reason.contains_any"
+values = ["vram", "resource", "lease"]
+domain = "resource"
+
+[[routing_rules]]
+match = "reason.contains_any"
+values = ["model", "llm", "backend"]
+domain = "model"
+
+[[routing_rules]]
+match = "reason.contains_any"
+values = ["docker", "lifecycle", "service"]
+domain = "lifecycle"
+
+[[routing_rules]]
+match = "reason.contains_any"
+values = ["command", "bash", "shell"]
+domain = "command"
+
+[[domains]]
+name = "dispatch"
+low_actions = ["repo.search", "repo.read", "system.status"]
+medium_actions = []
+high_actions = ["docker.restart"]
+
+[[domains.recommendations]]
+kind = "dispatch_guardrail_audit"
+action = "verify_all_agent_invocation_paths_check_runtime_flags"
+risk = "low"
+requires_approval = false
+
+[[domains.recommendations]]
+kind = "service_health_review"
+action = "inspect_agent_logs_before_lifecycle_action"
+risk = "low"
+requires_approval = false
+
+[[domains]]
+name = "rag"
+low_actions = ["rag.status", "rag.query", "cag.explain"]
+medium_actions = ["rag.admin.reprocess.local", "rag.admin.reprocess.cag"]
+high_actions = ["rag.admin.reprocess.all"]
+
+[[domains.recommendations]]
+kind = "rag_retrieval_debug"
+action = "inspect_query_debug_dense_bm25_cag_before_reprocess"
+risk = "low"
+requires_approval = false
+
+[[domains.recommendations]]
+kind = "rag_reprocess_guarded"
+action = "request_approval_before_broad_reprocess"
+risk = "high"
+requires_approval = true
+
+[[domains]]
+name = "storage"
+low_actions = ["storage.status"]
+medium_actions = ["storage.plan", "storage.scan"]
+high_actions = ["storage.run_cycle", "storage.archive", "storage.restore", "storage.delete"]
+
+[[domains.recommendations]]
+kind = "storage_safety_review"
+action = "run_storage_status_plan_and_manifest_checks_before_mutation"
+risk = "medium"
+requires_approval = false
+
+[[domains]]
+name = "resource"
+low_actions = ["system.status"]
+medium_actions = ["model.prewarm"]
+high_actions = []
+
+[[domains.recommendations]]
+kind = "resource_pressure_review"
+action = "inspect_governor_leases_and_defer_policy"
+risk = "low"
+requires_approval = false
+
+[[domains]]
+name = "model"
+low_actions = ["llm.generate", "system.status"]
+medium_actions = ["model.prewarm"]
+high_actions = []
+
+[[domains.recommendations]]
+kind = "model_routing_review"
+action = "inspect_backend_health_and_routing_fallbacks"
+risk = "low"
+requires_approval = false
+
+[[domains]]
+name = "lifecycle"
+low_actions = ["docker.ps", "system.status"]
+medium_actions = []
+high_actions = ["docker.restart", "docker.stop", "docker.remove"]
+
+[[domains.recommendations]]
+kind = "lifecycle_safety_review"
+action = "inspect_container_health_before_restart_stop_remove"
+risk = "low"
+requires_approval = false
+
+[[domains]]
+name = "command"
+low_actions = ["command.session.create", "command.run.read_only", "command.session.close"]
+medium_actions = ["command.run.medium"]
+high_actions = ["command.run.write"]
+
+[[domains.recommendations]]
+kind = "command_diagnostic_review"
+action = "run_read_only_command_session_and_attach_outputs_to_evidence"
+risk = "low"
+requires_approval = false
+
+[[domains.recommendations]]
+kind = "command_write_guarded"
+action = "request_approval_before_write_or_host_context_command"
+risk = "high"
+requires_approval = true

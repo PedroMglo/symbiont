@@ -1,0 +1,907 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Orchestrator — Dashboard</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>◉</text></svg>"
+    />
+    <link rel="stylesheet" href="/dashboard/assets/dashboard.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  </head>
+  <body>
+    <div class="app-layout">
+      <!-- Header -->
+      <header class="header">
+        <div class="header-left">
+          <h1 class="logo"><span class="logo-icon">◉</span> AI Orchestrator</h1>
+          <span class="badge badge-outline" id="health-badge">Loading...</span>
+        </div>
+        <div class="header-right">
+          <div class="control-group">
+            <label class="control-label">Period</label>
+            <select id="period-select" class="select">
+              <option value="1">24h</option>
+              <option value="7" selected>7 days</option>
+              <option value="30">30 days</option>
+              <option value="90">90 days</option>
+            </select>
+          </div>
+          <button class="btn btn-icon" id="refresh-btn" title="Refresh now">
+            ⟳
+          </button>
+          <label class="toggle-label"
+            ><input type="checkbox" id="auto-refresh-toggle" checked /><span
+              class="toggle-text"
+              >Auto</span
+            ></label
+          >
+          <button class="btn btn-icon" id="theme-toggle" title="Toggle theme">
+            ◐
+          </button>
+        </div>
+      </header>
+
+      <!-- Tabs -->
+      <nav class="tabs">
+        <a href="#overview" class="tab active" data-tab="overview">Overview</a>
+        <a href="#models" class="tab" data-tab="models">Models</a>
+        <a href="#backends" class="tab" data-tab="backends">Backends</a>
+        <a href="#resources" class="tab" data-tab="resources">Resources</a>
+        <a href="#sessions" class="tab" data-tab="sessions">Sessions</a>
+        <a href="#performance" class="tab" data-tab="performance"
+          >Performance</a
+        >
+        <a href="#graph" class="tab" data-tab="graph">Graph Tracing</a>
+        <a href="#events" class="tab" data-tab="events">Live Events</a>
+        <a href="#gemilyni" class="tab" data-tab="gemilyni">Gemilyni</a>
+      </nav>
+
+      <!-- Data Source Banner -->
+      <div
+        class="data-source-banner"
+        id="data-source-banner"
+        style="display: none"
+      ></div>
+
+      <!-- Scrollable Content -->
+      <main class="main">
+        <!-- ═══ Overview ═══ -->
+        <section class="tab-panel active" id="panel-overview">
+          <div class="kpi-grid" id="kpi-grid"></div>
+          <div class="charts-row">
+            <div class="card chart-card">
+              <h3 class="card-title">Activity Timeline</h3>
+              <div class="chart-container">
+                <canvas id="chart-timeline"></canvas>
+              </div>
+            </div>
+            <div class="card chart-card">
+              <h3 class="card-title">Sessions Per Day</h3>
+              <div class="chart-container">
+                <canvas id="chart-sessions-day"></canvas>
+              </div>
+            </div>
+          </div>
+          <div class="charts-row">
+            <div class="card chart-card">
+              <h3 class="card-title">Tokens Over Time</h3>
+              <div class="chart-container">
+                <canvas id="chart-tokens"></canvas>
+              </div>
+            </div>
+            <div class="card chart-card chart-card-sm">
+              <h3 class="card-title">Message Distribution</h3>
+              <div class="chart-container">
+                <canvas id="chart-msg-dist"></canvas>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ═══ Models ═══ -->
+        <section class="tab-panel" id="panel-models">
+          <div class="kpi-grid" id="models-kpi-grid"></div>
+          <div class="charts-row">
+            <div class="card chart-card">
+              <h3 class="card-title">Tokens by Model</h3>
+              <div class="chart-container">
+                <canvas id="chart-models-tokens"></canvas>
+              </div>
+            </div>
+            <div class="card chart-card">
+              <h3 class="card-title">Calls by Model</h3>
+              <div class="chart-container">
+                <canvas id="chart-models-calls"></canvas>
+              </div>
+            </div>
+          </div>
+          <div class="charts-row">
+            <div class="card chart-card">
+              <h3 class="card-title">Latency by Model</h3>
+              <div class="chart-container">
+                <canvas id="chart-models-latency"></canvas>
+              </div>
+            </div>
+            <div class="card chart-card">
+              <h3 class="card-title">Error Rate by Model</h3>
+              <div class="chart-container">
+                <canvas id="chart-models-errors"></canvas>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Model Registry</h3>
+              <div class="filter-group">
+                <input
+                  type="text"
+                  class="input input-sm"
+                  id="models-search"
+                  placeholder="Search models..."
+                />
+                <select class="select select-sm" id="models-filter-status">
+                  <option value="">All Status</option>
+                  <option value="available">Available</option>
+                  <option value="configured">Configured</option>
+                  <option value="used">Used</option>
+                  <option value="offline">Offline</option>
+                </select>
+              </div>
+            </div>
+            <div class="table-wrap table-wrap-scroll" id="models-table"></div>
+          </div>
+        </section>
+
+        <!-- ═══ Backends ═══ -->
+        <section class="tab-panel" id="panel-backends">
+          <div class="kpi-grid" id="backends-kpi-grid"></div>
+          <div class="charts-row">
+            <div class="card chart-card">
+              <h3 class="card-title">Requests by Backend</h3>
+              <div class="chart-container">
+                <canvas id="chart-backends-requests"></canvas>
+              </div>
+            </div>
+            <div class="card chart-card">
+              <h3 class="card-title">Tokens by Backend</h3>
+              <div class="chart-container">
+                <canvas id="chart-backends-tokens"></canvas>
+              </div>
+            </div>
+          </div>
+          <div class="charts-row">
+            <div class="card chart-card">
+              <h3 class="card-title">Latency by Backend</h3>
+              <div class="chart-container">
+                <canvas id="chart-backends-latency"></canvas>
+              </div>
+            </div>
+            <div class="card chart-card">
+              <h3 class="card-title">Errors by Backend</h3>
+              <div class="chart-container">
+                <canvas id="chart-backends-errors"></canvas>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Backend Health &amp; Usage</h3>
+            </div>
+            <div class="table-wrap table-wrap-scroll" id="backends-table"></div>
+          </div>
+        </section>
+
+        <!-- ═══ Resources ═══ -->
+        <section class="tab-panel" id="panel-resources">
+          <div class="kpi-grid" id="resources-kpi-grid"></div>
+          <div class="charts-row">
+            <div class="card chart-card">
+              <h3 class="card-title">GPU VRAM</h3>
+              <div class="gauge-container" id="gauge-vram"></div>
+            </div>
+            <div class="card chart-card">
+              <h3 class="card-title">System RAM</h3>
+              <div class="gauge-container" id="gauge-ram"></div>
+            </div>
+            <div class="card chart-card">
+              <h3 class="card-title">CPU</h3>
+              <div class="gauge-container" id="gauge-cpu"></div>
+            </div>
+          </div>
+          <div class="card" style="margin-top: 1rem">
+            <h3 class="card-title">Loaded Models (Ollama)</h3>
+            <div class="table-wrap" id="resources-models-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>VRAM (MB)</th>
+                    <th>Size (MB)</th>
+                    <th>Expires</th>
+                  </tr>
+                </thead>
+                <tbody id="resources-models-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="charts-row" style="margin-top: 1rem">
+            <div class="card chart-card">
+              <h3 class="card-title">VRAM Usage History</h3>
+              <div class="chart-container">
+                <canvas id="chart-vram-history"></canvas>
+              </div>
+            </div>
+            <div class="card chart-card">
+              <h3 class="card-title">RAM Usage History</h3>
+              <div class="chart-container">
+                <canvas id="chart-ram-history"></canvas>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ═══ Sessions ═══ -->
+        <section class="tab-panel" id="panel-sessions">
+          <div class="card chart-card">
+            <h3 class="card-title">Session Activity</h3>
+            <div class="chart-container chart-container-sm">
+              <canvas id="chart-sessions-activity"></canvas>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Sessions</h3>
+              <input
+                type="text"
+                class="input input-sm"
+                id="session-search"
+                placeholder="Search session ID..."
+              />
+            </div>
+            <div class="table-wrap table-wrap-scroll" id="sessions-table"></div>
+            <div class="pagination" id="sessions-pagination"></div>
+          </div>
+          <div class="modal" id="session-modal" style="display: none">
+            <div class="modal-content card">
+              <div class="modal-header">
+                <h3 class="card-title">Session Detail</h3>
+                <button class="btn btn-icon" id="modal-close">✕</button>
+              </div>
+              <div id="session-detail-content"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ═══ Performance ═══ -->
+        <section class="tab-panel" id="panel-performance">
+          <div class="kpi-grid" id="perf-kpi-grid"></div>
+          <div class="charts-row">
+            <div class="card chart-card">
+              <h3 class="card-title">Latency Distribution</h3>
+              <div class="chart-container">
+                <canvas id="chart-latency-dist"></canvas>
+              </div>
+            </div>
+            <div class="card chart-card">
+              <h3 class="card-title">Success vs Errors</h3>
+              <div class="chart-container">
+                <canvas id="chart-success-errors"></canvas>
+              </div>
+            </div>
+          </div>
+
+          <!-- Detailed Performance (new) -->
+          <div class="card" id="perf-detailed-section" style="margin-top: 1rem">
+            <h3 class="card-title">Model Performance Breakdown</h3>
+            <div class="kpi-grid" id="perf-detailed-kpi"></div>
+            <div class="table-wrap" id="perf-model-breakdown">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Model</th>
+                    <th>Status</th>
+                    <th>Queries</th>
+                    <th>Load (ms)</th>
+                    <th>Prompt Eval (ms)</th>
+                    <th>Generation (ms)</th>
+                    <th>1st Token (ms)</th>
+                    <th>Gen tok/s</th>
+                    <th>Cold Start %</th>
+                  </tr>
+                </thead>
+                <tbody id="perf-model-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="charts-row" style="margin-top: 1rem">
+            <div class="card chart-card">
+              <h3 class="card-title">Latency Breakdown by Model</h3>
+              <div class="chart-container">
+                <canvas id="chart-latency-breakdown"></canvas>
+              </div>
+            </div>
+            <div class="card chart-card">
+              <h3 class="card-title">Tokens/sec by Model</h3>
+              <div class="chart-container">
+                <canvas id="chart-tokens-per-sec"></canvas>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ═══ Graph Tracing ═══ -->
+        <section class="tab-panel" id="panel-graph">
+          <!-- KPI row -->
+          <div class="kpi-grid" id="graph-kpis">
+            <div class="kpi-card">
+              <span class="kpi-value" id="graph-total-runs">—</span>
+              <span class="kpi-label">Total Runs</span>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-value" id="graph-avg-duration">—</span>
+              <span class="kpi-label">Avg Duration (ms)</span>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-value" id="graph-p95-duration">—</span>
+              <span class="kpi-label">P95 Duration (ms)</span>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-value" id="graph-error-rate">—</span>
+              <span class="kpi-label">Error Rate</span>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-value" id="graph-fallback-rate">—</span>
+              <span class="kpi-label">Fallback Rate</span>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-value" id="graph-avg-nodes">—</span>
+              <span class="kpi-label">Avg Nodes/Run</span>
+            </div>
+          </div>
+
+          <!-- Timeline chart -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Graph Execution Timeline</h3>
+            </div>
+            <div class="card-body">
+              <canvas id="graph-timeline-chart" height="200"></canvas>
+            </div>
+          </div>
+
+          <!-- Waterfall section -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Execution Waterfall</h3>
+              <div class="control-group" style="margin-left: auto">
+                <select id="graph-trace-select" class="select">
+                  <option value="">Select a trace...</option>
+                </select>
+              </div>
+            </div>
+            <div class="card-body">
+              <div id="graph-waterfall" class="waterfall-container">
+                <p class="text-muted">
+                  Select a trace above to view the node execution waterfall.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Node Stats table -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Node Statistics</h3>
+            </div>
+            <div class="card-body">
+              <div class="table-container">
+                <table class="data-table" id="graph-node-stats-table">
+                  <thead>
+                    <tr>
+                      <th>Node</th>
+                      <th>Type</th>
+                      <th>Executions</th>
+                      <th>Avg (ms)</th>
+                      <th>P50 (ms)</th>
+                      <th>P95 (ms)</th>
+                      <th>P99 (ms)</th>
+                      <th>Max (ms)</th>
+                      <th>Errors</th>
+                      <th>Error Rate</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Node Latency chart -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Latency by Node</h3>
+            </div>
+            <div class="card-body">
+              <canvas id="graph-node-latency-chart" height="250"></canvas>
+            </div>
+          </div>
+
+          <!-- Recent traces table -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Recent Traces</h3>
+            </div>
+            <div class="card-body">
+              <div class="table-container">
+                <table class="data-table" id="graph-traces-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Run ID</th>
+                      <th>Duration (ms)</th>
+                      <th>Nodes</th>
+                      <th>Intent</th>
+                      <th>Model</th>
+                      <th>Agents</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ═══ Live Events ═══ -->
+        <section class="tab-panel" id="panel-events">
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Real-time Event Stream</h3>
+              <div class="sse-controls">
+                <span class="badge" id="sse-status">Connecting...</span>
+                <span class="text-muted text-sm" id="sse-last-event">—</span>
+              </div>
+            </div>
+            <div class="events-stats" id="events-stats"></div>
+            <div class="table-wrap table-wrap-scroll" id="events-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Type</th>
+                    <th>Model</th>
+                    <th>Backend</th>
+                    <th>Tokens</th>
+                    <th>Latency</th>
+                    <th>Status</th>
+                    <th>Flags</th>
+                  </tr>
+                </thead>
+                <tbody id="events-tbody"></tbody>
+              </table>
+            </div>
+            <div class="events-empty" id="events-empty">
+              <div class="empty-state">
+                <span class="empty-icon">📡</span>
+                <p>
+                  Waiting for live events...<br /><small
+                    >Events appear when LLM requests are processed.</small
+                  >
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ═══════════════════════════════════════════════════════ -->
+        <!-- GEMILYNI — Gemini Execution Layer Dashboard -->
+        <!-- ═══════════════════════════════════════════════════════ -->
+        <section class="tab-panel" id="panel-gemilyni">
+          <!-- Filters -->
+          <div class="card" style="margin-bottom: 1rem">
+            <div class="card-header">
+              <h3 class="card-title">Filters</h3>
+            </div>
+            <div
+              class="gemilyni-filters"
+              style="
+                display: flex;
+                gap: 0.5rem;
+                flex-wrap: wrap;
+                padding: 0.5rem;
+              "
+            >
+              <input
+                type="text"
+                id="gemilyni-filter-run-id"
+                placeholder="run_id"
+                class="filter-input"
+              />
+              <input
+                type="text"
+                id="gemilyni-filter-worker-id"
+                placeholder="worker_id"
+                class="filter-input"
+              />
+              <select id="gemilyni-filter-complexity" class="filter-input">
+                <option value="">All Complexity</option>
+                <option value="SIMPLE">SIMPLE</option>
+                <option value="MEDIUM">MEDIUM</option>
+                <option value="COMPLEX">COMPLEX</option>
+                <option value="DEEP">DEEP</option>
+              </select>
+              <select id="gemilyni-filter-status" class="filter-input">
+                <option value="">All Status</option>
+                <option value="success">Success</option>
+                <option value="failed">Failed</option>
+                <option value="partial_failure">Partial</option>
+              </select>
+              <select id="gemilyni-filter-path" class="filter-input">
+                <option value="">All Paths</option>
+                <option value="execute">External</option>
+                <option value="local">Local</option>
+              </select>
+              <button id="gemilyni-filter-apply" class="btn btn-sm">
+                Apply
+              </button>
+            </div>
+          </div>
+
+          <!-- 1. Overview KPIs -->
+          <div class="card">
+            <div class="card-header"><h3 class="card-title">Overview</h3></div>
+            <div class="kpi-grid" id="gemilyni-overview-kpis">
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-total-runs">—</span
+                ><span class="kpi-label">Total Runs</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-external-runs">—</span
+                ><span class="kpi-label">External (Gemini)</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-local-runs">—</span
+                ><span class="kpi-label">Local Only</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-success-rate">—</span
+                ><span class="kpi-label">Success Rate</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-failure-rate">—</span
+                ><span class="kpi-label">Failure Rate</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-fallbacks">—</span
+                ><span class="kpi-label">Fallbacks</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-policy-blocks">—</span
+                ><span class="kpi-label">Policy Blocks</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-containers">—</span
+                ><span class="kpi-label">Containers</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-workers">—</span
+                ><span class="kpi-label">Workers</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-avg-duration">—</span
+                ><span class="kpi-label">Avg Duration</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-avg-gemini">—</span
+                ><span class="kpi-label">Avg Gemini</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. Routing Decisions -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Routing Decisions</h3>
+            </div>
+            <div class="chart-grid">
+              <canvas id="gemilyni-routing-timeline" height="200"></canvas>
+              <canvas id="gemilyni-routing-by-complexity" height="200"></canvas>
+            </div>
+            <div
+              class="table-wrap table-wrap-scroll"
+              id="gemilyni-routing-table"
+            ></div>
+          </div>
+
+          <!-- 3. Active / Recent Runs -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Recent Runs</h3>
+            </div>
+            <div class="table-wrap table-wrap-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Run ID</th>
+                    <th>Status</th>
+                    <th>Path</th>
+                    <th>Complexity</th>
+                    <th>Intent</th>
+                    <th>Workers</th>
+                    <th>Duration</th>
+                    <th>Fallback</th>
+                  </tr>
+                </thead>
+                <tbody id="gemilyni-runs-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 4. Workers -->
+          <div class="card">
+            <div class="card-header"><h3 class="card-title">Workers</h3></div>
+            <div class="table-wrap table-wrap-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Worker ID</th>
+                    <th>Run ID</th>
+                    <th>Task</th>
+                    <th>Status</th>
+                    <th>Duration</th>
+                    <th>Container</th>
+                    <th>Exit Code</th>
+                  </tr>
+                </thead>
+                <tbody id="gemilyni-workers-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 5. Containers -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Containers</h3>
+            </div>
+            <div class="table-wrap table-wrap-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Container</th>
+                    <th>Worker</th>
+                    <th>Image</th>
+                    <th>Auth</th>
+                    <th>Status</th>
+                    <th>Duration</th>
+                    <th>CPU%</th>
+                    <th>Mem%</th>
+                  </tr>
+                </thead>
+                <tbody id="gemilyni-containers-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 6. Gemini Invocations -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Gemini Invocations</h3>
+            </div>
+            <div class="kpi-grid" id="gemilyni-gemini-kpis">
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-gemini-total">—</span
+                ><span class="kpi-label">Total</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-gemini-avg-dur">—</span
+                ><span class="kpi-label">Avg Duration</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-gemini-p95">—</span
+                ><span class="kpi-label">p95 Duration</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-gemini-failures">—</span
+                ><span class="kpi-label">Failures</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-gemini-in-tokens">—</span
+                ><span class="kpi-label">Avg In Tokens</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-gemini-out-tokens">—</span
+                ><span class="kpi-label">Avg Out Tokens</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 7. Execution Bundles -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Execution Bundles</h3>
+            </div>
+            <div class="table-wrap table-wrap-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Bundle</th>
+                    <th>Run</th>
+                    <th>Worker</th>
+                    <th>Files In</th>
+                    <th>Files Blocked</th>
+                    <th>Ctx In</th>
+                    <th>Ctx Blocked</th>
+                    <th>Mode</th>
+                  </tr>
+                </thead>
+                <tbody id="gemilyni-bundles-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 8. Files Sent to Workers -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Files Sent to Workers</h3>
+            </div>
+            <div class="table-wrap table-wrap-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Path</th>
+                    <th>Worker</th>
+                    <th>Size</th>
+                    <th>Hash</th>
+                    <th>Status</th>
+                    <th>Block Reason</th>
+                  </tr>
+                </thead>
+                <tbody id="gemilyni-files-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 9. Context Sent to Workers -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Context Blocks</h3>
+            </div>
+            <div class="table-wrap table-wrap-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Source</th>
+                    <th>Worker</th>
+                    <th>Tokens</th>
+                    <th>Size</th>
+                    <th>Status</th>
+                    <th>Block Reason</th>
+                  </tr>
+                </thead>
+                <tbody id="gemilyni-context-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 10. Security & Policy -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Security &amp; Policy</h3>
+            </div>
+            <div class="kpi-grid" id="gemilyni-security-kpis">
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-sensitive-blocked">—</span
+                ><span class="kpi-label">Sensitive Blocked</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-files-blocked">—</span
+                ><span class="kpi-label">Files Blocked</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-sources-blocked">—</span
+                ><span class="kpi-label">Sources Blocked</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-violations">—</span
+                ><span class="kpi-label">Policy Violations</span>
+              </div>
+              <div class="kpi">
+                <span class="kpi-value" id="gemilyni-traversal-attempts">—</span
+                ><span class="kpi-label">Path Traversal</span>
+              </div>
+            </div>
+            <div class="table-wrap table-wrap-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Run</th>
+                    <th>Policy</th>
+                    <th>Type</th>
+                    <th>Item</th>
+                    <th>Reason</th>
+                    <th>Severity</th>
+                  </tr>
+                </thead>
+                <tbody id="gemilyni-policy-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 11. Performance Breakdown -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Performance Breakdown</h3>
+            </div>
+            <canvas id="gemilyni-perf-chart" height="250"></canvas>
+          </div>
+
+          <!-- 12. Resource Usage -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Container Resources</h3>
+            </div>
+            <div class="chart-grid">
+              <canvas id="gemilyni-cpu-chart" height="200"></canvas>
+              <canvas id="gemilyni-memory-chart" height="200"></canvas>
+            </div>
+          </div>
+
+          <!-- 13. Outputs -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Worker Outputs</h3>
+            </div>
+            <div class="table-wrap table-wrap-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Worker</th>
+                    <th>Result</th>
+                    <th>Patch</th>
+                    <th>Patch Size</th>
+                    <th>Result Size</th>
+                    <th>Files</th>
+                  </tr>
+                </thead>
+                <tbody id="gemilyni-outputs-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- 14. Errors -->
+          <div class="card">
+            <div class="card-header"><h3 class="card-title">Errors</h3></div>
+            <div class="table-wrap table-wrap-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Run</th>
+                    <th>Phase</th>
+                    <th>Type</th>
+                    <th>Message</th>
+                    <th>Recoverable</th>
+                    <th>Fallback</th>
+                  </tr>
+                </thead>
+                <tbody id="gemilyni-errors-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- Footer -->
+      <footer class="footer">
+        <span>AI Orchestrator Dashboard v1.1</span>
+        <span id="last-updated">—</span>
+      </footer>
+    </div>
+
+    <script src="/dashboard/assets/dashboard.js"></script>
+  </body>
+</html>

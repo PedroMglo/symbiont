@@ -1,0 +1,12 @@
+# =============================================================================
+# Security Analysis Feature — Configuration
+# =============================================================================
+# Environment variables override all values (prefix: SECURITY_ANALYSIS_)
+# =============================================================================
+
+[workspace]
+scan_paths = ["/projects", "/host_home"]
+allow_host_home_mapping = true
+
+[security]
+api_key = ""

@@ -1,0 +1,27 @@
+# ai-local HTTPS governance defaults.
+
+version: 1
+
+https:
+  enabled: true
+  gateway: caddy
+  mode: local_ca
+  public_host: ai-local.localhost
+  http_port: 0
+  https_port: 8443
+  redirect_http_to_https: false
+  min_tls_version: "1.2"
+  prefer_tls13: true
+  hsts_enabled: false
+  hsts_max_age_seconds: 0
+  local_ca:
+    provider: caddy_internal
+    trust_command: "caddy trust"
+  lets_encrypt:
+    enabled: false
+    email_env: ACME_EMAIL
+    staging: true
+  certificate_paths:
+    cert_dir: infra/gateway/certs
+    private_key_glob: "*.key"
+    commit_private_keys: false

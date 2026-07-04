@@ -1,0 +1,165 @@
+[resource_status]
+metric_terms = [
+  "cpu",
+  "disco",
+  "disk",
+  "gpu",
+  "memoria",
+  "memória",
+  "memory",
+  "processes",
+  "processos",
+  "ram",
+  "recursos",
+  "resources",
+  "ssd",
+  "swap",
+  "vram",
+]
+state_terms = [
+  "actual",
+  "agora",
+  "atual",
+  "available",
+  "consumir",
+  "consumo",
+  "disponivel",
+  "disponível",
+  "free",
+  "livre",
+  "maquina",
+  "máquina",
+  "momento",
+  "sistema",
+  "system",
+  "usar",
+  "uso",
+  "utilizacao",
+  "utilização",
+  "utilization",
+]
+
+[local_command_shortcuts.common]
+negative_rag_terms = [
+  "nao usar rag",
+  "nao uses rag",
+  "não usar rag",
+  "não uses rag",
+  "sem rag",
+  "sem usar rag",
+  "without rag",
+]
+current_dir_terms = [
+  "cwd",
+  "diretorio atual",
+  "diretório atual",
+  "onde me encontro",
+]
+folder_terms = [
+  "diretorios",
+  "diretórios",
+  "folders",
+  "pastas",
+]
+file_terms = [
+  "arquivos",
+  "ficheiros",
+  "files",
+]
+count_terms = [
+  "conta",
+  "count",
+  "numero",
+  "número",
+  "quantos",
+]
+git_terms = [
+  "branch",
+  "dirty",
+  "estado",
+  "git",
+  "repo",
+]
+rag_status_terms = [
+  "indexacao",
+  "indexação",
+  "indice",
+  "índice",
+  "obsidian",
+  "qdrant",
+  "rag ativo",
+  "rag disponivel",
+  "rag disponível",
+  "rag vazio",
+]
+agentic_terms = [
+  "agentic mode",
+  "agentic runtime",
+  "modo agentic",
+  "runtime agentic",
+]
+agentic_status_terms = [
+  "activos",
+  "ativo",
+  "ativos",
+  "estado",
+  "limite",
+  "limites",
+  "status",
+]
+sandbox_terms = [
+  "comandos em sandbox",
+  "comandos locais",
+  "sandbox",
+]
+operational_status_terms = [
+  "diagnostico",
+  "diagnostico compacto",
+  "diagnóstico",
+  "diagnóstico compacto",
+  "estado operacional",
+  "operational status",
+  "status operacional",
+]
+multi_capability_terms = [
+  "agent",
+  "agents",
+  "agente",
+  "agentes",
+  "code analysis",
+  "local evidence",
+  "local_evidence",
+  "i18n",
+  "research",
+  "traducao",
+  "tradução",
+  "tradutor",
+  "translation",
+]
+knowledge_terms = [
+  "obsidian",
+  "qdrant",
+]
+
+[local_command_shortcuts.commands]
+cwd_inventory = [
+  "pwd",
+  "find . -mindepth 1 -maxdepth 1 -type d | sort",
+  "find . -mindepth 1 -maxdepth 1 -type f | sort",
+]
+cwd_operational_inventory = [
+  "pwd",
+  "find . -mindepth 1 -maxdepth 1 -type d | sort",
+  "find . -mindepth 1 -maxdepth 1 -type f | sort",
+  "git rev-parse --is-inside-work-tree",
+  "git branch --show-current",
+  "git status --short",
+]
+
+[local_command_shortcuts.route_labels]
+agentic_overview = "agentic.status"
+cwd_inventory = "command.sandbox.cwd_inventory"
+cwd_operational_inventory = "command.sandbox.cwd_operational_inventory"
+full_operational_status = "agentic.operational_status"
+storage_status = "storage.status"
+system_status = "system.status"

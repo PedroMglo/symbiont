@@ -1,0 +1,1 @@
+INSERT INTO llm_events FORMAT JSONEachRow

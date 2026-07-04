@@ -1,0 +1,85 @@
+# syntax=docker/dockerfile:1.7
+# =============================================================================
+# ai-local — Shared Base Image
+# =============================================================================
+# Python 3.11 + common dependencies for all ai-local microservices.
+# Agents and features inherit FROM this image — no dependency duplication.
+#
+# Build (from ai-local repo root):
+#   docker build -f infra/docker/images/symbiont/base/Dockerfile.base -t ai-local-base:latest .
+# =============================================================================
+FROM python:3.11-slim-trixie AS base
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    LOG_FORMAT=json
+
+# Build-time Git support is needed for package dependencies published from Git.
+ARG AI_LOCAL_GIT_URL_INSTEAD_OF=
+
+# Security: patch OS vulns + install curl/openssl for healthchecks and TLS
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends curl git openssh-client openssl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p -m 0700 /root/.ssh \
+    && ssh-keyscan github.com >> /root/.ssh/known_hosts
+
+# Create non-root user (shared across all services)
+RUN groupadd --gid 1000 ailoc \
+    && useradd --uid 1000 --gid ailoc --create-home ailoc
+
+WORKDIR /app
+
+# Install shared orchestration helpers used by independent services.
+COPY pyproject.toml /app/ai-local/pyproject.toml
+COPY config /app/ai-local/config
+COPY orchestrator /app/ai-local/orchestrator
+RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=ssh \
+    --mount=type=secret,id=github_token,required=false \
+    set -eu; \
+    git_rewrite_url=""; \
+    if [ -s /run/secrets/github_token ]; then \
+        github_token="$(cat /run/secrets/github_token)"; \
+        git_rewrite_url="https://x-access-token:${github_token}@github.com/"; \
+    elif [ -n "$AI_LOCAL_GIT_URL_INSTEAD_OF" ]; then \
+        git_rewrite_url="$AI_LOCAL_GIT_URL_INSTEAD_OF"; \
+    fi; \
+    if [ -n "$git_rewrite_url" ]; then \
+        git config --global url."$git_rewrite_url".insteadOf "ssh://git@github.com/"; \
+    fi; \
+    pip install --upgrade pip; \
+    pip install /app/ai-local; \
+    if [ -n "$git_rewrite_url" ]; then \
+        git config --global --remove-section url."$git_rewrite_url" || true; \
+    fi
+
+# Install shared Python dependencies (common to ALL services)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install \
+        "fastapi>=0.110" \
+        "uvicorn[standard]>=0.29" \
+        "httpx>=0.27" \
+        "pydantic>=2.6" \
+        "pydantic-settings>=2.2" \
+        "tomli>=2.0" \
+        "python-dotenv>=1.0" \
+        "psutil>=5.9"
+
+# Entrypoint: validates API keys before starting any service
+COPY infra/docker/images/symbiont/base/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY infra/docker/images/symbiont/base/tls-cert.sh /usr/local/bin/ai-local-tls-cert.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/ai-local-tls-cert.sh
+
+# Default: run as non-root
+USER ailoc
+
+ENTRYPOINT ["entrypoint.sh"]
+
+LABEL org.opencontainers.image.vendor="ai-local" \
+      org.opencontainers.image.description="Shared base for ai-local microservices"

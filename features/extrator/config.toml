@@ -1,0 +1,104 @@
+# =============================================================================
+# Extrator Feature — Document ETL and conversion configuration
+# =============================================================================
+# Runtime values live here or in EXTRATOR_* environment variables.
+# Docker secrets load API_KEY via API_KEY_FILE through the shared entrypoint.
+# =============================================================================
+
+# Runtime paths and manifest db path are derived by extrator.config.
+
+[hashing]
+block_size_bytes = 1048576
+
+[jobs]
+max_queued_jobs = 32
+# Concurrency and TTL are derived by extrator.config.
+
+[security]
+api_key_env = "API_KEY"
+allowed_roots = ["/data/input", "/data/uploads", "/projects", "/host_home"]
+allowed_extensions = [
+  "md", "markdown", "txt", "html", "htm", "csv", "tsv", "xlsx", "xls",
+  "docx", "doc", "pptx", "ppt", "pdf", "json", "jsonl", "ndjson",
+  "jsonl.gz", "ndjson.gz", "csv.gz", "tsv.gz", "py", "js", "ts", "tsx",
+  "jsx", "java", "go", "rs", "c", "cpp", "h", "hpp", "cs", "sh", "yaml",
+  "yml", "toml", "ini", "xml", "png", "jpg", "jpeg", "webp", "tif", "tiff"
+]
+denied_extensions = [
+  "db", "sqlite", "sqlite3", "parquet", "arrow", "npy", "npz", "pt",
+  "safetensors", "gguf", "bin", "mp3", "wav", "mp4", "mkv"
+]
+skip_patterns = [
+  ".git", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache",
+  "node_modules", "dist", "build", "target", "qdrant_storage", "chroma",
+  "outputs", "cache", "logs"
+]
+max_upload_size_bytes = 104857600
+max_file_size_bytes = 209715200
+allow_remote_links = false
+preserve_originals = true
+
+[formats]
+extract_input_extensions = [
+  "md", "markdown", "txt", "html", "htm", "csv", "tsv", "xlsx", "xls",
+  "docx", "doc", "pptx", "pdf", "json", "jsonl", "ndjson", "jsonl.gz",
+  "ndjson.gz", "csv.gz", "tsv.gz", "py", "js", "ts", "tsx", "jsx", "java",
+  "go", "rs", "c", "cpp", "h", "hpp", "cs", "sh", "yaml", "yml", "toml",
+  "ini", "xml"
+]
+conversion_pairs = [
+  "markdown:html", "html:markdown", "csv:parquet", "tsv:parquet",
+  "xlsx:parquet", "xls:parquet", "docx:markdown", "docx:pdf",
+  "docx:html", "markdown:docx", "markdown:pdf", "pptx:markdown",
+  "pptx:pdf", "pdf:markdown", "pdf:json"
+]
+output_formats = ["markdown", "pdf", "docx", "html", "json", "jsonl", "parquet"]
+
+[parsers]
+parser_priorities = [
+  "markdown",
+  "jsonl",
+  "html",
+  "tabular",
+  "code",
+  "docling",
+  "pypdf",
+  "markitdown",
+  "tika",
+  "unstructured",
+  "image_ocr"
+]
+ocr_enabled = false
+min_ocr_confidence = 0.75
+
+[chunking]
+target_tokens = 700
+max_tokens = 1000
+overlap_tokens = 80
+min_chars = 200
+
+[policies]
+embedding_policy_by_source_type = [
+  "markdown:embed", "text:embed", "html:embed", "pdf:embed", "docx:embed",
+  "pptx:embed", "csv:table_summary_only", "tsv:table_summary_only",
+  "json:table_summary_only", "jsonl:table_summary_only",
+  "xlsx:table_summary_only", "xls:table_summary_only", "code:code_symbol_summary",
+  "image:ocr_review_needed", "binary:skip"
+]
+
+[conversion]
+# Conversion timeout is derived by extrator.config.
+pandoc_binary = "pandoc"
+libreoffice_binary = "libreoffice"
+tesseract_binary = "tesseract"
+overwrite_allowed = false
+
+[output]
+write_jsonl = true
+write_parquet = true
+graph_candidates_enabled = true
+rag_bundle_enabled = true
+
+[observability]
+log_level = "INFO"
+record_events = true

@@ -1,0 +1,110 @@
+# =============================================================================
+# Audio Transcribe — Configuration
+# =============================================================================
+# Environment variables override all values (prefix: AUDIO_TRANSCRIBE_)
+# =============================================================================
+
+# Paths are derived by audio_transcribe.config and Docker storage env.
+
+[jobs]
+max_queued_jobs = 20
+keep_failed_outputs = true
+delete_upload_after_processing = false
+# Concurrency and TTL are derived by audio_transcribe.config.
+
+[performance]
+enable_segment_checkpoints = true
+segment_strategy = "window"
+max_segment_duration_seconds = 300
+segment_overlap_seconds = 2
+# Worker counts and batch size are derived by audio_transcribe.config.
+
+[long_audio]
+enabled = true
+checkpoint_every_segment = true
+resume_failed_jobs = true
+preserve_absolute_timestamps = true
+progress_by_audio_duration = true
+# null means unlimited
+# max_audio_duration_seconds =
+
+[transcription]
+model = "distil-large-v3"
+device = "auto"
+compute_type = "int8_float16"
+beam_size = 5
+language = "auto"
+word_timestamps = true
+vad_filter = false
+
+[gpu_policy]
+prefer_gpu = true
+wait_poll_seconds = 1.5
+allow_model_downgrade = true
+fallback_model = "small"
+# VRAM gate, wait timeout and CPU fallback are derived by audio_transcribe.config.
+
+[preprocessing]
+sample_rate = 16000
+mono = true
+normalize_loudness = true
+noise_reduction = false
+keep_processed_audio = true
+
+[audio_quality]
+enabled = true
+warn_on_clipping = true
+warn_on_low_volume = true
+warn_on_high_silence_ratio = true
+
+[vad]
+enabled = true
+min_speech_duration_ms = 250
+min_silence_duration_ms = 500
+speech_pad_ms = 200
+fallback_to_window_segmentation = true
+
+[diarization]
+enabled = false
+provider = "pyannote"
+hf_token_env = "HF_TOKEN"
+# min_speakers =
+# max_speakers =
+persist_speaker_profiles = false
+continue_without_diarization_on_error = true
+
+[postprocessing]
+remove_fillers = true
+remove_repetitions = true
+paragraphs = true
+preserve_timestamps = true
+preserve_speakers = true
+conservative_cleanup = true
+
+[semantic_extraction]
+enabled = true
+mode = "rules"
+extract_decisions = true
+extract_action_items = true
+extract_topics = true
+extract_entities = true
+extract_key_quotes = true
+extract_speaker_notes = true
+
+[export]
+formats = ["json", "txt", "md", "srt", "vtt"]
+rag_ready = true
+include_speakers_in_subtitles = true
+publish_policy = "required"
+
+[observability]
+enabled = true
+log_level = "INFO"
+write_metrics_json = true
+write_stage_timings = true
+
+[security]
+max_upload_size_mb = 2048
+api_key_env = "AUDIO_TRANSCRIBE_API_KEY"
+cors_enabled = false
+allowed_input_extensions = ["mp3", "wav", "m4a", "flac", "ogg", "mp4", "mkv", "webm", "mov", "avi"]

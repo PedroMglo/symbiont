@@ -1,0 +1,572 @@
+# ai-local Docker service policy catalog.
+#
+# This file is the intended policy. The observed runtime graph is generated from
+# `docker compose config --format json` by scripts/docker_policy.py.
+
+[defaults]
+bind_required = "127.0.0.1"
+review_after = "2026-07-01"
+
+[generated_env_files]
+storage = ".env.storage.generated"
+llm = ".env.llm.generated"
+services = ".env.services.generated"
+observability = "infra/docker/.env.observability"
+
+[storage_guardian]
+exclusive_write_paths = [".local/data/storage_guardian"]
+exclusive_write_volumes = []
+
+[services.storage_guardian]
+class = "admin-local"
+owner = "storage"
+risk = "medium"
+reason = "Local storage lifecycle API for operator and symbiont control."
+review_after = "2026-07-01"
+profiles_expected = ["storage"]
+generated_env = ["storage", "services"]
+secrets_required = ["storage_guardian_internal_api_key"]
+secret_profile = "internal"
+resource_profile = "small"
+host_ports_allowed = [8730]
+bind_required = "127.0.0.1"
+compose_healthcheck_required = true
+host_home_access = "storage_write"
+host_home_access_reason = "Storage Guardian is the sole storage owner allowed to materialize user-requested outputs on the user's machine."
+stateful = true
+backup_required = true
+restore_test_required = true
+
+[services.symbiont]
+class = "gateway-public"
+owner = "symbiont"
+risk = "medium"
+reason = "Primary local API gateway and agentic runtime entrypoint."
+review_after = "2026-07-01"
+profiles_expected = ["core"]
+generated_env = ["storage", "llm", "services"]
+secrets_required = ["orc_api_key", "ollama_api_key", "rag_api_key", "qdrant_api_key", "internal_api_key", "audio_transcribe_api_key"]
+secret_profile = "gateway"
+resource_profile = "medium"
+host_ports_allowed = [8586]
+bind_required = "127.0.0.1"
+compose_healthcheck_required = true
+host_home_access = "read_only"
+host_home_access_reason = "Gateway needs read-only access to user-requested local paths for evidence acquisition; writes remain delegated to storage_guardian."
+stateful = true
+backup_required = true
+restore_test_required = true
+
+[services.rag]
+class = "gateway-public"
+owner = "rag"
+risk = "medium"
+reason = "Local RAG/CAG API used directly by CLI and symbiont."
+review_after = "2026-07-01"
+profiles_expected = ["core"]
+generated_env = ["storage", "llm", "services"]
+secrets_required = ["rag_ollama_api_key", "rag_service_api_key", "rag_qdrant_api_key", "rag_internal_api_key", "rag_symbiont_api_key", "rag_audio_transcribe_api_key"]
+secret_profile = "rag"
+resource_profile = "medium"
+host_ports_allowed = [8486]
+bind_required = "127.0.0.1"
+compose_healthcheck_required = true
+host_home_access = "read_only"
+host_home_access_reason = "RAG may ingest user-selected local sources read-only; durable writes remain in RAG/storage-managed paths."
+stateful = true
+backup_required = true
+restore_test_required = true
+
+[services.qdrant]
+class = "admin-local"
+owner = "rag"
+risk = "medium"
+reason = "Local vector database admin/debug access."
+review_after = "2026-07-01"
+profiles_expected = ["core", "qdrant"]
+generated_env = ["storage", "services"]
+secrets_required = ["rag_qdrant_api_key"]
+secret_profile = "rag"
+resource_profile = "small"
+host_ports_allowed = [16336, 16337]
+bind_required = "127.0.0.1"
+compose_healthcheck_required = true
+stateful = true
+backup_required = true
+restore_test_required = true
+
+[services.docker-proxy]
+class = "internal"
+owner = "symbiont"
+risk = "high"
+reason = "Restricted Docker socket proxy for supervised lifecycle actions."
+review_after = "2026-07-01"
+profiles_expected = ["core"]
+generated_env = ["services"]
+secrets_required = []
+secret_profile = "none"
+resource_profile = "tiny"
+host_ports_allowed = []
+compose_healthcheck_required = true
+exception_approved = true
+exception_reason = "Uses Docker socket through a constrained proxy, not direct service mounts."
+
+[services.ollama-proxy]
+class = "internal"
+owner = "symbiont"
+risk = "low"
+reason = "Internal host Ollama compatibility proxy built from the shared base image."
+review_after = "2026-07-01"
+profiles_expected = ["core"]
+generated_env = ["llm", "services"]
+secrets_required = []
+secret_profile = "none"
+resource_profile = "tiny"
+host_ports_allowed = []
+compose_healthcheck_required = true
+
+[services.reasoning-and-response]
+class = "internal"
+owner = "agents"
+risk = "low"
+reason = "Internal reasoning and response super-agent for migrated provider modes."
+review_after = "2026-07-01"
+profiles_expected = ["agents"]
+generated_env = ["llm", "services"]
+secrets_required = ["internal_api_key"]
+secret_profile = "internal"
+resource_profile = "small"
+host_ports_allowed = []
+debug_ports_allowed = [9016]
+compose_healthcheck_required = true
+
+[services.research]
+class = "internal"
+owner = "features"
+risk = "low"
+reason = "Internal research feature service."
+review_after = "2026-07-01"
+profiles_expected = ["features"]
+generated_env = ["storage", "llm", "services"]
+secrets_required = ["rag_api_key", "internal_api_key"]
+secret_profile = "rag"
+resource_profile = "small"
+host_ports_allowed = []
+debug_ports_allowed = [9006]
+compose_healthcheck_required = true
+
+[services.local-evidence-operator]
+class = "internal"
+owner = "agents"
+risk = "low"
+reason = "Internal consolidated local evidence operator service."
+review_after = "2026-07-01"
+profiles_expected = ["agents"]
+generated_env = ["storage", "llm", "services"]
+secrets_required = ["rag_api_key", "internal_api_key"]
+secret_profile = "rag"
+resource_profile = "small"
+host_ports_allowed = []
+debug_ports_allowed = [9007]
+compose_healthcheck_required = true
+host_home_access = "read_only"
+host_home_access_reason = "Local evidence agents inspect user-requested paths read-only and must not materialize outputs directly."
+
+[services.execution-policy-operator]
+class = "internal"
+owner = "agents"
+risk = "medium"
+reason = "Internal execution policy and command risk evidence service."
+review_after = "2026-07-01"
+profiles_expected = ["agents", "features", "material"]
+generated_env = ["services"]
+secrets_required = ["internal_api_key"]
+secret_profile = "internal"
+resource_profile = "small"
+host_ports_allowed = []
+debug_ports_allowed = [9015]
+compose_healthcheck_required = true
+host_home_access = "read_only"
+host_home_access_reason = "Execution policy evidence may statically inspect user-requested paths read-only before authorizing work."
+
+[services.material-builder]
+class = "internal"
+owner = "agents"
+risk = "low"
+reason = "Internal proposal-only material planning and file contract agent."
+review_after = "2026-07-01"
+profiles_expected = ["agents", "features", "material"]
+generated_env = ["llm", "services"]
+secrets_required = ["internal_api_key"]
+secret_profile = "internal"
+resource_profile = "small"
+host_ports_allowed = []
+compose_healthcheck_required = true
+
+[services.workspace-execution]
+class = "internal"
+owner = "features"
+risk = "high"
+reason = "Internal disposable workspace execution manager. It must not expose a host port; runners remain isolated and are implemented in later gated phases."
+review_after = "2026-07-01"
+profiles_expected = ["features", "material"]
+generated_env = ["storage", "services"]
+secrets_required = ["internal_api_key"]
+secret_profile = "internal"
+resource_profile = "large"
+host_ports_allowed = []
+compose_healthcheck_required = true
+host_home_access = "read_only"
+host_home_access_reason = "Workspace execution may copy/read user-requested sources into disposable workspaces; host writes remain delegated to storage_guardian."
+stateful = false
+backup_required = false
+restore_test_required = false
+
+[services.material-execution-kernel]
+class = "internal"
+owner = "features"
+risk = "medium"
+reason = "Internal material session coordinator. It coordinates owners but does not execute shell, write host files, or publish durable storage directly."
+review_after = "2026-07-01"
+profiles_expected = ["features", "material"]
+generated_env = ["storage", "services"]
+secrets_required = ["internal_api_key"]
+secret_profile = "internal"
+resource_profile = "small"
+host_ports_allowed = []
+compose_healthcheck_required = true
+stateful = false
+backup_required = false
+restore_test_required = false
+
+[services.personal-context]
+class = "internal"
+owner = "features"
+risk = "low"
+reason = "Internal personal context feature service."
+review_after = "2026-07-01"
+profiles_expected = ["features"]
+generated_env = ["storage", "services"]
+secrets_required = ["internal_api_key"]
+secret_profile = "internal"
+resource_profile = "small"
+host_ports_allowed = []
+debug_ports_allowed = [9008]
+compose_healthcheck_required = true
+
+[services.extrator]
+class = "internal"
+owner = "features"
+risk = "medium"
+reason = "Internal document/audio extraction feature service."
+review_after = "2026-07-01"
+profiles_expected = ["features"]
+generated_env = ["storage", "services"]
+secrets_required = ["internal_api_key"]
+secret_profile = "internal"
+resource_profile = "medium"
+host_ports_allowed = []
+compose_healthcheck_required = true
+host_home_access = "read_only"
+host_home_access_reason = "Extrator reads user-requested local documents through its owner boundary; extracted outputs are published through storage_guardian."
+rw_persistent_mount_targets_allowed = ["/data/manifest"]
+exception_approved = true
+exception_reason = "Extrator owns its local manifest DB as critical state; only /data/manifest is writable while document projections stay read-only and storage_guardian-owned."
+stateful = true
+backup_required = false
+restore_test_required = false
+
+[services.translation]
+class = "admin-local"
+owner = "features"
+risk = "medium"
+reason = "Local translation/i18n API currently exposed for direct development use."
+review_after = "2026-07-01"
+profiles_expected = ["i18n"]
+generated_env = ["llm", "services"]
+secrets_required = ["internal_api_key", "ollama_api_key"]
+secret_profile = "llm"
+resource_profile = "medium"
+host_ports_allowed = [8590]
+bind_required = "127.0.0.1"
+compose_healthcheck_required = true
+exception_approved = true
+exception_reason = "Direct local port remains until translation is routed through symbiont or debug overlay."
+stateful = true
+backup_required = false
+restore_test_required = false
+
+[services.audio-transcribe]
+class = "internal"
+owner = "audio"
+risk = "medium"
+reason = "Internal heavy audio transcription service."
+review_after = "2026-07-01"
+profiles_expected = ["heavy"]
+generated_env = ["storage", "services"]
+secrets_required = ["audio_transcribe_api_key", "internal_api_key"]
+secret_profile = "audio"
+resource_profile = "large"
+host_ports_allowed = []
+debug_ports_allowed = [9009]
+compose_healthcheck_required = true
+host_home_access = "read_only"
+host_home_access_reason = "Audio transcription reads user-requested local media read-only and publishes artifacts through storage_guardian."
+stateful = true
+backup_required = true
+restore_test_required = false
+
+[services.audio-streaming]
+class = "internal"
+owner = "audio"
+risk = "medium"
+reason = "Internal heavy audio streaming service."
+review_after = "2026-07-01"
+profiles_expected = ["heavy"]
+generated_env = ["services"]
+secrets_required = ["audio_transcribe_api_key", "internal_api_key"]
+secret_profile = "audio"
+resource_profile = "large"
+host_ports_allowed = []
+debug_ports_allowed = [9010]
+compose_healthcheck_required = true
+host_home_access = "read_only"
+host_home_access_reason = "Audio streaming may read user-requested local media read-only; persistent writes are not allowed from this service."
+
+[services.redis]
+class = "internal"
+owner = "audio"
+risk = "medium"
+reason = "Internal Redis state for heavy/audio workflows."
+review_after = "2026-07-01"
+profiles_expected = ["heavy"]
+generated_env = ["services"]
+secrets_required = []
+secret_profile = "none"
+resource_profile = "small"
+host_ports_allowed = []
+compose_healthcheck_required = true
+stateful = true
+backup_required = false
+restore_test_required = false
+
+[services.rag-falkordb]
+class = "internal"
+owner = "rag"
+risk = "medium"
+reason = "Optional service-backed GraphRAG query/index backend derived from Graphify outputs."
+review_after = "2026-07-15"
+profiles_expected = ["rag-graph"]
+generated_env = ["storage", "services"]
+secrets_required = []
+secret_profile = "none"
+resource_profile = "small"
+host_ports_allowed = []
+compose_healthcheck_required = true
+stateful = true
+backup_required = false
+restore_test_required = false
+
+[services.temporal]
+class = "admin-local"
+owner = "config"
+risk = "medium"
+reason = "Optional Temporal development server for durable owner workflows."
+review_after = "2026-07-15"
+profiles_expected = ["temporal"]
+generated_env = ["storage", "services"]
+secrets_required = []
+secret_profile = "none"
+resource_profile = "medium"
+host_ports_allowed = [17233, 18233]
+bind_required = "127.0.0.1"
+compose_healthcheck_required = true
+stateful = true
+backup_required = false
+restore_test_required = false
+
+[services.temporal-volume-init]
+class = "internal"
+owner = "config"
+risk = "low"
+reason = "One-shot initializer that gives the Temporal dev server write access to its named SQLite volume."
+review_after = "2026-07-15"
+profiles_expected = ["temporal"]
+generated_env = ["storage", "services"]
+secrets_required = []
+secret_profile = "none"
+resource_profile = "job"
+host_ports_allowed = []
+compose_healthcheck_required = false
+stateful = false
+backup_required = false
+restore_test_required = false
+
+[services.rag-temporal-worker]
+class = "internal"
+owner = "rag"
+risk = "medium"
+reason = "Optional RAG worker for Temporal-backed /admin/reprocess jobs."
+review_after = "2026-07-15"
+profiles_expected = ["temporal"]
+generated_env = ["storage", "llm", "services"]
+secrets_required = ["temporal_rag_ollama_api_key", "temporal_rag_service_api_key", "temporal_rag_qdrant_api_key", "temporal_rag_internal_api_key", "temporal_rag_symbiont_api_key", "temporal_rag_audio_transcribe_api_key"]
+secret_profile = "rag"
+resource_profile = "medium"
+host_ports_allowed = []
+compose_healthcheck_required = false
+host_home_access = "read_only"
+host_home_access_reason = "Temporal RAG worker may ingest user-selected local sources read-only while writes remain in RAG/storage-managed paths."
+stateful = false
+backup_required = false
+restore_test_required = false
+
+[services.clickhouse]
+class = "admin-local"
+owner = "observability"
+risk = "medium"
+reason = "Local observability database API/native admin access."
+review_after = "2026-07-01"
+profiles_expected = ["observability"]
+generated_env = ["observability", "services"]
+secrets_required = ["clickhouse_password"]
+secret_profile = "observability"
+resource_profile = "medium"
+host_ports_allowed = [8123, 9000]
+debug_ports_allowed = [9011, 9012]
+bind_required = "127.0.0.1"
+compose_healthcheck_required = true
+stateful = true
+backup_required = true
+restore_test_required = true
+
+[services.grafana]
+class = "local-ui"
+owner = "observability"
+risk = "medium"
+reason = "Local dashboard UI."
+review_after = "2026-07-01"
+profiles_expected = ["observability"]
+generated_env = ["observability", "services"]
+secrets_required = ["grafana_password", "clickhouse_password"]
+secret_profile = "observability"
+resource_profile = "small"
+host_ports_allowed = [3000]
+bind_required = "127.0.0.1"
+compose_healthcheck_required = true
+stateful = true
+backup_required = true
+restore_test_required = false
+
+[services.otel-collector]
+class = "admin-local"
+owner = "observability"
+risk = "medium"
+reason = "Local OTLP collector endpoints for traces/logs/metrics."
+review_after = "2026-07-01"
+profiles_expected = ["observability"]
+generated_env = ["services"]
+secrets_required = []
+secret_profile = "none"
+resource_profile = "small"
+host_ports_allowed = [4317, 4318, 8888]
+debug_ports_allowed = [9013, 9014]
+bind_required = "127.0.0.1"
+compose_healthcheck_required = true
+
+[services.langfuse-db]
+class = "internal"
+owner = "observability"
+risk = "medium"
+reason = "Internal Langfuse PostgreSQL database."
+review_after = "2026-07-01"
+profiles_expected = ["observability"]
+generated_env = ["observability", "services"]
+secrets_required = ["langfuse_db_password"]
+secret_profile = "observability"
+resource_profile = "small"
+host_ports_allowed = []
+compose_healthcheck_required = true
+stateful = true
+backup_required = true
+restore_test_required = true
+
+[services.langfuse]
+class = "local-ui"
+owner = "observability"
+risk = "high"
+reason = "Local LLM observability UI and API."
+review_after = "2026-07-01"
+profiles_expected = ["observability"]
+generated_env = ["observability", "services"]
+secrets_required = ["langfuse_db_password", "langfuse_nextauth_secret", "langfuse_salt"]
+secret_profile = "observability"
+resource_profile = "medium"
+host_ports_allowed = [3001]
+bind_required = "127.0.0.1"
+compose_healthcheck_required = true
+exception_approved = true
+exception_reason = "Temporary env shim is used for Langfuse secrets until file/bootstrap support is hardened."
+latest_allowed = true
+latest_reason = "Temporary until Langfuse image tag is pinned with DB migration validation."
+stateful = true
+backup_required = true
+restore_test_required = true
+
+[services.llama-cpp-aux]
+class = "llm-local"
+owner = "llm"
+risk = "medium"
+reason = "Local OpenAI-compatible auxiliary CPU LLM endpoint."
+review_after = "2026-07-01"
+profiles_expected = ["llm"]
+generated_env = ["llm", "services"]
+secrets_required = []
+secret_profile = "none"
+resource_profile = "large"
+host_ports_allowed = [8090]
+bind_required = "127.0.0.1"
+compose_healthcheck_required = true
+
+[services.llama-cpp-fast]
+class = "llm-local"
+owner = "llm"
+risk = "medium"
+reason = "Local OpenAI-compatible fast classifier LLM endpoint."
+review_after = "2026-07-01"
+profiles_expected = ["llm"]
+generated_env = ["llm", "services"]
+secrets_required = []
+secret_profile = "none"
+resource_profile = "large"
+host_ports_allowed = [8091]
+bind_required = "127.0.0.1"
+compose_healthcheck_required = true
+
+[services.vllm]
+class = "llm-local"
+owner = "llm"
+risk = "high"
+reason = "Local GPU OpenAI-compatible primary LLM endpoint."
+review_after = "2026-07-01"
+profiles_expected = ["gpu"]
+generated_env = ["llm", "services"]
+secrets_required = []
+secret_profile = "none"
+resource_profile = "gpu"
+host_ports_allowed = [8092]
+bind_required = "127.0.0.1"
+compose_healthcheck_required = true
+latest_allowed = true
+exception_approved = true
+exception_reason = "Temporary latest tag while GPU runtime compatibility matrix is cataloged per local hardware."
+latest_reason = "Pin after validating vLLM/CUDA compatibility for supported local GPU profiles."
+
+[host_native.ollama]
+class = "host-native"
+owner = "llm"
+risk = "medium"
+reason = "Native host Ollama process for GPU performance."
+review_after = "2026-07-01"
+host_ports_allowed = [11434]
+bind_required = "127.0.0.1"

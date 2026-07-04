@@ -1,0 +1,52 @@
+# =============================================================================
+# ai-local — Debug Port Overlay
+# =============================================================================
+# Usage:
+#   docker compose -f compose.yml -f infra/docker/compose/debug.yml --profile core --profile agents --profile features up -d
+#
+# Purpose:
+#   Publishes host-accessible ports for internal services during development.
+#   NOT intended for normal operation. Use only when you need direct HTTP
+#   access to an agent/feature for debugging or testing.
+#
+# Port range: 9001-9016 (avoids conflict with production ports)
+# =============================================================================
+
+services:
+  reasoning-and-response:
+    ports:
+      - "${AI_LOCAL_BIND:-127.0.0.1}:9016:8000"
+
+  research:
+    ports:
+      - "${AI_LOCAL_BIND:-127.0.0.1}:9006:8000"
+
+  local-evidence-operator:
+    ports:
+      - "${AI_LOCAL_BIND:-127.0.0.1}:9007:8000"
+
+  execution-policy-operator:
+    ports:
+      - "${AI_LOCAL_BIND:-127.0.0.1}:9015:8000"
+
+  personal-context:
+    ports:
+      - "${AI_LOCAL_BIND:-127.0.0.1}:9008:8000"
+
+  audio-transcribe:
+    ports:
+      - "${AI_LOCAL_BIND:-127.0.0.1}:9009:8080"
+
+  audio-streaming:
+    ports:
+      - "${AI_LOCAL_BIND:-127.0.0.1}:9010:8087"
+
+  clickhouse:
+    ports:
+      - "${AI_LOCAL_BIND:-127.0.0.1}:9011:8123"
+      - "${AI_LOCAL_BIND:-127.0.0.1}:9012:9000"
+
+  otel-collector:
+    ports:
+      - "${AI_LOCAL_BIND:-127.0.0.1}:9013:4317"
+      - "${AI_LOCAL_BIND:-127.0.0.1}:9014:4318"

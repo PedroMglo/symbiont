@@ -1,0 +1,1 @@
+INSERT INTO {0}.{1} FORMAT JSONEachRow

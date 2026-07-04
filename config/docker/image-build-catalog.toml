@@ -1,0 +1,112 @@
+# ai-local mandatory Docker image build catalog.
+#
+# Profiles decide what runs. This catalog decides what must be built by
+# `make infra` so services can be started quickly on demand.
+
+[policy]
+build_all_mandatory = true
+up_no_build = true
+cache_cap_env = "AI_LOCAL_DOCKER_BUILD_CACHE_MAX"
+review_after = "2026-07-15"
+metrics = [
+  "unique_size",
+  "shared_size",
+  "build_cache_reclaimable",
+  "cold_build_seconds",
+  "incremental_build_seconds",
+  "up_no_build_seconds",
+]
+
+[[direct_targets]]
+name = "ai-local-base"
+owner = "infra/docker"
+reason = "Shared Python/service runtime base used by small ai-local services."
+mandatory = true
+image = "ai-local-base:{tag}"
+context = "."
+dockerfile = "infra/docker/images/symbiont/base/Dockerfile.base"
+target = ""
+build_args = ["AI_LOCAL_GIT_URL_INSTEAD_OF"]
+
+[[direct_targets]]
+name = "ai-local-audio-runtime"
+owner = "agents/audio_transcribe"
+reason = "Shared CUDA/audio runtime for batch and streaming audio images."
+mandatory = true
+image = "ai-local-audio-runtime:{tag}"
+context = "."
+dockerfile = "infra/docker/images/symbiont/services/audio-runtime.Dockerfile"
+target = ""
+build_args = []
+
+[[direct_targets]]
+name = "ai-local-extrator-core"
+owner = "features/extrator"
+reason = "Lightweight document ETL runtime for core parsers and API startup."
+mandatory = true
+image = "ai-local-extrator-core:{tag}"
+context = "."
+dockerfile = "infra/docker/images/symbiont/services/extrator.Dockerfile"
+target = "extrator-core"
+build_args = ["AI_LOCAL_BASE_TAG"]
+
+[[direct_targets]]
+name = "ai-local-extrator-office"
+owner = "features/extrator"
+reason = "Office/conversion capability image with LibreOffice and Pandoc."
+mandatory = true
+image = "ai-local-extrator-office:{tag}"
+context = "."
+dockerfile = "infra/docker/images/symbiont/services/extrator.Dockerfile"
+target = "extrator-office"
+build_args = ["AI_LOCAL_BASE_TAG"]
+
+[[direct_targets]]
+name = "ai-local-extrator-ocr"
+owner = "features/extrator"
+reason = "OCR capability image with Tesseract and PDF/image helpers."
+mandatory = true
+image = "ai-local-extrator-ocr:{tag}"
+context = "."
+dockerfile = "infra/docker/images/symbiont/services/extrator.Dockerfile"
+target = "extrator-ocr"
+build_args = ["AI_LOCAL_BASE_TAG"]
+
+[[direct_targets]]
+name = "ai-local-extrator-docling"
+owner = "features/extrator"
+reason = "Docling parser capability image kept separate from the core runtime."
+mandatory = true
+image = "ai-local-extrator-docling:{tag}"
+context = "."
+dockerfile = "infra/docker/images/symbiont/services/extrator.Dockerfile"
+target = "extrator-docling"
+build_args = ["AI_LOCAL_BASE_TAG"]
+
+[[direct_targets]]
+name = "ai-local-extrator-unstructured"
+owner = "features/extrator"
+reason = "Unstructured parser capability image kept separate from the core runtime."
+mandatory = true
+image = "ai-local-extrator-unstructured:{tag}"
+context = "."
+dockerfile = "infra/docker/images/symbiont/services/extrator.Dockerfile"
+target = "extrator-unstructured"
+build_args = ["AI_LOCAL_BASE_TAG"]
+
+[compose]
+mandatory_profiles = [
+  "core",
+  "storage",
+  "agents",
+  "features",
+  "material",
+  "heavy",
+  "observability",
+  "llm",
+  "gpu",
+  "i18n",
+  "qdrant",
+  "temporal",
+  "rag-graph",
+]

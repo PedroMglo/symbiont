@@ -1,0 +1,38 @@
+# Reasoning And Response Agent configuration.
+# Environment variables override values with prefix: REASONING_AND_RESPONSE_
+
+[synthesis]
+progressive_refinement = true
+max_source_chars = 3000
+
+[response]
+max_history_messages = 4
+max_context_chars = 6000
+
+[decomposition]
+max_subtasks = 5
+default_budget_tokens = 2000
+available_capabilities = [
+  "research",
+  "local_evidence_operator",
+  "personal_context",
+  "audio_transcribe",
+  "reasoning_and_response",
+]
+
+[evaluation]
+confidence_threshold = 0.7
+max_eval_chars = 2000
+enable_heuristics = true
+heuristic_overlap_ratio = 0.3
+heuristic_min_length = 500
+
+[classification]
+available_agents = [
+  "research",
+  "local_evidence_operator",
+  "personal_context",
+  "audio_transcribe",
+  "reasoning_and_response",
+]
+max_agents_per_query = 3

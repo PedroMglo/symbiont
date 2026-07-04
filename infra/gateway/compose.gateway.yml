@@ -1,0 +1,41 @@
+# Optional HTTPS gateway overlay.
+#
+# Start after the core stack has created the ai-local-net network:
+#   docker compose -f infra/gateway/compose.gateway.yml --profile gateway up -d
+
+services:
+  api-gateway:
+    image: caddy:2.8-alpine
+    container_name: ai-local-api-gateway
+    profiles: ["gateway"]
+    restart: unless-stopped
+    environment:
+      AI_GATEWAY_PUBLIC_HTTPS_URL: ${AI_GATEWAY_PUBLIC_HTTPS_URL:-https://ai-local.localhost:8443}
+    ports:
+      - "${AI_GATEWAY_HTTPS_BIND:-127.0.0.1}:${AI_GATEWAY_HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - ai-local
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    healthcheck:
+      test: ["CMD", "wget", "--no-check-certificate", "--no-verbose", "--tries=1", "--spider", "https://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  ai-local:
+    external: true
+    name: ai-local-net
+
+volumes:
+  caddy_data:
+  caddy_config:

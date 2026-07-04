@@ -1,0 +1,4 @@
+# Compatibility manifest for orchestrator-owned bootstrapping.
+#
+# Service/agent capability semantics are owned by their services and are loaded
+# from owner manifests under agents/features/storage/RAG or from env overlays.

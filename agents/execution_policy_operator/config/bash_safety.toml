@@ -1,0 +1,12 @@
+# =============================================================================
+# Bash Safety Feature — Configuration
+# =============================================================================
+# Environment variables override all values (prefix: BASH_SAFETY_)
+# =============================================================================
+
+[workspace]
+scan_paths = ["/projects", "/host_home"]
+allow_host_home_mapping = true
+
+[security]
+api_key = ""

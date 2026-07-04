@@ -1,0 +1,47 @@
+# Conservative target resource classes. These are policy hints first; strict
+# enforcement is staged through scripts/docker_policy.py.
+
+[classes.gateway]
+cpus = "1.0-2.0"
+memory = "1g-2g"
+pids = 512
+
+[classes.agent]
+cpus = "0.5-1.0"
+memory = "512m-1g"
+pids = 256
+
+[classes.feature]
+cpus = "1.0-2.0"
+memory = "1g-2g"
+pids = 256
+
+[classes.stateful]
+cpus = "1.0-2.0"
+memory = "512m-4g"
+pids = 512
+
+[classes.observability]
+cpus = "1.0-2.0"
+memory = "512m-4g"
+pids = 512
+
+[classes.llm-cpu]
+cpus = "4.0-6.0"
+memory = "3g-6g"
+pids = 512
+
+[classes.llm-gpu]
+cpus = "2.0-4.0"
+memory = "8g-16g"
+pids = 1024
+
+[classes.worker]
+cpus = "1.0-2.0"
+memory = "512m-4g"
+pids = 256
+
+[classes.sandbox]
+cpus = "0.5-1.0"
+memory = "256m-512m"
+pids = 128

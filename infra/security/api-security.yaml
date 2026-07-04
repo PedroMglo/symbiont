@@ -1,0 +1,83 @@
+# ai-local security governance defaults.
+
+version: 1
+
+security:
+  auth_required_by_default: true
+  allow_anonymous_health: true
+  allow_anonymous_docs: false
+  require_gateway_for_external: true
+  production_requires_https: true
+  production_requires_auth: true
+  accepted_auth_schemes:
+    - x-api-key
+    - bearer
+  token_policy:
+    source: docker_secrets
+    min_length: 32
+    rotation_days: 30
+    per_service_tokens: true
+    allow_shared_internal_token: true
+    allow_env_fallback_in_prod: false
+  authorization:
+    require_scope_by_default: true
+    default_internal_scope: service:invoke
+    admin_scope: admin:write
+  cors:
+    allowed_origins: []
+    allowed_methods: ["GET", "POST", "PUT", "PATCH", "DELETE"]
+    allowed_headers:
+      - authorization
+      - content-type
+      - x-api-key
+      - x-request-id
+    expose_headers:
+      - x-request-id
+      - retry-after
+    allow_credentials: false
+    max_age_seconds: 600
+  secure_headers:
+    x_content_type_options: nosniff
+    x_frame_options: DENY
+    referrer_policy: strict-origin-when-cross-origin
+    cache_control: no-store
+    permissions_policy: "camera=(), microphone=(), geolocation=()"
+  redact_headers:
+    - authorization
+    - proxy-authorization
+    - x-api-key
+    - cookie
+    - set-cookie
+  redact_fields:
+    - api_key
+    - apikey
+    - authorization
+    - token
+    - password
+    - passwd
+    - secret
+    - credential
+    - prompt
+    - response
+    - document
+  rate_limits:
+    default: 120/minute
+    llm_query: 30/minute
+    rag_query: 60/minute
+    upload: 10/minute
+    admin: 20/minute
+  abuse_protection:
+    request_id_required: false
+    body_size_limit_enabled: true
+    timeout_enabled: true
+    circuit_breaker_enabled: true
+    backpressure_enabled: true
+    standard_429: true
+    standard_503: true
+  audit:
+    enabled: true
+    redact_by_default: true
+    log_admin_calls: true
+    log_auth_failures: true
+    log_document_operations: true
+    log_external_model_calls: true

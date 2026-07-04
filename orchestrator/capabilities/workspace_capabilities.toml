@@ -1,0 +1,97 @@
+[[workspace_capabilities]]
+key = "archive_recovery"
+context_sources = ["storage"]
+agent_source = "workspace_archive_recovery"
+positive_groups = [[
+  "archive inventory",
+  "archive recovery",
+  "backup recovery",
+  "checksum validation",
+  "recover archives",
+  "recover backup",
+  "recovery report",
+  "safe extraction",
+]]
+
+[[workspace_capabilities]]
+key = "log_performance"
+context_sources = ["logs"]
+agent_source = "workspace_log_performance"
+positive_groups = [
+  ["log", "logs", ".log.gz", "access-", "gzip", "gz"],
+  ["p95", "latency", "latência", "latencia", "endpoint", "performance", "request_time"],
+  ["top", "increase", "aumento", "current week", "previous week", "semana"],
+]
+
+[[workspace_capabilities]]
+key = "git_regression"
+context_sources = ["git"]
+agent_source = "workspace_git_regression"
+positive_groups = [
+  ["git", "commit", "regression", "history", "histórico", "historico", "bisect"],
+  ["likely regression", "regression commit", "git regression", "minimal patch", "failing test"],
+]
+
+[[workspace_capabilities]]
+key = "compose_analysis"
+context_sources = ["compose"]
+agent_source = "workspace_compose_analysis"
+positive_groups = [
+  ["docker compose", "docker-compose", "compose.yml", "compose.yaml", "docker-compose.yml", "healthcheck", "depends_on"],
+  ["chaos", "diagnose", "diagnostica", "failure", "failures", "flaky", "intermittent", "readiness", "startup", "request failures", "minimal diffs"],
+  ["postgres", "redis", "nginx", "worker", "database_url", "volumes"],
+]
+
+[[workspace_capabilities]]
+key = "security_cache"
+context_sources = ["security"]
+agent_source = "workspace_security_cache"
+positive_groups = [
+  ["security", "segurança", "seguranca", "leak", "breach", "pii", "redact", "redacted"],
+  ["cache", "cache_key", "redis", "dashboard"],
+  ["tenant", "tenant_id", "cross-tenant", "other tenants", "isolation"],
+  ["logs", "traces", "trace", "request_id", "authorization", "authz", "frontend"],
+]
+
+[[workspace_capabilities]]
+key = "sql_reconcile"
+context_sources = ["sql"]
+agent_source = "workspace_sql_reconcile"
+positive_groups = [
+  [".sqlite", ".sqlite3", ".db", "sqlite", "database", "base de dados"],
+  ["reconcile", "reconciliation", "reconcilia", "reconciliar", "billing", "finance", "financial", "invoice", "ledger", "payment", "payments", "balance", "totals", "mismatch", "duplicate", "join", "row count"],
+]
+
+[[workspace_capabilities]]
+key = "execution_policy"
+context_sources = ["bash"]
+agent_source = "workspace_execution_policy"
+positive_groups = [
+  [".sh", "bash", "shell", "shellcheck", "script audit", "scripts bash", "scripts perigos", "scripts perigosos", "dangerous scripts", "cleanup script"],
+  ["audit", "audita", "auditar", "safety", "segurança", "seguranca", "dangerous", "perigoso", "perigosos", "destructive", "destrutivo", "dry-run", "sandbox", "rm -rf", "find -delete", "rsync --delete", "eval", "curl | sh", "curl | bash", "mktemp -u"],
+]
+
+[[workspace_capabilities]]
+key = "incident_timeline"
+context_sources = ["incident"]
+agent_source = "workspace_incident_timeline"
+positive_groups = [
+  ["incident", "incidente", "outage", "intermittent", "http 502", "502", "5xx", "timeline", "root cause", "causa provável", "causa provavel", "mitigation", "mitigação", "mitigacao"],
+  ["log", "logs", "access.log", "error.log", "app.log", "worker.log", ".log.gz", "rotated logs", "nginx"],
+]
+negative_terms = ["p95", "latency increase", "top endpoint", "performance"]
+
+[[workspace_capabilities]]
+key = "local_code_audit"
+context_sources = ["graph"]
+agent_source = "workspace_code_audit"
+selected_agents = ["reasoning_and_response"]
+custom_matcher = "local_code_audit"
+
+[[workspace_capabilities]]
+key = "data_task"
+context_sources = ["extrator", "data"]
+agent_source = "intent_map"
+positive_groups = [
+  [".csv", ".jsonl", ".ndjson", "accounts.csv", "data pipeline", "dataset", "datasets", "drift", "events-", "expected_schema", "jsonl.gz", "retention", "schema", "streaming", "tabelas", "tables", "users.csv"],
+]

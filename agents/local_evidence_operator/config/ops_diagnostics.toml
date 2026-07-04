@@ -1,0 +1,12 @@
+# =============================================================================
+# Ops Diagnostics Feature — Configuration
+# =============================================================================
+# Environment variables override all values (prefix: OPS_DIAGNOSTICS_)
+# =============================================================================
+
+[workspace]
+scan_paths = ["/projects", "/host_home"]
+allow_host_home_mapping = true
+
+[security]
+api_key = ""

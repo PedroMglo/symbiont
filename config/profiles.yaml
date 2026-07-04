@@ -1,0 +1,50 @@
+profiles:
+  auto:
+    description: Infer CPU/GPU/storage settings from runtime probes.
+    values: {}
+
+  cpu_only:
+    description: Disable GPU assumptions and prefer CPU backends.
+    values:
+      llm:
+        preferred_backend: llama_cpp
+      runtime:
+        force_gpu: false
+
+  gpu_8gb:
+    description: Conservative GPU profile for 8 GB VRAM desktops.
+    values:
+      llm:
+        preferred_backend: vllm
+      inference:
+        reserved_vram_fraction: 0.15
+        reserved_vram_min_gb: 1.0
+        vllm_gpu_memory_utilization_cap: 0.82
+        estimated_vram_per_gpu_task_gb: 3.0
+
+  low_ram:
+    description: Reduce workers, batches and prewarm pressure.
+    values:
+      limits:
+        memory_budget_fraction: 0.45
+      inference:
+        max_batch_size: 8
+        estimated_ram_per_worker_gb: 2.0
+
+  dev:
+    description: Local development defaults with conservative concurrency.
+    values:
+      runtime:
+        docker_probe: true
+      lifecycle:
+        prewarm: conservative
+
+  prod:
+    description: Stable long-running local stack.
+    values:
+      lifecycle:
+        prewarm: balanced
+      privacy:
+        record_prompts: false
+        record_responses: false
+

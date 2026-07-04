@@ -1,0 +1,1 @@
+SELECT {0}, COUNT(*) AS count FROM {1} GROUP BY {2}

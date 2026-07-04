@@ -1,0 +1,16 @@
+[
+  {
+    "query": "Como esta organizado o meu RAG local?",
+    "expected_sources": ["README.md"],
+    "expected_keywords": ["rag", "qdrant"],
+    "collection": "obsidian_vault",
+    "top_k": 5
+  },
+  {
+    "query": "Onde esta a API FastAPI do obsidian-rag?",
+    "expected_sources": ["api/app.py"],
+    "expected_keywords": ["FastAPI", "query"],
+    "collection": "code_repos",
+    "top_k": 5
+  }
+]

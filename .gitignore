@@ -1,0 +1,198 @@
+# =============================================================================
+# ai-local — Git Ignore (workspace root)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Local environment, generated resolver outputs, and machine state
+# -----------------------------------------------------------------------------
+.env.storage.generated
+.env.llm.generated
+.env.services.generated
+.env.docker.resources.generated
+.env.llm-serving
+.local/
+.ai-local/
+.tmp/
+.storage_guardian_local/
+.cache/
+.direnv/
+
+# -----------------------------------------------------------------------------
+# Python build products, interpreter caches, package metadata
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+
+# -----------------------------------------------------------------------------
+# Virtual environments
+# -----------------------------------------------------------------------------
+.venv/
+.venv*/
+venv/
+env/
+ENV/
+
+# -----------------------------------------------------------------------------
+# Editors, IDEs, and local workspace metadata
+# -----------------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+*~
+.project
+.classpath
+.settings/
+
+# -----------------------------------------------------------------------------
+# Local Codex/agent guidance files
+# -----------------------------------------------------------------------------
+.codex/
+.agents/
+AGENTS.md
+
+# -----------------------------------------------------------------------------
+# Environment files, credentials, generated certificates, private config
+# -----------------------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+.env.*
+!.env.example
+config/private.local.yaml
+config/private.local.yml
+config/*.local.yaml
+config/*.local.yml
+infra/docker/.env
+infra/docker/.env.*
+infra/docker/secrets/*
+!infra/docker/secrets/
+!infra/docker/secrets/.gitignore
+infra/gateway/certs/*
+!infra/gateway/certs/
+!infra/gateway/certs/.gitignore
+
+# -----------------------------------------------------------------------------
+# LLM/model artifacts and other large binary model outputs
+# -----------------------------------------------------------------------------
+*.gguf
+*.safetensors
+*.onnx
+*.pt
+*.pth
+*.ckpt
+
+# -----------------------------------------------------------------------------
+# JS, Python, and package manager caches
+# -----------------------------------------------------------------------------
+.uv-cache
+.uv-cache/
+.npm/
+node_modules
+.pnpm-store/
+.yarn/cache/
+
+# -----------------------------------------------------------------------------
+# Coverage, test, type-check, lint, and notebook runtime output
+# -----------------------------------------------------------------------------
+.coverage
+.coverage.*
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.pyre/
+.tox/
+.nox/
+.hypothesis/
+.ipynb_checkpoints/
+htmlcov/
+coverage/
+coverage.xml
+reports/evals/*
+!reports/evals/.gitignore
+docs/generated/
+
+# DeepEval
+.deepeval/
+
+# -----------------------------------------------------------------------------
+# OS filesystem metadata
+# -----------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+
+# -----------------------------------------------------------------------------
+# Logs, traces, temporary files, and process markers
+# -----------------------------------------------------------------------------
+*.log
+*.trace
+*.prof
+*.pid
+*.sock
+*.tmp
+*.temp
+*.bak
+logs/
+codex_run_log.md
+
+# -----------------------------------------------------------------------------
+# Local databases, runtime stores, and generated data products
+# -----------------------------------------------------------------------------
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.duckdb
+*.duckdb.wal
+*.duckdb.tmp
+*.qdrant
+*.parquet
+
+# -----------------------------------------------------------------------------
+# Graphify generated artifacts
+#
+# Version only the current, canonical graph/report/manifest/labels/cost. All
+# caches, dated backups, transient interpreter/root files, and export sidecars
+# are local generated state and must never be committed.
+# -----------------------------------------------------------------------------
+/graphify-out/*
+!/graphify-out/
+!/graphify-out/.graphify_labels.json
+!/graphify-out/GRAPH_REPORT.md
+!/graphify-out/cost.json
+!/graphify-out/graph.json
+!/graphify-out/manifest.json
+/graphify-out/.graphify_*
+!/graphify-out/.graphify_labels.json
+/graphify-out/.vocab.txt
+/graphify-out/cache/
+/graphify-out/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
+/graphify-out/*.html
+/graphify-out/*.svg
+/graphify-out/*.graphml
+/graphify-out/cypher.txt
+
+# -----------------------------------------------------------------------------
+# Component-local runtime data and generated artifacts
+# -----------------------------------------------------------------------------
+/obsidian-rag/data
+/obsidian-rag/graphify-out
+/obsidian-rag/source
+agents/*/data/
+agents/*/data.bak/
+agents/*/models/
+features/*/cache/
+features/translation/cache/
