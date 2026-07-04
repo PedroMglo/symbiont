@@ -63,7 +63,7 @@ def main() -> int:
                         help="Allowed drop vs baseline before failing (default: 0.05)")
     args = parser.parse_args()
 
-    from obsidian_rag.retrieval.eval import EvalHarness, load_golden_queries
+    from retrieval.eval import EvalHarness, load_golden_queries
 
     golden_path = _resolve_golden(args.golden)
     if not golden_path.exists():

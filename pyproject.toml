@@ -56,7 +56,7 @@ select = ["E", "F", "W", "I"]
 ignore = ["E501"]
 
 [tool.coverage.run]
-source = ["obsidian-rag/obsidian_rag", "orchestrator"]
+source = ["obsidian-rag", "orchestrator"]
 omit = ["tests/*"]
 
 [tool.bandit]

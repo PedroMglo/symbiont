@@ -22,7 +22,7 @@ O servico responde a quatro necessidades diferentes:
 
 | Componente | Papel |
 | --- | --- |
-| FastAPI (`obsidian_rag/api/app.py`) | Superficie HTTP: query, chat, graph, CAG, admin e status. |
+| FastAPI (`api/app.py`) | Superficie HTTP: query, chat, graph, CAG, admin e status. |
 | Qdrant | Vector store com colecoes densas e sparse BM25. |
 | Ollama | Embeddings, chat, router LLM e enriquecimento de grafo. |
 | IngestPipeline | Scanner, parser, embedder e writer com backpressure. |

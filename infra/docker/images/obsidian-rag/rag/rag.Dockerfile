@@ -28,7 +28,7 @@ COPY pyproject.toml ai-local/pyproject.toml
 COPY config/ ai-local/config/
 COPY context_governor/ ai-local/context_governor/
 COPY orchestrator/ ai-local/orchestrator/
-COPY obsidian-rag/obsidian_rag/ obsidian_rag/
+COPY obsidian-rag/ ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=ssh \
     --mount=type=secret,id=github_token,required=false \
@@ -71,7 +71,7 @@ WORKDIR /app
 
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
-COPY obsidian-rag/obsidian_rag/ obsidian_rag/
+COPY obsidian-rag/ ./
 
 # Entrypoint for secret validation
 COPY --chmod=755 infra/docker/images/obsidian-rag/rag/base/entrypoint.sh /usr/local/bin/entrypoint.sh
@@ -93,4 +93,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=15s --retries=3 \
 USER rag
 
 ENTRYPOINT ["entrypoint.sh"]
-CMD ["uvicorn", "obsidian_rag.api.app:app", "--host", "0.0.0.0", "--port", "8484"]
+CMD ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8484"]
