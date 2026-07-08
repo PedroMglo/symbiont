@@ -11,7 +11,8 @@ WORKDIR /app
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install \
         "httpx>=0.25" \
-        "websockets>=12.0"
+        "websockets>=12.0" \
+    && pip install --upgrade "setuptools>=83.0.0" "wheel>=0.46.2" "jaraco.context>=6.1.0"
 
 COPY agents/audio_transcribe/streaming/ /app/streaming/
 RUN chown -R appuser:appuser /app /data

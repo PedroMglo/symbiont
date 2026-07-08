@@ -1,0 +1,6 @@
+$kind: http-request
+url: "{{rag_host_base_url}}/stats"
+method: GET
+headers:
+  Authorization: Bearer {{rag_api_key}}
+order: 2000

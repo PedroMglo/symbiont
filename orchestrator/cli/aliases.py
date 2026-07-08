@@ -352,7 +352,8 @@ gpu_query = [
     "--query-gpu=name,memory.used,memory.free,memory.total,utilization.gpu",
     "--format=csv,noheader,nounits",
 ]
-if os.environ.get("AI_LOCAL_ENABLE_NVIDIA_SMI_PROBE", "").strip().lower() in {"1", "true", "yes", "on"}:
+disable_nvidia_smi_probe = os.environ.get("AI_LOCAL_DISABLE_NVIDIA_SMI_PROBE", "").strip().lower() in {"1", "true", "yes", "on"}
+if not disable_nvidia_smi_probe:
     for candidate in (
         "nvidia-smi",
         "/usr/lib/wsl/lib/nvidia-smi",
@@ -737,7 +738,11 @@ fi
 TMPFILE=$(mktemp /tmp/orc-stream.XXXXXX)
 TRACEFILE=$(mktemp /tmp/orc-task.XXXXXX)
 FOLLOW_LAST_FILE=$(mktemp /tmp/orc-follow-last.XXXXXX)
-trap 'rm -f "$TMPFILE" "$TRACEFILE" "$FOLLOW_LAST_FILE"' EXIT
+HEADERFILE=$(mktemp /tmp/orc-headers.XXXXXX)
+PAYLOADFILE=$(mktemp /tmp/orc-payload.XXXXXX)
+trap 'rm -f "$TMPFILE" "$TRACEFILE" "$FOLLOW_LAST_FILE" "$HEADERFILE" "$PAYLOADFILE"' EXIT
+printf 'X-API-Key: %s\n' "$ORC_SYMBIONT_API_KEY" > "$HEADERFILE"
+printf '%s' "$PAYLOAD" > "$PAYLOADFILE"
 
 _orc_capture_task_meta() {{
     if ! command -v python3 &>/dev/null; then
@@ -793,8 +798,8 @@ if [ -n "$STREAM_MODE" ]; then
     HTTP_CODE=$(curl -skS -w "\\n__HTTPCODE__:%{{http_code}}" \\
         -X POST "$ORC_API_URL/query" \\
         -H "Content-Type: application/json" \\
-        -H "X-API-Key: $ORC_SYMBIONT_API_KEY" \\
-        -d "$PAYLOAD" \\
+        -H "@$HEADERFILE" \\
+        --data-binary "@$PAYLOADFILE" \\
         --no-buffer 2>/dev/null | {{
         LAST_EVENT=""
         STATUS_SHOWN=""
@@ -862,8 +867,8 @@ else
     RESPONSE=$(curl -skS -w "\\n__HTTPCODE__:%{{http_code}}" \\
         -X POST "$ORC_API_URL/query" \\
         -H "Content-Type: application/json" \\
-        -H "X-API-Key: $ORC_SYMBIONT_API_KEY" \\
-        -d "$PAYLOAD" 2>/dev/null)
+        -H "@$HEADERFILE" \\
+        --data-binary "@$PAYLOADFILE" 2>/dev/null)
     CURL_EXIT=$?
     set -e
 

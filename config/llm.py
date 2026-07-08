@@ -1,4 +1,4 @@
-"""Derived LLM serving compatibility environment."""
+"""Derived LLM serving generated environment."""
 
 from __future__ import annotations
 
@@ -138,7 +138,7 @@ def resolve_llm_env(resolved: dict[str, Any]) -> dict[str, str]:
 
     primary_model = "qwen3:8b"
     aux_model = "qwen3.5:4b-q4_K_M"
-    critic_model = "atla/selene-mini:latest"
+    critic_model = "atla/selene-mini:q4_k_m"
     classifier_model = "qwen3:1.7b"
 
     gpu_util = _decision(resolved, "llm.vllm.gpu_memory_utilization", 0.0)

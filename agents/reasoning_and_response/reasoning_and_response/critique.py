@@ -63,10 +63,12 @@ def critique(
     except Exception as exc:
         log.warning("critique: LLM failed: %s", exc)
         return CritiqueResponse(
-            acceptable=True,
-            confidence_score=cfg.evaluation.confidence_threshold,
-            response="Output accepted by conservative fallback after critique provider failure.",
-            metadata={"provider_mode": "critique", "fallback_reason": "llm_unavailable", **metadata},
+            acceptable=False,
+            confidence_score=0.0,
+            issues=["Critique provider unavailable."],
+            suggestions=["Retry critique after the model backend is available or keep the response blocked."],
+            response="Critique provider unavailable; output was not accepted.",
+            metadata={"provider_mode": "critique", "degraded_reason": "llm_unavailable", **metadata},
         )
 
 

@@ -163,7 +163,7 @@ stateDiagram-v2
 
 | Class | Example signal | Repairable? | Owner |
 | --- | --- | --- | --- |
-| Missing host tool | setup-system/setup diagnostic | yes | user/operator |
+| Missing host tool | setup-system installer/setup diagnostic | yes | user/operator |
 | Config validation failure | resolver/infra error | yes | `config/` |
 | Docker lifecycle failure | `make up`/health failure | yes | `infra/` plus service owner |
 | Storage unavailable | storage warning or blocked path | yes | `config/`, `storage_guardian` |
@@ -178,7 +178,7 @@ stateDiagram-v2
 | Runtime success | stack status and usable `@` path | unverified live capability |
 | Degraded readiness | missing owner/dependency and next action | full readiness |
 | Blocked setup | concrete missing dependency | generic failure |
-| Daily answer | evidence refs or degraded status where relevant | hidden static fallback success |
+| Daily answer | evidence refs or degraded status where relevant | hidden static generation shortcut success |
 
 ## Operator Runbook
 
@@ -207,14 +207,14 @@ Maximum safe local profile:
 ```bash
 make profiles
 make up-auto
-make verify-max-live
+./.venv/bin/python scripts/verify_install.py --mode max --live --write-report
 ```
 
 ## Verification
 
 | Check | Command or source | Expected result | Last run |
 | --- | --- | --- | --- |
-| Contract tests | `make check-doc-targets` | all referenced Makefile targets exist | 2026-06-29 |
+| Contract tests | Makefile/docs target guard in the source repo | all referenced user commands exist | 2026-06-29 |
 | Repair tests | not run for docs-only update | no setup repair behavior changed | not-run |
 | Storage publication | `storage_guardian/README.md` | durable writes remain storage-owned | 2026-06-29 |
 | Live smoke | `docs/generated/docker-runtime-smoke.md` | generated runtime evidence available | 2026-06-29 |

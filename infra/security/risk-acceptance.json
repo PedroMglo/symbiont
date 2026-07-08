@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "accepted_risks": [
+    {
+      "id": "RA-SEC-2026-07-06-B104-CONTAINER-INTERNAL-BIND",
+      "scanner": "bandit",
+      "test_ids": ["B104"],
+      "severity": "medium",
+      "owner": "infra/security",
+      "path_patterns": [
+        "agents/*/*/config.py",
+        "features/*/*/config.py",
+        "scripts/runtime/launch_gemilyni_dashboard.py"
+      ],
+      "impact": "Bandit flags 0.0.0.0 service bind defaults. These defaults are for container-internal service listeners; compose exposure policy controls host publication.",
+      "compensating_control": "API auth is fail-closed for sensitive routes and compose/profile validation rejects unapproved host publication. Re-check with scripts/api_audit.py and Docker profile validation.",
+      "mitigation": "Prefer 127.0.0.1 for host-only scripts; keep container service listeners behind internal Docker networks or gateway auth.",
+      "review_by": "2026-08-06"
+    },
+    {
+      "id": "RA-SEC-2026-07-06-B108-LOCAL-TEMP-PATHS",
+      "scanner": "bandit",
+      "test_ids": ["B108"],
+      "severity": "medium",
+      "owner": "infra/security",
+      "path_patterns": [
+        "agents/*/tests/*.py",
+        "features/*/tests/*.py",
+        "features/workspace_execution/workspace_execution/*.py",
+        "orchestrator/cache/semantic_cache.py",
+        "orchestrator/capabilities/command_registry.py",
+        "orchestrator/observability/gemilyni.py",
+        "scripts/*.py",
+        "scripts/runtime/*.py",
+        "storage_guardian/storage_control.py"
+      ],
+      "impact": "Bandit flags fixed /tmp defaults. Current uses are tests, container-local scratch defaults, or paths guarded by owner policy and path validation.",
+      "compensating_control": "Workspace execution and storage paths have owner-specific traversal/symlink/archive tests; local secret hygiene scans ignored logs without printing values.",
+      "mitigation": "Move runtime scratch defaults to config-generated roots when touched by future owner work; tests may keep fixed tmp fixtures.",
+      "review_by": "2026-08-06"
+    },
+    {
+      "id": "RA-SEC-2026-07-06-B310-LOCAL-SMOKE-URLLIB",
+      "scanner": "bandit",
+      "test_ids": ["B310"],
+      "severity": "medium",
+      "owner": "infra/security",
+      "path_patterns": [
+        "scripts/docker_runtime_smoke.py",
+        "scripts/eval_quality.py",
+        "scripts/material_at_flow_smoke.py",
+        "scripts/stress/monitor_resources.py"
+      ],
+      "impact": "Bandit flags urllib in local operator smoke/eval scripts. These scripts target explicit ai-local or test URLs and are not exposed as runtime request handlers.",
+      "compensating_control": "Runtime URL-fetching owner code validates control URL schemes; smoke scripts require explicit local execution and tokens.",
+      "mitigation": "When these scripts are next touched, centralize URL scheme validation and migrate to a shared safe HTTP helper.",
+      "review_by": "2026-08-06"
+    },
+    {
+      "id": "RA-SEC-2026-07-06-B323-LOCAL-SMOKE-TLS",
+      "scanner": "bandit",
+      "test_ids": ["B323"],
+      "severity": "medium",
+      "owner": "infra/security",
+      "path_patterns": [
+        "scripts/material_at_flow_smoke.py"
+      ],
+      "impact": "Bandit flags an unverified TLS context in a local smoke script used against the self-signed local gateway.",
+      "compensating_control": "The runtime voice gateway now verifies TLS by default; this remaining use is a local operator smoke path requiring explicit credentials.",
+      "mitigation": "Add CA bundle discovery to material smoke scripts or replace unverified contexts with configured trust roots.",
+      "review_by": "2026-08-06"
+    },
+    {
+      "id": "RA-SEC-2026-07-06-B102-TEST-EXEC",
+      "scanner": "bandit",
+      "test_ids": ["B102"],
+      "severity": "medium",
+      "owner": "agents/material_builder",
+      "path_patterns": [
+        "agents/material_builder/tests/test_material_builder_contracts.py"
+      ],
+      "impact": "Bandit flags exec usage in a test fixture, not production code.",
+      "compensating_control": "The file is under tests only and is not called by runtime owners.",
+      "mitigation": "Replace exec with an importlib/module fixture if this test is refactored.",
+      "review_by": "2026-08-06"
+    },
+    {
+      "id": "RA-SEC-2026-07-07-TRIVY-QDRANT-UPSTREAM-ARTIFACTS",
+      "scanner": "trivy-image",
+      "vulnerability_ids": [
+        "CVE-2026-12143",
+        "CVE-2026-12151",
+        "CVE-2026-47429",
+        "CVE-2026-48779",
+        "CVE-2026-53571",
+        "GHSA-36hh-v3qg-5jq4"
+      ],
+      "severity": "critical",
+      "owner": "obsidian-rag",
+      "image_patterns": ["ai-local-qdrant:*"],
+      "path_patterns": ["qdrant/qdrant.spdx.json", "Node.js"],
+      "impact": "The current upstream Qdrant v1.18.2 image still reports vulnerable Node/Rust artefacts after local Debian security updates are applied. These artefacts are inside the upstream image and cannot be upgraded safely without rebuilding Qdrant itself.",
+      "compensating_control": "The ai-local Qdrant service is internal to the Docker network, runs with TLS and API-key enforcement, exposes container ports rather than host ports in the default compose graph, and now uses a local wrapper image that applies available Debian security updates.",
+      "mitigation": "Track the next Qdrant upstream image that updates the affected artefacts, then update QDRANT_UPSTREAM_TAG and rerun Trivy image scanning. If upstream does not release promptly, evaluate disabling/removing non-runtime dashboard artefacts in a dedicated Qdrant-owner change.",
+      "review_by": "2026-07-14"
+    },
+    {
+      "id": "RA-SEC-2026-07-07-TRIVY-DOCKER-COMPOSE-PLUGIN",
+      "scanner": "trivy-image",
+      "vulnerability_ids": ["CVE-2026-34040"],
+      "severity": "high",
+      "owner": "orchestrator/lifecycle",
+      "image_patterns": ["ai-local-symbiont:*"],
+      "path_patterns": ["usr/libexec/docker/cli-plugins/docker-compose"],
+      "impact": "The latest docker-compose-plugin package available from Docker's Debian repository still embeds github.com/docker/docker v28.5.2+incompatible, which Trivy reports as vulnerable. The plugin has a live caller in orchestrator.lifecycle for compose up/config reconciliation, so removing it would break lifecycle management.",
+      "compensating_control": "Lifecycle service names are orchestrator-owned, compose calls use argv lists, Docker API access is routed through the constrained docker-proxy service, and the proxy denies broad dangerous API groups such as EXEC, BUILD, SECRETS, SWARM, and SYSTEM.",
+      "mitigation": "Upgrade docker-compose-plugin as soon as Docker publishes a package embedding github.com/docker/docker >=29.3.1, or replace the compose subprocess path with a narrower Docker SDK/container API implementation.",
+      "review_by": "2026-07-14"
+    }
+  ]
+}

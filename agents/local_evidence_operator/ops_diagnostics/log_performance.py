@@ -54,8 +54,8 @@ def resolve_log_workspace(path: str | None, *, host_home_prefix: str | None = No
 def build_log_performance_report(
     workspace: Path,
     *,
-    previous_start: str | None = None,
-    previous_end: str | None = None,
+    baseline_start: str | None = None,
+    baseline_end: str | None = None,
     current_start: str | None = None,
     current_end: str | None = None,
     min_requests: int = 1000,
@@ -65,7 +65,7 @@ def build_log_performance_report(
 
     root = workspace.resolve()
     log_root = root / "logs" if (root / "logs").is_dir() else root
-    data: dict[str, dict[str, list[float]]] = defaultdict(lambda: {"previous": [], "current": []})
+    data: dict[str, dict[str, list[float]]] = defaultdict(lambda: {"baseline": [], "current": []})
     parsed_records: list[tuple[str, str, float]] = []
     stats = {
         "files_seen": 0,
@@ -98,16 +98,16 @@ def build_log_performance_report(
 
     periods = _resolve_periods(
         parsed_records,
-        previous_start=previous_start,
-        previous_end=previous_end,
+        baseline_start=baseline_start,
+        baseline_end=baseline_end,
         current_start=current_start,
         current_end=current_end,
     )
     for day, endpoint, latency_ms in parsed_records:
         week = _week_bucket(
             day,
-            previous_start=periods["previous_start"],
-            previous_end=periods["previous_end"],
+            baseline_start=periods["baseline_start"],
+            baseline_end=periods["baseline_end"],
             current_start=periods["current_start"],
             current_end=periods["current_end"],
         )
@@ -118,19 +118,19 @@ def build_log_performance_report(
     rows: list[dict[str, Any]] = []
     excluded_low_volume = 0
     for endpoint, weeks in data.items():
-        previous_count = len(weeks["previous"])
+        baseline_count = len(weeks["baseline"])
         current_count = len(weeks["current"])
-        if previous_count < min_requests or current_count < min_requests:
+        if baseline_count < min_requests or current_count < min_requests:
             excluded_low_volume += 1
             continue
-        previous_p95 = _p95(weeks["previous"])
+        baseline_p95 = _p95(weeks["baseline"])
         current_p95 = _p95(weeks["current"])
-        increase_pct = ((current_p95 - previous_p95) / previous_p95 * 100.0) if previous_p95 else math.inf
+        increase_pct = ((current_p95 - baseline_p95) / baseline_p95 * 100.0) if baseline_p95 else math.inf
         rows.append({
             "endpoint": endpoint,
-            "previous_count": previous_count,
+            "baseline_count": baseline_count,
             "current_count": current_count,
-            "previous_p95_ms": previous_p95,
+            "baseline_p95_ms": baseline_p95,
             "current_p95_ms": current_p95,
             "increase_pct": increase_pct,
         })
@@ -142,7 +142,7 @@ def build_log_performance_report(
         "policy": {
             "mode": "read_only_streaming_gzip",
             "decompress_to_disk": False,
-            "previous_week": [periods["previous_start"], periods["previous_end"]],
+            "baseline_week": [periods["baseline_start"], periods["baseline_end"]],
             "current_week": [periods["current_start"], periods["current_end"]],
             "window_source": periods["source"],
             "min_requests_per_week": min_requests,
@@ -181,7 +181,7 @@ def format_log_performance_report(report: dict[str, Any], *, published_uri: str 
         "",
         "## Policy",
         "- Read gzip logs as streams; no decompression to disk.",
-        f"- Previous week: {policy.get('previous_week', ['', ''])[0]} through {policy.get('previous_week', ['', ''])[1]}.",
+        f"- Baseline week: {policy.get('baseline_week', ['', ''])[0]} through {policy.get('baseline_week', ['', ''])[1]}.",
         f"- Current week: {policy.get('current_week', ['', ''])[0]} through {policy.get('current_week', ['', ''])[1]}.",
         f"- Exclude endpoints with fewer than {policy.get('min_requests_per_week')} requests in either week.",
         "- Normalize endpoints by removing query strings and replacing numeric IDs/UUIDs.",
@@ -202,25 +202,25 @@ def format_log_performance_report(report: dict[str, Any], *, published_uri: str 
         f"- endpoints excluded by low volume: {stats.get('excluded_low_volume_endpoints', 0)}",
         "",
         "## Top endpoint p95 increases",
-        "| rank | endpoint | previous n | current n | previous p95 ms | current p95 ms | increase pct |",
+        "| rank | endpoint | baseline n | current n | baseline p95 ms | current p95 ms | increase pct |",
         "|---:|---|---:|---:|---:|---:|---:|",
     ])
     for index, row in enumerate(top_rows, 1):
         lines.append(
-            f"| {index} | `{row['endpoint']}` | {row['previous_count']} | {row['current_count']} | "
-            f"{row['previous_p95_ms']:.2f} | {row['current_p95_ms']:.2f} | {row['increase_pct']:.2f}% |"
+            f"| {index} | `{row['endpoint']}` | {row['baseline_count']} | {row['current_count']} | "
+            f"{row['baseline_p95_ms']:.2f} | {row['current_p95_ms']:.2f} | {row['increase_pct']:.2f}% |"
         )
     if len(rows) > len(top_rows):
         lines.extend([
             "",
             "## Appendix: complete ranked endpoint table",
-            "| rank | endpoint | previous n | current n | previous p95 ms | current p95 ms | increase pct |",
+            "| rank | endpoint | baseline n | current n | baseline p95 ms | current p95 ms | increase pct |",
             "|---:|---|---:|---:|---:|---:|---:|",
         ])
         for index, row in enumerate(rows, 1):
             lines.append(
-                f"| {index} | `{row['endpoint']}` | {row['previous_count']} | {row['current_count']} | "
-                f"{row['previous_p95_ms']:.2f} | {row['current_p95_ms']:.2f} | {row['increase_pct']:.2f}% |"
+                f"| {index} | `{row['endpoint']}` | {row['baseline_count']} | {row['current_count']} | "
+                f"{row['baseline_p95_ms']:.2f} | {row['current_p95_ms']:.2f} | {row['increase_pct']:.2f}% |"
             )
     lines.extend([
         "",
@@ -276,15 +276,15 @@ def parse_log_line(line: str) -> tuple[str, str, float] | None:
 def _resolve_periods(
     records: list[tuple[str, str, float]],
     *,
-    previous_start: str | None,
-    previous_end: str | None,
+    baseline_start: str | None,
+    baseline_end: str | None,
     current_start: str | None,
     current_end: str | None,
 ) -> dict[str, str]:
-    if previous_start and previous_end and current_start and current_end:
+    if baseline_start and baseline_end and current_start and current_end:
         return {
-            "previous_start": previous_start,
-            "previous_end": previous_end,
+            "baseline_start": baseline_start,
+            "baseline_end": baseline_end,
             "current_start": current_start,
             "current_end": current_end,
             "source": "request_parameters",
@@ -294,19 +294,19 @@ def _resolve_periods(
     )
     if not dates:
         return {
-            "previous_start": "",
-            "previous_end": "",
+            "baseline_start": "",
+            "baseline_end": "",
             "current_start": "",
             "current_end": "",
             "source": "no_dates_observed",
         }
     current_end_date = dates[-1]
     current_start_date = current_end_date - timedelta(days=6)
-    previous_end_date = current_start_date - timedelta(days=1)
-    previous_start_date = previous_end_date - timedelta(days=6)
+    baseline_end_date = current_start_date - timedelta(days=1)
+    baseline_start_date = baseline_end_date - timedelta(days=6)
     return {
-        "previous_start": previous_start or previous_start_date.isoformat(),
-        "previous_end": previous_end or previous_end_date.isoformat(),
+        "baseline_start": baseline_start or baseline_start_date.isoformat(),
+        "baseline_end": baseline_end or baseline_end_date.isoformat(),
         "current_start": current_start or current_start_date.isoformat(),
         "current_end": current_end or current_end_date.isoformat(),
         "source": "inferred_from_observed_log_dates",
@@ -338,13 +338,13 @@ def normalize_endpoint(path: str) -> str:
 def _week_bucket(
     day: str,
     *,
-    previous_start: str,
-    previous_end: str,
+    baseline_start: str,
+    baseline_end: str,
     current_start: str,
     current_end: str,
 ) -> str | None:
-    if previous_start <= day <= previous_end:
-        return "previous"
+    if baseline_start <= day <= baseline_end:
+        return "baseline"
     if current_start <= day <= current_end:
         return "current"
     return None

@@ -224,7 +224,7 @@ def classify_rejection(reason: str, details: dict[str, Any] | None = None) -> Fa
             "llm_contract_violation",
             "contract_mismatch",
             "does not match the repair target",
-            "expected_old_sha256",
+            "expected_current_sha256",
             "checksum_mismatch",
             "material_builder_patch_contract_invalid",
         )

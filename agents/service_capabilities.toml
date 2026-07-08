@@ -93,7 +93,7 @@ capabilities = [
   "material_patch_proposal",
   "chunk_protocol",
   "schema_repair_contract",
-  "no_static_fallback",
+  "no_static_generation_shortcut",
 ]
 transport = { type = "dispatch", service = "material_builder", method = "POST", path = "/v1/material-builder/plan" }
 policy_action = "material.builder.propose"
@@ -101,7 +101,7 @@ risk_level = "low"
 supported_action_types = ["api_call", "agent_invoke"]
 resource_profile = { resource_class = "gpu_llm", lane = "background", model_profile = "material_plan" }
 input_schema = { type = "object", contract = "MaterialPlanRequest", schema_ref = "python:material_builder.types:MaterialPlanRequest", required = ["task_id", "working_query"], fields = ["task_id", "working_query", "original_query", "original_language", "working_language", "language_context"] }
-output_schema = { type = "object", contract = "MaterialPlanResponse", schema_ref = "python:material_builder.types:MaterialPlanResponse", fields = ["plan", "generation_backend", "static_fallback_used"] }
+output_schema = { type = "object", contract = "MaterialPlanResponse", schema_ref = "python:material_builder.types:MaterialPlanResponse", fields = ["plan", "generation_backend", "static_generation_shortcut_used"] }
 evidence_types = ["material_plan", "file_proposal", "chunk_record", "patch_proposal", "schema_repair"]
 model_profile = "material_plan"
 writes_allowed = false
@@ -109,7 +109,7 @@ idempotency_policy = "read_only_proposal_by_session"
 dry_run_supported = true
 rollback_supported = false
 events_published = ["material.plan.created", "material.file.completed", "material.patch.proposed", "service.degraded"]
-risk_review_criteria = ["proposal_only", "no_workspace_write", "no_command_execution", "no_static_fallback", "english_internal_contracts"]
+risk_review_criteria = ["proposal_only", "no_workspace_write", "no_command_execution", "no_static_generation_shortcut", "english_internal_contracts"]
 round_dependencies = []
 timeout_seconds = 120
 

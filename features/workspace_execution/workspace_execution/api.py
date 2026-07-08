@@ -21,6 +21,8 @@ from workspace_execution.types import (
     CommandRunRequest,
     CommandRunResponse,
     DiffResponse,
+    GitRemoteSourceAcquireRequest,
+    GitRemoteSourceAcquireResponse,
     WorkspaceFileBatchWriteRequest,
     WorkspaceFileBatchWriteResponse,
     WorkspacePatchApplyRequest,
@@ -234,6 +236,15 @@ def attach_inputs(
     store: SessionStore = Depends(get_store),
 ) -> InputAttachResponse:
     return store.attach_inputs(session_id, request)
+
+
+@app.post("/v1/workspace-execution/sessions/{session_id}/remote-sources/git", dependencies=[Depends(require_service_token)])
+def acquire_git_remote_source(
+    session_id: str,
+    request: GitRemoteSourceAcquireRequest,
+    store: SessionStore = Depends(get_store),
+) -> GitRemoteSourceAcquireResponse:
+    return store.acquire_git_remote_source(session_id, request)
 
 
 @app.post("/v1/workspace-execution/sessions/{session_id}/files/batch", dependencies=[Depends(require_service_token)])

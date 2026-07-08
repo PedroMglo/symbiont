@@ -30,6 +30,7 @@ def enrich_material_evidence_context(
     max_documents_per_subject: int = 4,
     max_document_calls: int = 32,
     max_media_files: int = 4,
+    max_research_subjects: int = 12,
     timeout_seconds: float = 45.0,
 ) -> dict[str, Any]:
     """Attach compact semantic digests from owner services when available."""
@@ -76,6 +77,30 @@ def enrich_material_evidence_context(
         if result.get("missing_semantic_evidence"):
             missing_evidence.extend(str(item) for item in result["missing_semantic_evidence"])
 
+    if workspace:
+        prepare_result = _invoke_research_source_prepare(
+            workspace=workspace,
+            subjects=subjects,
+            workspace_map=workspace_map,
+            artifact_root=str((context.get("constraints") or {}).get("expected_artifact_root") or ""),
+            invoke_endpoint=invoke_endpoint,
+            timeout_seconds=timeout_seconds,
+        )
+        enrichment_results.append(prepare_result)
+        if prepare_result.get("missing_semantic_evidence"):
+            missing_evidence.extend(str(item) for item in prepare_result["missing_semantic_evidence"])
+        source_name = _research_source_name(prepare_result, workspace)
+        for subject in subjects[:max_research_subjects]:
+            result = _invoke_research_subject_digest(
+                subject,
+                source_name=source_name,
+                invoke_endpoint=invoke_endpoint,
+                timeout_seconds=timeout_seconds,
+            )
+            enrichment_results.append(result)
+            if result.get("missing_semantic_evidence"):
+                missing_evidence.extend(str(item) for item in result["missing_semantic_evidence"])
+
     context["enrichment_results"] = enrichment_results
     if missing_evidence:
         context["missing_evidence"] = _dedupe(missing_evidence)
@@ -85,6 +110,84 @@ def enrich_material_evidence_context(
             f"Specialist evidence results attached: {len(enrichment_results)}."
         ).strip()
     return context
+
+
+def _invoke_research_source_prepare(
+    *,
+    workspace: str,
+    subjects: list[str],
+    workspace_map: dict[str, Any],
+    artifact_root: str,
+    invoke_endpoint: OwnerEndpointInvoker,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    response = invoke_endpoint(
+        "research",
+        method="POST",
+        path="/v1/research/sources/prepare",
+        payload={
+            "sources": [
+                {
+                    "path": workspace,
+                    "source_type": "auto",
+                    "exclude_patterns": _research_source_exclude_patterns(
+                        workspace_map,
+                        artifact_root=artifact_root,
+                    ),
+                }
+            ],
+            "target": "sources",
+            "force": False,
+            "wait_seconds": min(max(timeout_seconds, 0.0), 120.0),
+            "poll_interval_seconds": 2.0,
+        },
+        timeout=max(timeout_seconds, 120.0),
+        policy_action="rag.admin.prepare_sources",
+        auth_profile="internal_api",
+    )
+    return _research_prepare_to_enrichment_result(
+        input_paths=subjects or ["."],
+        workspace=workspace,
+        response=response,
+    )
+
+
+def _invoke_research_subject_digest(
+    subject: str,
+    *,
+    source_name: str,
+    invoke_endpoint: OwnerEndpointInvoker,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    response = invoke_endpoint(
+        "research",
+        method="POST",
+        path="/v1/research/search",
+        payload={
+            "query": (
+                "Summarize the main topics, source files, evidence, and useful study "
+                f"questions for the requested local source subsection named {subject!r}. "
+                "Use retrieved evidence only."
+            ),
+            "budget_tokens": 2400,
+            "include_code": True,
+            "intent": "broad",
+            "namespace": source_name,
+            "metadata": {
+                "source": "orchestrator.evidence",
+                "evidence_role": "material_documentation_context",
+                "subject": subject,
+            },
+        },
+        timeout=timeout_seconds,
+        policy_action="rag.query",
+        auth_profile="internal_api",
+    )
+    return _research_search_to_enrichment_result(
+        input_paths=[subject],
+        subject=subject,
+        response=response,
+    )
 
 
 def _invoke_extrator_digest(
@@ -209,6 +312,171 @@ def _response_to_enrichment_result(
         "missing_semantic_evidence": _dedupe(missing),
         "error": response_error,
     }
+
+
+def _research_prepare_to_enrichment_result(
+    *,
+    input_paths: list[str],
+    workspace: str,
+    response: Any,
+) -> dict[str, Any]:
+    data = getattr(response, "data", None)
+    if not isinstance(data, dict):
+        data = {}
+    success = bool(getattr(response, "success", False)) and not str(getattr(response, "error", "") or "")
+    response_error = str(getattr(response, "error", "") or data.get("error") or "").strip()
+    sources = data.get("sources")
+    if not isinstance(sources, list):
+        sources = []
+    status = str(data.get("status") or data.get("action") or ("completed" if success else "failed"))
+    missing: list[str] = []
+    if response_error:
+        missing.append(response_error)
+    if success and status not in {"completed", "submitted", "queued", "running"}:
+        missing.append(f"research source preparation status: {status}")
+    return {
+        "provider": "research",
+        "capability": "source_preparation",
+        "input_paths": input_paths,
+        "status": status,
+        "action": "prepare_sources",
+        "success": success,
+        "semantic_content_available": False,
+        "content_excerpt": "",
+        "storage_refs": [],
+        "output_refs": {},
+        "quality": {
+            "workspace": workspace,
+            "job_id": data.get("job_id"),
+            "status_url": data.get("status_url"),
+            "prepared_sources": len(sources),
+            "target": data.get("target"),
+        },
+        "missing_semantic_evidence": _dedupe(missing),
+        "error": response_error,
+        "prepared_sources": sources,
+    }
+
+
+def _research_search_to_enrichment_result(
+    *,
+    input_paths: list[str],
+    subject: str,
+    response: Any,
+) -> dict[str, Any]:
+    data = getattr(response, "data", None)
+    if not isinstance(data, dict):
+        data = {}
+    response_error = str(getattr(response, "error", "") or data.get("error") or "").strip()
+    success = bool(getattr(response, "success", False)) and not response_error
+    content = str(data.get("content") or "").strip()
+    raw_metadata = data.get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+    answerability = str(metadata.get("answerability") or "").strip().casefold()
+    evidence_flags = _string_list(metadata.get("evidence_flags"))
+    raw_results = data.get("results")
+    result_count = len(raw_results) if isinstance(raw_results, list) else 0
+    citations = _research_citations(raw_results)
+    public_content = _research_public_content(content)
+    has_insufficient_evidence = answerability == "insufficient" or "insufficient_evidence" in {
+        flag.casefold() for flag in evidence_flags
+    }
+    semantic_available = bool(public_content) and result_count > 0 and not has_insufficient_evidence
+    missing: list[str] = []
+    if response_error:
+        missing.append(response_error)
+    if success and not semantic_available:
+        missing.append(f"research returned no usable retrieved context for {subject}.")
+    return {
+        "provider": "research",
+        "capability": "rag_context",
+        "input_paths": input_paths,
+        "status": str(data.get("status") or ("completed" if success else "failed")),
+        "action": "search",
+        "success": success,
+        "semantic_content_available": semantic_available,
+        "content_excerpt": _compact_excerpt([public_content]) if semantic_available else "",
+        "storage_refs": [],
+        "output_refs": {},
+        "quality": {
+            "answerability": answerability or None,
+            "evidence_flags": evidence_flags,
+            "result_count": result_count,
+            "total_tokens": data.get("total_tokens"),
+            "citations": citations[:8],
+            "latency_ms": getattr(response, "latency_ms", 0.0),
+        },
+        "missing_semantic_evidence": _dedupe(missing),
+        "error": response_error,
+    }
+
+
+def _research_public_content(content: str) -> str:
+    """Strip research diagnostics from text before exposing it as source evidence."""
+    lines = str(content or "").splitlines()
+    while lines:
+        first = lines[0].strip()
+        if not first:
+            lines.pop(0)
+            continue
+        lowered = first.casefold()
+        if lowered.startswith(
+            (
+                "research evidence answerability:",
+                "reason:",
+                "flags:",
+                "plan:",
+            )
+        ):
+            lines.pop(0)
+            continue
+        break
+    return "\n".join(lines).strip()
+
+
+def _research_source_name(prepare_result: dict[str, Any], workspace: str) -> str:
+    sources = prepare_result.get("prepared_sources")
+    if isinstance(sources, list):
+        for item in sources:
+            if isinstance(item, dict) and str(item.get("name") or "").strip():
+                return str(item["name"]).strip()
+    return PurePosixPath(workspace.rstrip("/")).name or "source"
+
+
+def _research_source_exclude_patterns(workspace_map: dict[str, Any], *, artifact_root: str) -> list[str]:
+    patterns: list[str] = []
+    root = artifact_root.strip().strip("/")
+    if root:
+        patterns.extend([root, f"{root}/**", f"{root}.tar.gz", f"{root}.zip"])
+    patterns.extend([
+        "__failure_snapshot__",
+        "__failure_snapshot__/**",
+        "**/__failure_snapshot__",
+        "**/__failure_snapshot__/**",
+        "failure-snapshot-*",
+        "failure-snapshot-*/**",
+        "failure-snapshot-*.tar.gz",
+        "failure-snapshot-*.zip",
+    ])
+    for value in _string_list(workspace_map.get("generated_artifact_paths")):
+        path = value.strip().strip("/")
+        if not path:
+            continue
+        patterns.extend([path, f"{path}/**"])
+    return _dedupe(patterns)
+
+
+def _research_citations(raw_results: Any) -> list[str]:
+    if not isinstance(raw_results, list):
+        return []
+    citations: list[str] = []
+    for item in raw_results:
+        if not isinstance(item, dict):
+            continue
+        value = str(item.get("citation_ref") or item.get("path") or item.get("source_id") or "").strip()
+        if value:
+            citations.append(value)
+    return _dedupe(citations)
 
 
 def _structured_document_paths(raw_paths: Any) -> list[str]:

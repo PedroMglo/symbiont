@@ -73,12 +73,7 @@ class DockerInput:
     up_no_build: bool = True
     up_wait: bool = True
     up_wait_timeout_seconds: int = 120
-    remove_orphans: bool = False
-
-
-@dataclass(frozen=True)
-class CompatibilityInput:
-    read_env_storage_generated: bool = True
+    remove_orphans: bool = True
 
 
 @dataclass(frozen=True)
@@ -124,7 +119,6 @@ class AppConfig:
     privacy: PrivacyInput = field(default_factory=PrivacyInput)
     runtime: RuntimeInput = field(default_factory=RuntimeInput)
     docker: DockerInput = field(default_factory=DockerInput)
-    compatibility: CompatibilityInput = field(default_factory=CompatibilityInput)
     inference: InferenceInput = field(default_factory=InferenceInput)
     lifecycle: LifecycleInput = field(default_factory=LifecycleInput)
     material: MaterialInput = field(default_factory=MaterialInput)
@@ -145,7 +139,6 @@ ALLOWED_TOP_LEVEL_KEYS = {
     "privacy",
     "runtime",
     "docker",
-    "compatibility",
     "inference",
     "lifecycle",
     "material",
@@ -287,7 +280,7 @@ def parse_app_config(raw: dict[str, Any]) -> AppConfig:
         raise ConfigError(
             "unknown top-level config section(s): "
             + ", ".join(unknown_keys)
-            + ". Move owner-specific runtime policy to its owner compatibility file or add it to the typed schema."
+            + ". Move owner-specific runtime policy to its owner runtime file or add it to the typed schema."
         )
 
     version = _as_int(raw.get("version", 1), "version")
@@ -338,7 +331,6 @@ def parse_app_config(raw: dict[str, Any]) -> AppConfig:
     )
     if docker_up_wait_timeout < 1:
         raise ConfigError("docker.up_wait_timeout_seconds must be >= 1")
-    compatibility_raw = _section(raw, "compatibility")
     inference_raw = _section(raw, "inference")
     lifecycle_raw = _section(raw, "lifecycle")
     material_raw = _section(raw, "material")
@@ -418,13 +410,7 @@ def parse_app_config(raw: dict[str, Any]) -> AppConfig:
             up_no_build=_as_bool(docker_raw.get("up_no_build", True), "docker.up_no_build"),
             up_wait=_as_bool(docker_raw.get("up_wait", True), "docker.up_wait"),
             up_wait_timeout_seconds=docker_up_wait_timeout,
-            remove_orphans=_as_bool(docker_raw.get("remove_orphans", False), "docker.remove_orphans"),
-        ),
-        compatibility=CompatibilityInput(
-            read_env_storage_generated=_as_bool(
-                compatibility_raw.get("read_env_storage_generated", True),
-                "compatibility.read_env_storage_generated",
-            ),
+            remove_orphans=_as_bool(docker_raw.get("remove_orphans", True), "docker.remove_orphans"),
         ),
         inference=InferenceInput(
             reserved_vram_fraction=_validate_fraction(

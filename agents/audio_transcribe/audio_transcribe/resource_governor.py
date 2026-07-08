@@ -6,7 +6,6 @@ import asyncio
 import os
 from dataclasses import dataclass
 
-
 from sharedai.system.resource_governor import ResourceGovernorClient
 from sharedai.system.resource_governor.schemas import LeaseDecision, LeaseRequest
 
@@ -24,6 +23,11 @@ class AudioGpuLease:
     async def release(self) -> None:
         if self.decision.lease_id:
             await asyncio.to_thread(self.client.release, self.decision.lease_id)
+
+
+def is_resource_governor_configured() -> bool:
+    """Return whether audio_transcribe should request external resource leases."""
+    return bool(os.environ.get("AI_RESOURCE_GOVERNOR_URL", "").strip())
 
 
 async def request_audio_gpu_lease(job_id: str, *, model_name: str, duration_seconds: float | None = None) -> AudioGpuLease:

@@ -6,6 +6,7 @@ LABEL org.opencontainers.image.vendor="ai-local" \
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
         bash \
         ca-certificates \
@@ -17,12 +18,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         git \
         grep \
         iproute2 \
+        kmod \
+        openssh-client \
         redis-server \
         redis-tools \
         ripgrep \
         sed \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir "pytest>=8.0" \
+    && pip install --no-cache-dir "pytest>=8.0" "setuptools>=83.0.0" "wheel>=0.46.2" "jaraco.context>=6.1.0" \
     && groupadd --gid 10001 cmdsandbox \
     && useradd --uid 10001 --gid cmdsandbox --create-home --shell /usr/sbin/nologin cmdsandbox
 

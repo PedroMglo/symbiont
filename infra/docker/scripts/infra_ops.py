@@ -24,6 +24,7 @@ STORAGE_ENV = ROOT / ".env.storage.generated"
 LLM_ENV = ROOT / ".env.llm.generated"
 SERVICES_ENV = ROOT / ".env.services.generated"
 DOCKER_RESOURCES_ENV = ROOT / ".env.docker.resources.generated"
+RESOURCE_GOVERNOR_POLICY = ROOT / ".local" / "generated" / "resource_governor_policy.json"
 IMAGE_BUILD_CATALOG = ROOT / "config" / "docker" / "image-build-catalog.toml"
 OBS_ENV = ROOT / "infra" / "docker" / ".env.observability"
 OLLAMA_HOST_CONFIG_DIR = ROOT / ".local" / "generated" / "ollama-host"
@@ -52,6 +53,7 @@ GENERATED_ARTIFACTS = (
     LLM_ENV,
     SERVICES_ENV,
     DOCKER_RESOURCES_ENV,
+    RESOURCE_GOVERNOR_POLICY,
     OBS_ENV,
     ROOT / "docs" / "generated" / "docker-inventory.json",
 )
@@ -166,10 +168,10 @@ def _read_image_build_catalog() -> dict[str, object]:
     return tomllib.loads(IMAGE_BUILD_CATALOG.read_text(encoding="utf-8"))
 
 
-def _catalog_build_arg_value(env: dict[str, str], name: str) -> str:
+def _catalog_build_arg_value(env: dict[str, str], name: str) -> str | None:
     if name == "AI_LOCAL_BASE_TAG":
         return env.get(name) or _image_tag(env)
-    return env.get(name, "")
+    return env.get(name) or None
 
 
 def _direct_build_steps(env: dict[str, str]) -> list[Step]:
@@ -203,7 +205,9 @@ def _direct_build_steps(env: dict[str, str]) -> list[Step]:
         if isinstance(build_args, list):
             for build_arg in build_args:
                 arg_name = str(build_arg)
-                command.extend(("--build-arg", f"{arg_name}={_catalog_build_arg_value(env, arg_name)}"))
+                arg_value = _catalog_build_arg_value(env, arg_name)
+                if arg_value is not None:
+                    command.extend(("--build-arg", f"{arg_name}={arg_value}"))
         command.append(context)
         steps.append(
             Step(
@@ -224,7 +228,7 @@ def _storage_guardian_env(env: dict[str, str]) -> dict[str, str]:
         merged["AI_STORAGE_GUARDIAN_ROOT"] = root
     if external_root:
         merged["AI_STORAGE_GUARDIAN_EXTERNAL_ROOT"] = external_root
-    merged["PYTHONPATH"] = "storage_guardian/src"
+    merged["PYTHONPATH"] = "."
     return merged
 
 
@@ -353,6 +357,11 @@ def _config_steps(env: dict[str, str]) -> list[Step]:
             "Fix service port/config settings.",
         ),
         Step(
+            "write Resource Governor policy",
+            ("python", "-m", "config.resolver", "--write-resource-governor-policy", _display_path(RESOURCE_GOVERNOR_POLICY)),
+            "Fix config/resource_governor.yaml policy settings.",
+        ),
+        Step(
             "write Docker resources env",
             ("python", "-m", "config.resolver", "--write-docker-resources-env", _display_path(DOCKER_RESOURCES_ENV)),
             "Fix Docker resource settings.",
@@ -432,7 +441,7 @@ def _start_steps(env: dict[str, str]) -> list[Step]:
     up_command = [*compose_selected, "up", "-d"]
     if _bool_setting(operator_env.get("AI_LOCAL_DOCKER_UP_NO_BUILD"), default=True):
         up_command.append("--no-build")
-    if _bool_setting(operator_env.get("AI_LOCAL_DOCKER_REMOVE_ORPHANS"), default=False):
+    if _bool_setting(operator_env.get("AI_LOCAL_DOCKER_REMOVE_ORPHANS"), default=True):
         up_command.append("--remove-orphans")
     if _bool_setting(operator_env.get("AI_LOCAL_DOCKER_UP_WAIT"), default=True):
         up_command.extend(
@@ -521,9 +530,9 @@ def command_prepare(_: argparse.Namespace) -> int:
     if code != 0:
         return code
     _write_observability_env()
-    code = _run_steps(_validation_steps(env), env)
+    code = _run_steps(_build_steps(env, profiles=PROFILE_ALL), env)
     if code == 0:
-        code = _run_steps(_build_steps(env, profiles=PROFILE_ALL), env)
+        code = _run_steps(_validation_steps(env), env)
     if code == 0:
         print("\nInfra prepared. Next: make up")
     return code

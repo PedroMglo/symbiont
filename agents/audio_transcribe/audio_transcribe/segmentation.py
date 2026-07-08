@@ -1,4 +1,4 @@
-"""Audio segmentation for long files: VAD-based with window fallback."""
+"""Audio segmentation for long files: VAD-based with window strategy."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 
 from audio_transcribe.config import get_config
+from audio_transcribe.errors import SegmentationError
 from audio_transcribe.types import AudioSegment
 from audio_transcribe.vad import SpeechSegment, VADProcessor
 
@@ -14,13 +15,13 @@ logger = logging.getLogger(__name__)
 
 
 class LongAudioSegmenter:
-    """Segments long audio files using VAD-first strategy with window fallback.
+    """Segments long audio files using VAD-first strategy with window strategy.
 
     Strategy 'vad_then_window':
     1. Run VAD to find speech regions
     2. Group nearby speech segments into chunks ≤ max_segment_duration
     3. Apply overlap between chunks to avoid cutting mid-sentence
-    4. Fall back to fixed windows if VAD fails or produces no results
+    4. Use fixed windows only when window segmentation is explicitly allowed
     """
 
     def __init__(
@@ -65,6 +66,14 @@ class LongAudioSegmenter:
             )
             return [seg]
 
+        if self._strategy == "window":
+            segments = self._segment_by_window(total_duration)
+            logger.info(f"Window segmentation: {len(segments)} segments")
+            return segments
+
+        if self._strategy not in {"vad_then_window", "vad"}:
+            raise SegmentationError(message=f"Unsupported segment strategy: {self._strategy}")
+
         # Try VAD-based segmentation first
         if self._strategy in ("vad_then_window", "vad"):
             segments = self._segment_by_vad(audio_path, total_duration)
@@ -72,17 +81,21 @@ class LongAudioSegmenter:
                 logger.info(f"VAD segmentation: {len(segments)} segments")
                 return segments
             if self._strategy == "vad":
-                logger.warning("VAD produced no segments, no fallback configured")
-                return self._segment_by_window(total_duration)
+                raise SegmentationError(
+                    message="VAD produced no speech segments",
+                    detail="Use strategy=window or vad_then_window with allow_window_segmentation enabled.",
+                )
 
-        # Fallback: fixed window segmentation
-        if cfg.vad.fallback_to_window_segmentation or self._strategy == "window":
+        # Explicit fixed window segmentation strategy.
+        if cfg.vad.allow_window_segmentation:
             segments = self._segment_by_window(total_duration)
-            logger.info(f"Window segmentation fallback: {len(segments)} segments")
+            logger.info(f"Window segmentation: {len(segments)} segments")
             return segments
 
-        # Last resort
-        return self._segment_by_window(total_duration)
+        raise SegmentationError(
+            message="VAD produced no speech segments and window segmentation is disabled",
+            detail="Set vad.allow_window_segmentation=true or choose strategy=window.",
+        )
 
     def _segment_by_vad(
         self, audio_path: Path, total_duration: float

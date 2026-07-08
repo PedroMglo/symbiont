@@ -5,7 +5,7 @@ work complete. You propose one complete replacement for the requested target_pat
 when patch evidence shows stale context, invalid diff syntax, checksum drift, or
 repeated patch apply failure.
 
-Use current_content, command_evidence, issue, and previous_patch_rejections as
+Use current_content, command_evidence, issue, and prior_patch_rejections as
 evidence. Preserve valid behavior from current_content unless the issue evidence
 requires changing it. Keep the repair scenario-neutral and requirement-led.
 If repair_arbiter.strategy is "replacement", or the evidence contains
@@ -72,7 +72,7 @@ The JSON object must be:
   "replacement": {
     "issue_id": str,
     "target_path": str,
-    "expected_old_sha256": str,
+    "expected_current_sha256": str,
     "replacement_content": str,
     "replacement_sha256": str,
     "requirement_refs": [str],
@@ -83,7 +83,7 @@ The JSON object must be:
 
 Rules:
 - target_path must exactly match the requested target_path.
-- expected_old_sha256 must exactly match the requested expected_old_sha256.
+- expected_current_sha256 must exactly match the requested expected_current_sha256.
 - replacement_content must be the complete target file content.
 - replacement_content must not import runtime, agent, service, or caller package
   names unless they resolve to exact planned_local_modules or are declared as
@@ -92,7 +92,7 @@ Rules:
   import those modules in any form.
 - replacement_content must not import issue labels, diagnostic labels, or
   failure-category names merely because they appear in command_evidence or
-  previous_patch_rejections.
+  prior_patch_rejections.
 - When expected_symbols is provided, replacement_content must contain top-level
   definitions or explicit imports that make those symbols importable from the
   target module.
@@ -109,6 +109,6 @@ Rules:
 - requirement_refs must reference the requirement IDs supplied in the issue contract.
 - contract_refs must reference the contract IDs supplied in the issue contract.
 - Do not edit related targets in this lane.
-- Do not add benchmark-specific shortcuts, static fallback content, hidden policy,
+- Do not add benchmark-specific shortcuts, static canned content, hidden policy,
   Portuguese typo corrections, or unrelated rewrites.
 - Do not wrap the JSON in Markdown fences.

@@ -47,7 +47,6 @@ def build_data_quality_drift_report(workspace: Path, query: str = "") -> dict[st
     files = _find_data_files(root)
     dataset_reports = [_inspect_file(path, root) for path in files]
     schema_drift = _schema_drift(dataset_reports)
-    event_metrics = _event_metrics(root)
     summary = {
         "files_seen": len(dataset_reports),
         "rows_seen": sum(int(item.get("row_count", 0)) for item in dataset_reports),
@@ -55,7 +54,7 @@ def build_data_quality_drift_report(workspace: Path, query: str = "") -> dict[st
         "duplicate_rows": sum(int(item.get("duplicate_rows", 0)) for item in dataset_reports),
         "schema_drift_groups": len(schema_drift),
     }
-    metrics_json = _build_metrics_json(dataset_reports, schema_drift, event_metrics, summary)
+    metrics_json = _build_metrics_json(dataset_reports, schema_drift, summary)
     return {
         "workspace": str(root),
         "analysis_mode": "read_only_data_quality_drift",
@@ -67,7 +66,6 @@ def build_data_quality_drift_report(workspace: Path, query: str = "") -> dict[st
         },
         "datasets": dataset_reports,
         "schema_drift": schema_drift,
-        "event_metrics": event_metrics,
         "metrics_json": metrics_json,
         "summary": summary,
         "limitations": [
@@ -104,32 +102,6 @@ def format_data_quality_drift_report(report: dict[str, Any], *, published_uri: s
         ])
 
     lines.extend(["", "## Dataset metrics"])
-    event_metrics = report.get("event_metrics") or {}
-    if event_metrics:
-        lines.extend(["## Event metrics"])
-        for key in (
-            "weekly_active_users",
-            "weekly_active_accounts",
-            "valid_unique_events",
-            "invalid_events",
-            "duplicates_removed",
-            "duplicate_conflicts",
-        ):
-            lines.append(f"- {key}: {event_metrics.get(key)}")
-        if event_metrics.get("retention"):
-            lines.append("- retention:")
-            for name, value in sorted(event_metrics["retention"].items()):
-                lines.append(f"  - {name}: cohort={value.get('cohort')} retained={value.get('retained')}")
-        if event_metrics.get("new_fields"):
-            lines.append(f"- new_fields: {event_metrics['new_fields']}")
-        if event_metrics.get("type_drift"):
-            lines.append(f"- type_drift: {event_metrics['type_drift']}")
-        if event_metrics.get("missing_accounts"):
-            lines.append(f"- missing_accounts: {event_metrics['missing_accounts']}")
-        if event_metrics.get("duplicate_user_ids"):
-            lines.append(f"- duplicate_user_ids_after_normalization: {event_metrics['duplicate_user_ids']}")
-        lines.append("")
-
     for item in report.get("datasets", []):
         lines.append(f"### `{item.get('path')}`")
         if item.get("error"):
@@ -171,7 +143,6 @@ def format_data_quality_drift_report(report: dict[str, Any], *, published_uri: s
 def _build_metrics_json(
     datasets: list[dict[str, Any]],
     schema_drift: list[dict[str, Any]],
-    event_metrics: dict[str, Any],
     summary: dict[str, Any],
 ) -> dict[str, Any]:
     return {
@@ -207,13 +178,9 @@ def _build_metrics_json(
             }
             for item in schema_drift
         ],
-        "event_metrics": event_metrics or {},
         "policy": {
             "writes_performed": False,
             "decompress_to_disk": False,
-            "duplicate_policy": (event_metrics or {}).get("policy", {}).get("duplicate_policy"),
-            "id_normalization": (event_metrics or {}).get("policy", {}).get("id_normalization"),
-            "timestamp_normalization": (event_metrics or {}).get("policy", {}).get("timestamp_normalization"),
         },
     }
 
@@ -263,115 +230,6 @@ def _iter_rows(path: Path, fmt: str) -> Iterable[dict[str, Any] | None]:
             yield obj if isinstance(obj, dict) else None
 
 
-def _event_metrics(root: Path) -> dict[str, Any]:
-    event_files = sorted(
-        path for path in root.rglob("*")
-        if path.is_file() and path.name.lower().startswith("events-") and path.name.lower().endswith((".jsonl", ".jsonl.gz", ".ndjson", ".ndjson.gz"))
-    )
-    if not event_files:
-        return {}
-    expected_schema = _load_expected_schema(root)
-    users = _load_csv_by_name(root, "users.csv")
-    accounts = _load_csv_by_name(root, "accounts.csv")
-    account_ids = {
-        str(row.get("account_id", "")).strip()
-        for row in accounts
-        if str(row.get("account_id", "")).strip()
-    }
-    duplicate_user_ids = sorted(
-        key for key, count in Counter(_normalize_id(row.get("user_id")) for row in users).items()
-        if key and count > 1
-    )
-
-    seen_events: dict[str, str] = {}
-    valid_events: list[dict[str, Any]] = []
-    invalid_events = 0
-    duplicates_removed = 0
-    duplicate_conflicts = 0
-    new_fields: set[str] = set()
-    type_drift: dict[str, set[str]] = defaultdict(set)
-
-    for path in event_files[:_MAX_FILES]:
-        for row in _iter_rows(path, _format(path)):
-            if row is None:
-                invalid_events += 1
-                continue
-            event_id_raw = row.get("event_id")
-            event_id = str(event_id_raw) if event_id_raw is not None else ""
-            timestamp = _parse_time_value(row.get("timestamp"))
-            if not event_id or timestamp is None:
-                invalid_events += 1
-                _collect_drift(row, expected_schema, new_fields, type_drift)
-                continue
-            _collect_drift(row, expected_schema, new_fields, type_drift)
-            canonical = json.dumps(row, sort_keys=True, default=str)
-            if event_id in seen_events:
-                if seen_events[event_id] == canonical:
-                    duplicates_removed += 1
-                else:
-                    duplicate_conflicts += 1
-                continue
-            seen_events[event_id] = canonical
-            enriched = dict(row)
-            enriched["_timestamp"] = timestamp
-            enriched["_user_id"] = _normalize_id(row.get("user_id"))
-            enriched["_account_id"] = str(row.get("account_id", "")).strip()
-            enriched["_source_file"] = path.name
-            valid_events.append(enriched)
-
-    if not valid_events and not invalid_events:
-        return {}
-
-    retention = _retention_metrics(users, valid_events)
-    missing_accounts = sorted({event["_account_id"] for event in valid_events if event.get("_account_id")} - account_ids)
-    return {
-        "weekly_active_users": len({event["_user_id"] for event in valid_events if event.get("_user_id")}),
-        "weekly_active_accounts": len({event["_account_id"] for event in valid_events if event.get("_account_id")}),
-        "valid_unique_events": len(valid_events),
-        "invalid_events": invalid_events,
-        "duplicates_removed": duplicates_removed,
-        "duplicate_conflicts": duplicate_conflicts,
-        "retention": retention,
-        "new_fields": sorted(new_fields),
-        "type_drift": {key: sorted(values) for key, values in sorted(type_drift.items())},
-        "missing_accounts": missing_accounts,
-        "duplicate_user_ids": duplicate_user_ids,
-        "policy": {
-            "id_normalization": "IDs are converted to strings; numeric-looking IDs have leading zeroes removed.",
-            "timestamp_normalization": "Epoch seconds, epoch milliseconds, ISO Z and offset timestamps are normalized to UTC.",
-            "duplicate_policy": "Identical duplicate event_id rows are removed; conflicting duplicate event_id rows keep the first valid event and count a conflict.",
-        },
-    }
-
-
-def _load_expected_schema(root: Path) -> dict[str, str]:
-    for path in sorted(root.rglob("expected_schema.json")):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(data, dict):
-            return {str(key): str(value) for key, value in data.items()}
-    return {}
-
-
-def _load_csv_by_name(root: Path, name: str) -> list[dict[str, str]]:
-    for path in sorted(root.rglob(name)):
-        try:
-            with open(path, "rt", encoding="utf-8", errors="replace", newline="") as handle:
-                return [dict(row) for row in csv.DictReader(handle)]
-        except OSError:
-            return []
-    return []
-
-
-def _normalize_id(value: Any) -> str:
-    text = str(value if value is not None else "").strip()
-    if text.isdigit():
-        return str(int(text))
-    return text
-
-
 def _parse_time_value(value: Any) -> datetime | None:
     if value in (None, ""):
         return None
@@ -403,80 +261,6 @@ def _parse_time_value(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
-
-
-def _collect_drift(
-    row: dict[str, Any],
-    expected_schema: dict[str, str],
-    new_fields: set[str],
-    type_drift: dict[str, set[str]],
-) -> None:
-    if not expected_schema:
-        return
-    for key, value in row.items():
-        key_text = str(key)
-        if key_text not in expected_schema:
-            new_fields.add(key_text)
-            continue
-        if key_text in {"user_id", "account_id", "timestamp"}:
-            continue
-        if not _value_matches_expected(value, expected_schema[key_text]):
-            type_drift[key_text].add(type(value).__name__)
-
-
-def _value_matches_expected(value: Any, expected: str) -> bool:
-    normalized = expected.lower()
-    if normalized in {"string", "iso8601-string"}:
-        return isinstance(value, str)
-    if normalized in {"integer", "int"}:
-        return isinstance(value, int) and not isinstance(value, bool)
-    if normalized in {"number", "float"}:
-        return isinstance(value, (int, float)) and not isinstance(value, bool)
-    if normalized in {"boolean", "bool"}:
-        return isinstance(value, bool)
-    return True
-
-
-def _retention_metrics(users: list[dict[str, str]], events: list[dict[str, Any]]) -> dict[str, dict[str, int]]:
-    if not users:
-        return {}
-    event_dates_by_user: dict[str, set] = defaultdict(set)
-    event_dates = []
-    for event in events:
-        ts = event.get("_timestamp")
-        if isinstance(ts, datetime):
-            event_dates.append(ts.date())
-            event_dates_by_user[event.get("_user_id", "")].add(ts.date())
-    if not event_dates:
-        return {}
-    min_event_date = min(event_dates)
-    max_event_date = max(event_dates)
-    result: dict[str, dict[str, int]] = {}
-    canonical_users: dict[str, dict[str, str]] = {}
-    for user in users:
-        user_id = _normalize_id(user.get("user_id"))
-        if user_id and user_id not in canonical_users:
-            canonical_users[user_id] = user
-    for days in (1, 7, 30):
-        cohort = 0
-        retained = 0
-        for user_id, user in canonical_users.items():
-            created = _parse_time_value(user.get("created_at"))
-            if created is None:
-                continue
-            target = created.date() + _dt_days(days)
-            if min_event_date <= target <= max_event_date:
-                cohort += 1
-                if target in event_dates_by_user.get(user_id, set()):
-                    retained += 1
-        result[f"D{days}"] = {"cohort": cohort, "retained": retained}
-    return result
-
-
-def _dt_days(days: int):
-    from datetime import timedelta
-
-    return timedelta(days=days)
 
 
 def _profile_rows(path: str, fmt: str, rows: Iterable[dict[str, Any] | None]) -> dict[str, Any]:

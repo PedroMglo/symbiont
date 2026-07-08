@@ -1,0 +1,26 @@
+schema_version: owner-capability.v1
+component: terminal_alias
+owner: orchestrator/cli
+description: Terminal alias @ UX, client system snapshot, payload/header transport, and task viewer shortcuts.
+routing:
+  terms:
+    - alias @
+    - terminal alias
+    - "@ smoke"
+    - alias-smoke
+    - alias transport
+    - alias llm
+    - client_system
+    - payload argv
+    - headerfile
+  context_sources:
+    - system
+    - graph
+    - repo
+evidence_policy:
+  local_evidence_required: true
+  generic_answer_allowed: false
+public_surfaces:
+  commands:
+    - "@"
+    - symbiont

@@ -46,24 +46,42 @@ def build_query_plan(request: SearchRequest, settings: Any) -> ResearchQueryPlan
     code_top_k = _code_top_k(normalized_intent, budget_tokens, settings.search.max_top_k)
     cag_intent = _CAG_INTENT_BY_QUERY_INTENT[normalized_intent]
     cag_budget_tokens = _cag_budget(normalized_intent, budget_tokens)
+    namespace = _namespace_from_request(request)
+    source_scoped = bool(namespace or request.source_paths)
+    include_cag = not source_scoped
+    include_cag_reason = (
+        "skipped because caller restricted retrieval to explicit local sources"
+        if source_scoped
+        else _pack_selection_reason(normalized_intent, cag_intent)
+    )
 
     notes_payload = {"query": request.query, "top_k": notes_top_k}
     code_payload = {"query": request.query, "top_k": code_top_k} if include_code else {}
+    if namespace:
+        notes_payload["vault"] = namespace
+        if include_code:
+            code_payload["repo"] = namespace
     cag_payload = {"intent": cag_intent, "budget": cag_budget_tokens}
 
-    retrieval_modes = ["rag_notes", "cag_pack"]
+    retrieval_modes = ["rag_notes"]
     if include_code:
-        retrieval_modes.insert(1, "rag_code")
+        retrieval_modes.append("rag_code")
+    if include_cag:
+        retrieval_modes.append("cag_pack")
 
     return ResearchQueryPlan(
         requested_intent=request.intent,
         normalized_intent=normalized_intent,
+        source_namespace=namespace,
+        source_scoped=source_scoped,
         include_code=include_code,
         include_code_reason=include_code_reason,
+        include_cag=include_cag,
+        include_cag_reason=include_cag_reason,
         budget_tokens=budget_tokens,
         budget_reason=_budget_reason(normalized_intent, budget_tokens, notes_top_k, code_top_k),
         pack_selection=cag_intent,
-        pack_selection_reason=_pack_selection_reason(normalized_intent, cag_intent),
+        pack_selection_reason=include_cag_reason,
         notes_top_k=notes_top_k,
         code_top_k=code_top_k,
         cag_budget_tokens=cag_budget_tokens,
@@ -73,6 +91,19 @@ def build_query_plan(request: SearchRequest, settings: Any) -> ResearchQueryPlan
         retrieval_modes=retrieval_modes,
         warnings=warnings,
     )
+
+
+def _namespace_from_request(request: SearchRequest) -> str:
+    explicit = str(getattr(request, "namespace", "") or "").strip()
+    if explicit:
+        return explicit[:120]
+    metadata = getattr(request, "metadata", None)
+    if isinstance(metadata, dict):
+        for key in ("namespace", "source_namespace", "source_name", "repo_name", "vault"):
+            value = str(metadata.get(key) or "").strip()
+            if value:
+                return value[:120]
+    return ""
 
 
 def _base_top_k(budget_tokens: int, max_top_k: int) -> int:

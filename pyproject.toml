@@ -5,6 +5,7 @@ description = "Local AI system — symbiont + RAG + agents (Docker Compose monor
 requires-python = ">=3.11"
 
 dependencies = [
+    "click>=8.0",
     "pydantic>=2.0",
     "sharedai @ git+https://github.com/PedroMglo/sharedai.git@3bc5aed169e8da9d5297e6ae10a50cc906e2d27",
 ]
@@ -20,6 +21,7 @@ dev = [
     "ruff>=0.4",
     "types-requests>=2.31",
     "pre-commit>=3.2",
+    "PyYAML>=6.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -55,7 +57,7 @@ select = ["E", "F", "W", "I"]
 ignore = ["E501"]
 
 [tool.coverage.run]
-source = ["obsidian-rag/obsidian_rag", "orchestrator"]
+source = ["obsidian-rag", "orchestrator"]
 omit = ["tests/*"]
 
 [tool.bandit]

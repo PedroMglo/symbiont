@@ -13,6 +13,7 @@ metric_terms = [
   "recursos",
   "resources",
   "ssd",
+  "system.status",
   "swap",
   "vram",
 ]
@@ -112,6 +113,50 @@ sandbox_terms = [
   "comandos locais",
   "sandbox",
 ]
+storage_boundary_question_terms = [
+  "quem pode",
+  "who can",
+  "qual owner",
+  "que owner",
+  "owner",
+  "fronteira",
+  "boundary",
+]
+storage_boundary_owner_terms = [
+  "storage_guardian",
+  "storage guardian",
+  "storage",
+  "ficheiros geridos",
+  "managed files",
+]
+storage_boundary_operation_terms = [
+  "apagar",
+  "archive",
+  "archive/restore",
+  "arquivar",
+  "criar",
+  "create",
+  "delete",
+  "restore",
+  "restaurar",
+]
+alias_transport_subject_terms = [
+  "alias @",
+  "@",
+  "owner cli",
+  "cli",
+]
+alias_transport_evidence_terms = [
+  "api key",
+  "argv",
+  "ficheiros temporarios",
+  "ficheiros temporários",
+  "header",
+  "payload",
+  "secret",
+  "temporarios",
+  "temporários",
+]
 operational_status_terms = [
   "diagnostico",
   "diagnostico compacto",
@@ -161,5 +206,7 @@ agentic_overview = "agentic.status"
 cwd_inventory = "command.sandbox.cwd_inventory"
 cwd_operational_inventory = "command.sandbox.cwd_operational_inventory"
 full_operational_status = "agentic.operational_status"
+alias_transport = "orchestrator.cli.alias_transport"
+storage_boundary = "storage.boundary"
 storage_status = "storage.status"
 system_status = "system.status"

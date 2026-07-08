@@ -23,6 +23,68 @@ resource_governor:
     use_runtime_resolver: true
     write_effective_policy_snapshot: true
 
+  telemetry_authority:
+    contract_version: resource-telemetry-authority.v1
+    url: https://host.docker.internal:8767
+    ca_bundle_file: /run/ai-local-tls/ca-bundle.crt
+    cache_ttl_seconds: 1.5
+    timeout_seconds: 2.0
+
+  pressure_policy:
+    contract_version: resource-pressure-policy.v1
+    swap_pause_requires_active_pressure: true
+    swap_active_growth_mb: 256
+    swap_static_action: observe
+    swap_pressure_ram_percent: auto
+    owner_job_end_cleanup:
+      mode: owner_process_local
+      gc_collect: true
+      malloc_trim: true
+      clear_process_caches: true
+      forbid_global_swapoff: true
+      forbid_drop_caches: true
+
+  rag:
+    resource_pause_max_seconds: 120
+    resource_pause_total_budget_seconds: 600
+    resource_retry_max_attempts: 12
+    embedding_lane_concurrency: 1
+    source_scan_parallel_jobs: auto
+
+  runtime_hygiene:
+    contract_version: runtime-hygiene.v1
+    mode: owner_safe_cleanup
+    orphan_warning_count: 1
+    orphan_blocking_count: 10
+    owners:
+      config:
+        diagnostics:
+          - python -m config.resolver --health-report
+          - python -m config.resolver --print
+        cleanup: []
+      obsidian-rag:
+        diagnostics:
+          - GET /admin/jobs?active_only=true
+          - GET /health
+        cleanup:
+          - POST /admin/jobs/{job_id}/cancel
+      storage_guardian:
+        diagnostics:
+          - python -m storage_guardian.cli --config config/storage_guardian.yaml reconcile-structure
+        cleanup:
+          - python -m storage_guardian.cli --config config/storage_guardian.yaml reconcile-structure --apply
+      infra_docker:
+        diagnostics:
+          - docker compose config --services
+          - docker ps
+        cleanup:
+          - docker compose up -d --remove-orphans
+      orchestrator:
+        diagnostics:
+          - GET /health
+        cleanup:
+          - owner API cleanup for expired sessions only
+
   experience_slo:
     first_token_target_ms: 800
     first_token_soft_limit_ms: 1500
@@ -31,14 +93,6 @@ resource_governor:
     graph_context_budget_ms: 300
     router_llm_budget_ms: 200
     enrichment_total_budget_ms: 700
-
-  fallback_policy:
-    if_governor_unavailable:
-      interactive: allow
-      interactive_enrichment: skip
-      background: conservative_local_guard
-      storage: pause
-      heavy_gpu: deny_unless_explicit_override
 
   gpu_conflict_matrix:
     chat_stream:
@@ -83,14 +137,22 @@ resource_governor:
     swap_used_mb_hard: 512
     swap_growth_mb_hard: 128
     swap_percent_hard: 70
+    swap_requires_active_pressure: true
+    swap_static_action: observe
+    swap_active_growth_mb: 256
     ram_available_mb_hard: 1024
-    memory_pressure_some_10s_hard: 0.35
-    io_pressure_some_10s_hard: 0.40
+    memory_pressure_some_10s_soft: 20.0
+    memory_pressure_some_10s_hard: 35.0
+    io_pressure_some_10s_soft: 25.0
+    io_pressure_some_10s_hard: 40.0
     disk_free_ratio_hard: 0.12
     battery_percent_soft: 25
     battery_percent_hard: 15
     thermal_celsius_soft: 85
     thermal_celsius_hard: 92
+    gpu_utilization_pct_high: 95
+    gpu_min_free_vram_mb: 1024
+    gpu_thermal_high_c: 85
 
   resource_classes:
     interactive_api:
@@ -115,11 +177,25 @@ resource_governor:
       capability: material_generation
       resource_class: model_runtime
       required: true
+    symbiont.material_orchestration:
+      lane: interactive_enrichment
+      capability: material_orchestration
+      resource_class: cpu
+      required: true
     rag.embedding:
       lane: background
       capability: embedding_gpu_batch
-      fallback_capability: embedding_cpu_batch
       resource_class: vram
+      required: true
+    rag.document_etl:
+      lane: background
+      capability: document_etl
+      resource_class: ram
+      required: true
+    rag.vector_write:
+      lane: background
+      capability: rag_query
+      resource_class: qdrant_write
       required: true
     rag.graphify:
       lane: background
@@ -134,7 +210,6 @@ resource_governor:
     audio_transcribe.gpu:
       lane: heavy_gpu
       capability: audio_transcribe_gpu
-      fallback_capability: audio_transcribe_cpu
       resource_class: vram
       required: true
     model.warmup:

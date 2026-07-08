@@ -500,7 +500,7 @@ def rollback_autotuning_effective(
         }
         _append_history({"action": "rollback", **result}, path=history_path)
         return result
-    previous = _load_json(effective_path)
+    rolled_back_overlay = _load_json(effective_path)
     effective_path.unlink()
     result = {
         "schema_version": 1,
@@ -508,7 +508,11 @@ def rollback_autotuning_effective(
         "generated_at": timestamp,
         "status": "rolled_back",
         "path": str(effective_path),
-        "rolled_back_overrides": previous.get("overrides") if isinstance(previous.get("overrides"), list) else [],
+        "rolled_back_overrides": (
+            rolled_back_overlay.get("overrides")
+            if isinstance(rolled_back_overlay.get("overrides"), list)
+            else []
+        ),
     }
     _append_history({"action": "rollback", **result}, path=history_path)
     return result

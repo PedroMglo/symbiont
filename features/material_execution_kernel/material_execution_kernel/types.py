@@ -693,7 +693,7 @@ class CapabilitiesResponse(MaterialKernelModel):
             "host_file_writes",
             "direct_docker_access",
             "durable_storage_write",
-            "static_fallback_project",
+            "static_generation_shortcut",
         ]
     )
 

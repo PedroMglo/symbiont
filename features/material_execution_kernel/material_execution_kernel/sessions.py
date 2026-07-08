@@ -272,7 +272,10 @@ class MaterialSessionStore:
         elif status == "policy_preflight":
             self._allocate_vm(raw, session_id)
         elif status == "vm_ready":
-            self._create_plan(raw, session_id)
+            if _remote_source_requires_acquisition(raw):
+                self._acquire_remote_source(raw, session_id)
+            else:
+                self._create_plan(raw, session_id)
         elif status == "planning":
             self._generate_files(raw, session_id)
         elif status == "generating_files":
@@ -406,6 +409,7 @@ class MaterialSessionStore:
             trace_id=request.trace_id,
             idempotency_key=f"{request.idempotency_key}:vm",
             network_policy=request.constraints.network_policy,
+            material_source=_material_remote_source(request),
         )
         if result.status != "ready" or not result.vm_backed or not result.vm_session_id:
             self._record_workspace_issue(
@@ -460,6 +464,72 @@ class MaterialSessionStore:
                 status="completed",
                 latency_source="vm",
                 payload={"vm_session_id": result.vm_session_id, "isolation_mode": result.isolation_mode},
+            )
+        )
+
+    def _acquire_remote_source(self, raw: dict[str, Any], session_id: str) -> None:
+        request: MaterialSessionRequest = raw["request"]
+        sandbox: SandboxEvidence = raw["sandbox"]
+        source = _material_remote_source(request)
+        if not source:
+            raw["source_evidence_context"] = {}
+            return
+        destination = _remote_source_destination(source)
+        self.append_event(
+            new_material_event(
+                event_type="material.source_acquisition.started",
+                session_id=session_id,
+                task_id=request.task_id,
+                source="kernel",
+                phase="vm_ready",
+                status="started",
+                latency_source="sandbox",
+                payload={
+                    "source_kind": source.get("kind"),
+                    "destination": destination,
+                    "sandbox_owner": "features/workspace_execution",
+                },
+            )
+        )
+        result = self._workspace_client.acquire_remote_source(
+            session_id=session_id,
+            material_session_id=session_id,
+            vm_session_id=str(sandbox.vm_session_id),
+            source=source,
+            destination=destination,
+            idempotency_key=f"{request.idempotency_key}:remote-source",
+        )
+        if result.status != "completed":
+            self._record_workspace_issue(
+                raw,
+                session_id,
+                result.issue or WorkspaceIssue(
+                    code="remote_source_acquisition_failed",
+                    message="remote source could not be acquired by the sandbox owner",
+                    details={"source_kind": source.get("kind"), "destination": destination},
+                ),
+                target_status="failed_closed",
+                target_kind="remote_source",
+            )
+            return
+        raw["source_evidence_context"] = dict(result.evidence_context)
+        raw["request"] = _request_with_source_evidence(raw["request"], raw["source_evidence_context"])
+        self.append_event(
+            new_material_event(
+                event_type="material.source_acquisition.completed",
+                session_id=session_id,
+                task_id=request.task_id,
+                source="sandbox_owner",
+                phase="vm_ready",
+                status="completed",
+                latency_source="sandbox",
+                payload={
+                    "source_kind": source.get("kind"),
+                    "destination": result.destination,
+                    "effective_url": result.effective_url,
+                    "clone_attempt_count": len(result.clone_attempts),
+                    "evidence_context_available": bool(result.evidence_context),
+                },
             )
         )
 
@@ -1341,7 +1411,7 @@ class MaterialSessionStore:
         import_cycle_context = _local_import_cycle_context(raw, issue)
         if import_cycle_context:
             current_context["local_import_cycle"] = import_cycle_context
-        previous_patch_rejections = [
+        prior_patch_rejections = [
             rejection.model_dump(mode="json") for rejection in issue.patch_rejections
         ]
         issue_contract = _issue_contract(issue)
@@ -1351,11 +1421,11 @@ class MaterialSessionStore:
             issue=issue,
             repair_case=repair_case,
             target_path=issue.target_path,
-            expected_old_sha256=current_sha256,
+            expected_current_sha256=current_sha256,
             current_context=current_context,
             validation_profile=validation_profile,
             issue_contract=issue_contract,
-            previous_patch_rejections=previous_patch_rejections,
+            prior_patch_rejections=prior_patch_rejections,
             target_resolution=target_resolution_payload,
             repair_arbiter=arbiter_decision.model_dump(),
         )
@@ -1398,7 +1468,7 @@ class MaterialSessionStore:
                     current_content=generated_file.content,
                     current_context=builder_request.current_context,
                     command_evidence=builder_request.command_evidence,
-                    previous_patch_rejections=builder_request.previous_patch_rejections,
+                    prior_patch_rejections=builder_request.prior_patch_rejections,
                     repair_arbiter=builder_request.command_evidence["repair_arbiter"],
                 )
             except MaterialBuilderUnavailable as exc:
@@ -1435,11 +1505,11 @@ class MaterialSessionStore:
                     issue=issue,
                     repair_case=repair_case,
                     target_path=issue.target_path,
-                    expected_old_sha256=current_sha256,
+                    expected_current_sha256=current_sha256,
                     current_context=current_context,
                     validation_profile=validation_profile,
                     issue_contract=issue_contract,
-                    previous_patch_rejections=previous_patch_rejections,
+                    prior_patch_rejections=prior_patch_rejections,
                     target_resolution=target_resolution_payload,
                     repair_arbiter=arbiter_decision.model_dump(),
                 )
@@ -1484,12 +1554,12 @@ class MaterialSessionStore:
                 issue_id=builder_request.issue_id,
                 issue_contract=builder_request.issue_contract,
                 target_path=builder_request.target_path,
-                expected_old_sha256=builder_request.expected_old_sha256,
+                expected_current_sha256=builder_request.expected_current_sha256,
                 current_content=generated_file.content,
                 current_context=builder_request.current_context,
                 validation_profile=builder_request.validation_profile,
                 command_evidence=builder_request.command_evidence,
-                previous_patch_rejections=builder_request.previous_patch_rejections,
+                prior_patch_rejections=builder_request.prior_patch_rejections,
                 patch_blueprints=_patch_blueprints(request),
                 target_resolution=builder_request.target_resolution,
                 patch_set_blueprints=_patch_set_blueprints(request),
@@ -1568,7 +1638,7 @@ class MaterialSessionStore:
                 details={"message": "material builder returned no executable repair proposal"},
             )
             return
-        if patch.target_path != issue.target_path or patch.expected_old_sha256 != current_sha256:
+        if patch.target_path != issue.target_path or patch.expected_current_sha256 != current_sha256:
             self._reject_repair(
                 raw,
                 session_id,
@@ -1577,8 +1647,8 @@ class MaterialSessionStore:
                 details={
                     "target_path": issue.target_path,
                     "patch_target_path": patch.target_path,
-                    "expected_old_sha256": current_sha256,
-                    "patch_expected_old_sha256": patch.expected_old_sha256,
+                    "expected_current_sha256": current_sha256,
+                    "patch_expected_current_sha256": patch.expected_current_sha256,
                 },
             )
             return
@@ -1623,7 +1693,7 @@ class MaterialSessionStore:
                 payload={
                     "issue_id": issue.issue_id,
                     "target_path": patch.target_path,
-                    "expected_old_sha256": patch.expected_old_sha256,
+                    "expected_current_sha256": patch.expected_current_sha256,
                     "requirement_refs": patch.requirement_refs,
                     "contract_refs": patch.contract_refs,
                     "repair_round": repair_round,
@@ -1647,7 +1717,7 @@ class MaterialSessionStore:
                     "verification_mode": "deterministic_patch_contract",
                     "requirement_refs_present": bool(patch.requirement_refs),
                     "contract_refs_present": bool(patch.contract_refs),
-                    "expected_old_sha256_matched": patch.expected_old_sha256 == current_sha256,
+                    "expected_current_sha256_matched": patch.expected_current_sha256 == current_sha256,
                     "accepted_for_sandbox_apply": True,
                 },
             )
@@ -1739,9 +1809,9 @@ class MaterialSessionStore:
         if replacement.target_path != issue.target_path:
             mismatch["target_path"] = issue.target_path
             mismatch["replacement_target_path"] = replacement.target_path
-        if replacement.expected_old_sha256 != current_sha256:
-            mismatch["expected_old_sha256"] = current_sha256
-            mismatch["replacement_expected_old_sha256"] = replacement.expected_old_sha256
+        if replacement.expected_current_sha256 != current_sha256:
+            mismatch["expected_current_sha256"] = current_sha256
+            mismatch["replacement_expected_current_sha256"] = replacement.expected_current_sha256
         if replacement.replacement_sha256 != replacement_file.sha256:
             mismatch["replacement_sha256"] = replacement_file.sha256
             mismatch["proposal_replacement_sha256"] = replacement.replacement_sha256
@@ -1817,7 +1887,7 @@ class MaterialSessionStore:
                 payload={
                     "issue_id": issue.issue_id,
                     "target_path": replacement.target_path,
-                    "expected_old_sha256": replacement.expected_old_sha256,
+                    "expected_current_sha256": replacement.expected_current_sha256,
                     "replacement_sha256": replacement.replacement_sha256,
                     "requirement_refs": replacement.requirement_refs,
                     "contract_refs": replacement.contract_refs,
@@ -3227,7 +3297,7 @@ _PATCH_REJECTION_REPLACEMENT_MARKERS = {
     "context_mismatch",
     "removal_mismatch",
     "checksum_mismatch",
-    "expected_old_sha256",
+    "expected_current_sha256",
     "empty_diff_line",
     "invalid_diff",
     "invalid_diff_line_prefix",
@@ -6338,7 +6408,7 @@ def _repair_target_bundle(
                 "path": path,
                 "role": "primary" if path == issue.target_path else "related",
                 "kind": _target_kind_for_path(raw, path),
-                "expected_old_sha256": expected_hash,
+                "expected_current_sha256": expected_hash,
                 "content": content,
                 "content_truncated": content_truncated,
             }
@@ -6453,16 +6523,16 @@ def _patch_set_contract_mismatch(
                 {
                     "target_path": patch.target_path,
                     "reason": "target_not_in_manifest",
-                    "patch_expected_old_sha256": patch.expected_old_sha256,
+                    "patch_expected_current_sha256": patch.expected_current_sha256,
                 }
             )
             continue
-        if patch.expected_old_sha256 != expected_hash:
+        if patch.expected_current_sha256 != expected_hash:
             hash_mismatches.append(
                 {
                     "target_path": patch.target_path,
                     "manifest_sha256": expected_hash,
-                    "patch_expected_old_sha256": patch.expected_old_sha256,
+                    "patch_expected_current_sha256": patch.expected_current_sha256,
                 }
             )
     if hash_mismatches:
@@ -6543,6 +6613,45 @@ def _builder_model_route(
         return {}
     value = route(session_id=session_id, task_id=task_id, phase=phase)
     return value if isinstance(value, dict) else {}
+
+
+def _remote_source_requires_acquisition(raw: dict[str, Any]) -> bool:
+    if raw.get("source_evidence_context"):
+        return False
+    request = raw.get("request")
+    if not isinstance(request, MaterialSessionRequest):
+        return False
+    return bool(_material_remote_source(request))
+
+
+def _material_remote_source(request: MaterialSessionRequest) -> dict[str, object]:
+    raw = request.material_builder_context.get("material_source")
+    if not isinstance(raw, dict):
+        return {}
+    if str(raw.get("kind") or "") != "git_remote":
+        return {}
+    url = str(raw.get("url") or "").strip()
+    if not url:
+        return {}
+    return dict(raw)
+
+
+def _remote_source_destination(source: dict[str, object]) -> str:
+    repo_name = str(source.get("repo_name") or "").strip()
+    if not repo_name:
+        url = str(source.get("url") or "").rstrip("/")
+        repo_name = url.rsplit(":", 1)[-1] if url.startswith("git@") and ":" in url else url.rsplit("/", 1)[-1]
+        repo_name = repo_name.removesuffix(".git")
+    return f".remote_sources/{_safe_path_segment(repo_name or 'repository')}"
+
+
+def _request_with_source_evidence(
+    request: MaterialSessionRequest,
+    evidence_context: dict[str, object],
+) -> MaterialSessionRequest:
+    builder_context = dict(request.material_builder_context)
+    builder_context["evidence_context"] = evidence_context
+    return request.model_copy(update={"material_builder_context": builder_context})
 
 
 def _builder_request_context(

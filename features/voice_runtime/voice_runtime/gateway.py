@@ -150,7 +150,7 @@ async def stream_pcm_file_to_audio_transcribe(
     headers = {"X-API-Key": api_key}
     ssl_context = None
     if config.audio_stream_url.startswith("wss://") and not config.tls_verify:
-        ssl_context = ssl._create_unverified_context()
+        ssl_context = ssl._create_unverified_context()  # nosec B323  # nosemgrep: python.lang.security.unverified-ssl-context.unverified-ssl-context - explicit operator opt-out via tls_verify=False for local dev TLS.
 
     connect_kwargs: dict[str, Any] = {"ssl": ssl_context} if ssl_context is not None else {}
     chunks = iter_pcm_file(pcm_path, chunk_bytes=config.chunk_bytes)

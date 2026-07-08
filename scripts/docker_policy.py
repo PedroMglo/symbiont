@@ -79,7 +79,7 @@ PUBLIC_RULE_IDS = {
     "security.docker_socket": "container.docker_socket",
     "security.capabilities": "container.capabilities",
     "storage.direct_credentials": "storage.external_env",
-    "storage.direct_secret": "storage.external_mount",
+    "storage.direct_secret": "storage.external_mount",  # nosec B105 - rule identifier, not a secret
     "storage.rw_agent_feature_persistent": "storage.rw_agent_feature_persistent",
     "storage.rw_managed_volume": "storage.rw_managed_volume",
     "storage.rw_managed_root": "storage.rw_managed_root",
@@ -370,10 +370,10 @@ def _env_for_compose() -> dict[str, str]:
         "ORC_SECRETS_DIR": str(ROOT / "infra" / "docker" / "secrets"),
         "ORC_PORT_SYMBIONT": "8586",
         "ORC_SYMBIONT_PORT": "8586",
-        "ORC_PORT_RAG": "8486",
-        "LANGFUSE_DB_PASSWORD": "policy-placeholder",
-        "LANGFUSE_NEXTAUTH_SECRET": "policy-placeholder",
-        "LANGFUSE_SALT": "policy-placeholder",
+        "ORC_PORT_RAG": "8484",
+        "LANGFUSE_DB_PASSWORD": "policy-placeholder",  # nosec B105 - non-runtime policy placeholder
+        "LANGFUSE_NEXTAUTH_SECRET": "policy-placeholder",  # nosec B105 - non-runtime policy placeholder
+        "LANGFUSE_SALT": "policy-placeholder",  # nosec B105 - non-runtime policy placeholder
     }
     for key, value in defaults.items():
         env.setdefault(key, value)

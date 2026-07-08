@@ -11,7 +11,7 @@
 #   vllm           → GPU primary model (Qwen3:8b AWQ) — port 8092
 #
 # The symbiont LLMRouter connects to these via OpenAI-compatible /v1 API.
-# Ollama remains as fallback if these containers are not running.
+# Native Ollama remains separately routable when these containers are not running.
 #
 # Storage:
 #   LLM_MODELS_DIR and HF_CACHE_DIR come from .env.storage.generated
@@ -149,7 +149,7 @@ services:
   # Features: continuous batching, prefix caching, OpenAI-compatible API
   # ---------------------------------------------------------------------------
   vllm:
-    image: vllm/vllm-openai:${VLLM_IMAGE_TAG:-latest}
+    image: vllm/vllm-openai:${VLLM_IMAGE_TAG:-v0.24.0}
     container_name: orc-vllm
     profiles: [gpu]
     restart: unless-stopped

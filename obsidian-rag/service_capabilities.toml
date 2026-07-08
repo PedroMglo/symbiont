@@ -13,8 +13,8 @@ policy_action = "rag.query"
 risk_level = "low"
 supported_action_types = ["rag_query", "api_call"]
 resource_profile = { resource_class = "rag", lane = "interactive" }
-input_schema = { type = "object", contract = "QueryRequest", schema_ref = "python:obsidian_rag.api.schemas:QueryRequest", required = ["query"] }
-output_schema = { type = "object", contract = "QueryResponse", schema_ref = "python:obsidian_rag.api.schemas:QueryResponse", fields = ["results", "query", "elapsed_ms", "trace"] }
+input_schema = { type = "object", contract = "QueryRequest", schema_ref = "python:api.schemas:QueryRequest", required = ["query"] }
+output_schema = { type = "object", contract = "QueryResponse", schema_ref = "python:api.schemas:QueryResponse", fields = ["results", "query", "elapsed_ms", "trace"] }
 evidence_types = ["rag_context", "citation", "graph_context", "cag_pack"]
 writes_allowed = false
 idempotency_policy = "read_only"

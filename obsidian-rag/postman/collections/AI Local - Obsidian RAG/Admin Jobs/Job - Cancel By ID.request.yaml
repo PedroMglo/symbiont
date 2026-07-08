@@ -1,0 +1,18 @@
+$kind: http-request
+description: Requests cooperative cancellation for the job id in the request path variable `job_id`.
+url: "{{rag_host_base_url}}/admin/jobs/:job_id/cancel"
+method: POST
+headers:
+  Authorization: Bearer {{rag_api_key}}
+pathVariables:
+  - key: job_id
+    value: paste-job-id-here
+    description: Paste the job_id to cancel.
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('cancel requested', function () {
+        pm.expect(pm.response.code).to.be.oneOf([200, 202]);
+      });
+    language: text/javascript
+order: 6000

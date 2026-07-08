@@ -28,7 +28,7 @@ COPY pyproject.toml ai-local/pyproject.toml
 COPY config/ ai-local/config/
 COPY context_governor/ ai-local/context_governor/
 COPY orchestrator/ ai-local/orchestrator/
-COPY obsidian-rag/obsidian_rag/ obsidian_rag/
+COPY obsidian-rag/ ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=ssh \
     --mount=type=secret,id=github_token,required=false \
@@ -43,9 +43,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     if [ -n "$git_rewrite_url" ]; then \
         git config --global url."$git_rewrite_url".insteadOf "ssh://git@github.com/"; \
     fi; \
-    pip install --upgrade pip \
+    pip install --upgrade pip "setuptools>=83.0.0" "wheel>=0.46.2" "jaraco.context>=6.1.0" \
     && pip install /app/ai-local \
-    && pip install '.[qdrant,reranker,falkordb,temporal]' "qdrant-client>=1.12,<1.14"; \
+    && pip install '.[qdrant,reranker,falkordb,temporal]' "qdrant-client>=1.18,<1.19" \
+    && pip install --upgrade "setuptools>=83.0.0" "wheel>=0.46.2" "jaraco.context>=6.1.0"; \
     if [ -n "$git_rewrite_url" ]; then \
         git config --global --remove-section url."$git_rewrite_url" || true; \
     fi
@@ -71,7 +72,9 @@ WORKDIR /app
 
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
-COPY obsidian-rag/obsidian_rag/ obsidian_rag/
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade "setuptools>=83.0.0" "wheel>=0.46.2" "jaraco.context>=6.1.0"
+COPY obsidian-rag/ ./
 
 # Entrypoint for secret validation
 COPY --chmod=755 infra/docker/images/obsidian-rag/rag/base/entrypoint.sh /usr/local/bin/entrypoint.sh
@@ -93,4 +96,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=15s --retries=3 \
 USER rag
 
 ENTRYPOINT ["entrypoint.sh"]
-CMD ["uvicorn", "obsidian_rag.api.app:app", "--host", "0.0.0.0", "--port", "8484"]
+CMD ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8484"]

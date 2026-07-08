@@ -43,6 +43,7 @@ x-rag-worker-env: &rag-worker-env
   - RAG_GRAPHIFY_FALKOR_PORT=${RAG_GRAPHIFY_FALKOR_PORT:-6379}
   - RAG_GRAPHIFY_FALKOR_GRAPH=${RAG_GRAPHIFY_FALKOR_GRAPH:-obsidian_rag}
   - AI_RAG_HOST_HOME=${AI_RAG_HOST_HOME:-/app/sources/host_home}
+  - AI_RAG_HOST_SOURCE_ROOT=${AI_RAG_HOST_SOURCE_ROOT:-${HOME}}
   - RAG_SYNC_LIFECYCLE_URL=${RAG_SYNC_LIFECYCLE_URL:-https://symbiont:8585}
   - RAG_SYNC_LIFECYCLE_API_KEY_FILE=/run/secrets/orc_api_key
   - RAG_SYNC_EXTRATOR_URL=${RAG_SYNC_EXTRATOR_URL:-https://extrator:8000}
@@ -148,7 +149,7 @@ services:
       args:
         AI_LOCAL_GIT_URL_INSTEAD_OF: ${AI_LOCAL_GIT_URL_INSTEAD_OF:-}
     container_name: orc-rag-temporal-worker
-    command: ["python", "-m", "obsidian_rag.workflows.worker"]
+    command: ["python", "-m", "workflows.worker"]
     logging: *logging
     labels:
       !!merge <<: *common-labels
@@ -167,7 +168,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "from pathlib import Path; import sys; sys.exit(0 if b'obsidian_rag.workflows.worker' in Path('/proc/1/cmdline').read_bytes() else 1)",
+          "from pathlib import Path; import sys; sys.exit(0 if b'workflows.worker' in Path('/proc/1/cmdline').read_bytes() else 1)",
         ]
       interval: 30s
       timeout: 5s

@@ -1,0 +1,17 @@
+$kind: http-request
+description: "Lists active jobs only: queued, running, submitted, cancel_requested. Edit `limit` in Params if needed."
+url: "{{rag_host_base_url}}/admin/jobs?active_only=true&limit=20"
+method: GET
+headers:
+  Authorization: Bearer {{rag_api_key}}
+queryParams:
+  active_only: "true"
+  limit: "20"
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('listed jobs', function () {
+        pm.expect(pm.response.code).to.eql(200);
+      });
+    language: text/javascript
+order: 2000

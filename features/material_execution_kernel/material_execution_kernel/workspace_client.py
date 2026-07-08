@@ -118,6 +118,17 @@ class ArtifactPublishResult:
 
 
 @dataclass(frozen=True)
+class RemoteSourceAcquireResult:
+    status: str
+    source_url: str
+    destination: str
+    effective_url: str | None = None
+    evidence_context: dict[str, object] = field(default_factory=dict)
+    clone_attempts: list[dict[str, object]] = field(default_factory=list)
+    issue: WorkspaceIssue | None = None
+
+
+@dataclass(frozen=True)
 class VmCleanupResult:
     cleanup_recorded: bool
     issue: WorkspaceIssue | None = None
@@ -132,6 +143,7 @@ class WorkspaceClient(Protocol):
         trace_id: str,
         idempotency_key: str,
         network_policy: str,
+        material_source: dict[str, object] | None = None,
     ) -> VmSessionResult:
         """Request VM-backed sandbox evidence from the active sandbox owner."""
 
@@ -204,6 +216,18 @@ class WorkspaceClient(Protocol):
     ) -> ArtifactPublishResult:
         """Publish a transient artifact through storage_guardian-owned boundaries."""
 
+    def acquire_remote_source(
+        self,
+        *,
+        session_id: str,
+        material_session_id: str,
+        vm_session_id: str,
+        source: dict[str, object],
+        destination: str,
+        idempotency_key: str,
+    ) -> RemoteSourceAcquireResult:
+        """Acquire a remote source into the VM-backed workspace."""
+
     def cleanup_vm(
         self,
         *,
@@ -223,6 +247,7 @@ class UnavailableWorkspaceClient:
         trace_id: str,
         idempotency_key: str,
         network_policy: str,
+        material_source: dict[str, object] | None = None,
     ) -> VmSessionResult:
         return VmSessionResult(
             status="failed",
@@ -329,6 +354,23 @@ class UnavailableWorkspaceClient:
             issue=WorkspaceIssue(code="sandbox_client_unavailable", message="workspace client is not configured"),
         )
 
+    def acquire_remote_source(
+        self,
+        *,
+        session_id: str,
+        material_session_id: str,
+        vm_session_id: str,
+        source: dict[str, object],
+        destination: str,
+        idempotency_key: str,
+    ) -> RemoteSourceAcquireResult:
+        return RemoteSourceAcquireResult(
+            status="blocked",
+            source_url=str(source.get("url") or ""),
+            destination=destination,
+            issue=WorkspaceIssue(code="sandbox_client_unavailable", message="workspace client is not configured"),
+        )
+
     def cleanup_vm(
         self,
         *,
@@ -365,6 +407,7 @@ class HTTPWorkspaceClient:
         trace_id: str,
         idempotency_key: str,
         network_policy: str,
+        material_source: dict[str, object] | None = None,
     ) -> VmSessionResult:
         network_mode = "none" if network_policy in {"disabled_by_default", "none"} else "vm-internal"
         try:
@@ -397,6 +440,7 @@ class HTTPWorkspaceClient:
                 material_session_id=session_id,
                 task_id=task_id,
                 idempotency_key=f"{idempotency_key}:workspace",
+                material_source=material_source,
             )
             self._workspace_sessions[session_id] = workspace_session
         return VmSessionResult(
@@ -611,7 +655,7 @@ class HTTPWorkspaceClient:
                 "patches": [
                     {
                         "path": patch.target_path,
-                        "expected_old_sha256": patch.expected_old_sha256,
+                        "expected_current_sha256": patch.expected_current_sha256,
                         "unified_diff": patch.unified_diff,
                     }
                 ],
@@ -671,7 +715,7 @@ class HTTPWorkspaceClient:
                 "patches": [
                     {
                         "path": patch.target_path,
-                        "expected_old_sha256": patch.expected_old_sha256,
+                        "expected_current_sha256": patch.expected_current_sha256,
                         "unified_diff": patch.unified_diff,
                     }
                     for patch in patch_set.patches
@@ -825,6 +869,87 @@ class HTTPWorkspaceClient:
             ],
         )
 
+    def acquire_remote_source(
+        self,
+        *,
+        session_id: str,
+        material_session_id: str,
+        vm_session_id: str,
+        source: dict[str, object],
+        destination: str,
+        idempotency_key: str,
+    ) -> RemoteSourceAcquireResult:
+        workspace_session = self._workspace_sessions.get(session_id)
+        if not workspace_session:
+            return RemoteSourceAcquireResult(
+                status="blocked",
+                source_url=str(source.get("url") or ""),
+                destination=destination,
+                issue=WorkspaceIssue(
+                    code="workspace_session_unavailable",
+                    message="workspace session was not created because VM-backed sandbox is not ready",
+                ),
+            )
+        source_url = str(source.get("url") or "").strip()
+        if not source_url:
+            return RemoteSourceAcquireResult(
+                status="blocked",
+                source_url="",
+                destination=destination,
+                issue=WorkspaceIssue(code="remote_source_url_missing", message="remote source URL is required"),
+            )
+        try:
+            response = self._post(
+                f"/v1/workspace-execution/sessions/{workspace_session}/remote-sources/git",
+                {
+                    "idempotency_key": idempotency_key,
+                    "url": source_url,
+                    "destination": destination,
+                    "depth": int(source.get("depth") or 1),
+                    "timeout_seconds": int(source.get("timeout_seconds") or 300),
+                    "vm_session_id": vm_session_id,
+                    "material_session_id": material_session_id,
+                    "requires_vm_backed_sandbox": True,
+                    "metadata": {
+                        "material_session_id": material_session_id,
+                        "source_role": source.get("source_role") or "material_source",
+                    },
+                },
+            )
+        except RuntimeError as exc:
+            return RemoteSourceAcquireResult(
+                status="blocked",
+                source_url=source_url,
+                destination=destination,
+                issue=WorkspaceIssue(
+                    code="workspace_transport_failed",
+                    message="workspace_execution remote source transport failed",
+                    details={"error": str(exc)},
+                ),
+            )
+        if response.get("status") != "completed":
+            return RemoteSourceAcquireResult(
+                status=str(response.get("status") or "blocked"),
+                source_url=source_url,
+                destination=str(response.get("destination") or destination),
+                effective_url=str(response.get("effective_url") or "") or None,
+                evidence_context=response.get("evidence_context") if isinstance(response.get("evidence_context"), dict) else {},
+                clone_attempts=[
+                    item for item in response.get("clone_attempts", []) if isinstance(item, dict)
+                ] if isinstance(response.get("clone_attempts"), list) else [],
+                issue=_error_to_issue(response.get("error"), default_code="remote_source_acquisition_failed"),
+            )
+        return RemoteSourceAcquireResult(
+            status="completed",
+            source_url=source_url,
+            destination=str(response.get("destination") or destination),
+            effective_url=str(response.get("effective_url") or "") or None,
+            evidence_context=response.get("evidence_context") if isinstance(response.get("evidence_context"), dict) else {},
+            clone_attempts=[
+                item for item in response.get("clone_attempts", []) if isinstance(item, dict)
+            ] if isinstance(response.get("clone_attempts"), list) else [],
+        )
+
     def cleanup_vm(
         self,
         *,
@@ -850,23 +975,33 @@ class HTTPWorkspaceClient:
         material_session_id: str,
         task_id: str,
         idempotency_key: str,
+        material_source: dict[str, object] | None = None,
     ) -> str:
+        source_kind = str(material_source.get("kind") or "") if isinstance(material_source, dict) else ""
+        if source_kind == "git_remote":
+            source: dict[str, object] = {
+                "kind": "empty",
+                "purpose": "remote_source_acquisition",
+            }
+        else:
+            source = {
+                "kind": "upload",
+                "upload_ref": material_session_id,
+                "filename": "material_session.json",
+                "media_type": "application/json",
+            }
         response = self._post(
             "/v1/workspace-execution/sessions",
             {
                 "idempotency_key": idempotency_key,
-                "source": {
-                    "kind": "upload",
-                    "upload_ref": material_session_id,
-                    "filename": "material_session.json",
-                    "media_type": "application/json",
-                },
+                "source": source,
                 "execution_profile": "standard",
                 "network": "disabled",
                 "metadata": {
                     "material_session_id": material_session_id,
                     "task_id": task_id,
                     "created_by": "features/material_execution_kernel",
+                    "source_kind": source_kind or None,
                 },
             },
         )

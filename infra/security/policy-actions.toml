@@ -27,6 +27,7 @@ low = [
 ]
 
 medium = [
+    "rag.admin.prepare_sources",
     "rag.admin.reprocess.local",
     "rag.admin.reprocess.cag",
     "audio.transcribe",

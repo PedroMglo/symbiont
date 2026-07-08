@@ -60,15 +60,18 @@ def decompose(
                 reasoning="LLM decomposition accepted",
                 output=_subtasks_output(subtasks),
             )
+        return DecomposeResponse(
+            subtasks=[],
+            reasoning="decomposition_provider_returned_no_valid_subtasks",
+            output="[]",
+        )
     except Exception as exc:
         log.warning("decomposition: LLM failed: %s", exc)
-
-    fallback = _fallback_subtask(query, agents, cfg.decomposition.default_budget_tokens)
-    return DecomposeResponse(
-        subtasks=[fallback],
-        reasoning="Fallback single-step decomposition",
-        output=_subtasks_output([fallback]),
-    )
+        return DecomposeResponse(
+            subtasks=[],
+            reasoning="decomposition_backend_unavailable: no task decomposition produced",
+            output="[]",
+        )
 
 
 def _parse_subtasks(raw: str, available_agents: list[str], budget_tokens: int) -> list[SubTask]:
@@ -101,18 +104,6 @@ def _parse_subtasks(raw: str, available_agents: list[str], budget_tokens: int) -
             )
         )
     return subtasks
-
-
-def _fallback_subtask(query: str, available_agents: list[str], budget_tokens: int) -> SubTask:
-    agent = "research" if "research" in available_agents else (available_agents[0] if available_agents else "reasoning_and_response")
-    return SubTask(
-        id="task_1",
-        objective=query,
-        assigned_agents=[agent],
-        budget_tokens=budget_tokens,
-        parallel_group=0,
-    )
-
 
 def _subtasks_output(subtasks: list[SubTask]) -> str:
     return json.dumps([task.model_dump(mode="json") for task in subtasks], ensure_ascii=True)

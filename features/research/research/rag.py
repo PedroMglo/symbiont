@@ -206,6 +206,101 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
+def _auth_headers(*, json_content: bool = False) -> dict[str, str]:
+    cfg = get_settings()
+    headers: dict[str, str] = {"Content-Type": "application/json"} if json_content else {}
+    if cfg.rag.api_key:
+        headers["Authorization"] = f"Bearer {cfg.rag.api_key}"
+    return headers
+
+
+def prepare_sources(
+    sources: list[dict[str, Any]],
+    *,
+    target: str = "sources",
+    force: bool = False,
+    wait_seconds: float = 0.0,
+    poll_interval_seconds: float = 2.0,
+) -> dict[str, Any]:
+    """Ask the RAG owner to register and process user-requested local sources."""
+
+    cfg = get_settings()
+    payload = {
+        "target": target,
+        "force": force,
+        "sources": sources,
+    }
+    try:
+        response = httpx.post(
+            f"{cfg.rag.url}/admin/reprocess",
+            json=payload,
+            headers=_auth_headers(json_content=True),
+            timeout=max(3.0, cfg.rag.timeout_seconds),
+        )
+        if response.status_code >= 400:
+            return {
+                "status": "failed",
+                "target": target,
+                "force": force,
+                "sources": [],
+                "result": {},
+                "error": f"RAG admin HTTP {response.status_code}",
+            }
+        accepted = response.json()
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "target": target,
+            "force": force,
+            "sources": [],
+            "result": {},
+            "error": str(exc)[:300],
+        }
+
+    job_id = str(accepted.get("job_id") or "")
+    status_url = str(accepted.get("status_url") or "")
+    result: dict[str, Any] = {}
+    status = str(accepted.get("status") or "queued")
+    error = ""
+
+    deadline = time.monotonic() + max(0.0, float(wait_seconds))
+    while job_id and status_url and time.monotonic() < deadline:
+        time.sleep(max(0.25, float(poll_interval_seconds)))
+        try:
+            poll = httpx.get(
+                f"{cfg.rag.url}{status_url}",
+                headers=_auth_headers(),
+                timeout=max(3.0, cfg.rag.timeout_seconds),
+            )
+            if poll.status_code >= 400:
+                error = f"RAG admin job HTTP {poll.status_code}"
+                break
+            data = poll.json()
+            status = str(data.get("status") or status)
+            raw_result = data.get("result")
+            result = raw_result if isinstance(raw_result, dict) else {}
+            error = str(data.get("error") or "")
+            if status in {"completed", "failed", "canceled"}:
+                break
+        except Exception as exc:
+            error = str(exc)[:300]
+            break
+
+    registered_sources = result.get("sources")
+    if not isinstance(registered_sources, list):
+        registered_sources = []
+    return {
+        "status": status,
+        "job_id": job_id,
+        "status_url": status_url,
+        "target": target,
+        "force": force,
+        "sources": registered_sources,
+        "result": result,
+        "error": error,
+    }
+
+
 def search_notes(
     query: str,
     top_k: int = 5,

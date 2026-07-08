@@ -34,6 +34,7 @@ from audio_transcribe.jobs import (
 )
 from audio_transcribe.queue import get_queue
 from audio_transcribe.query_workflow import execute_audio_query
+from audio_transcribe.resource_governor import is_resource_governor_configured
 from audio_transcribe.scratch import assert_model_cache_path, assert_scratch_path
 from audio_transcribe.security import (
     sanitize_filename,
@@ -67,6 +68,11 @@ async def _queue_stats(queue: Any | None = None) -> dict[str, Any]:
         "pending": getattr(queue, "pending_count", 0),
         "running": getattr(queue, "is_running", False),
     }
+
+
+def _resource_governor_status() -> dict[str, str]:
+    state = "configured" if is_resource_governor_configured() else "not_configured"
+    return {"state": state}
 
 
 @asynccontextmanager
@@ -201,7 +207,7 @@ async def health():
         "queue": queue_stats,
         "active_jobs": get_active_job_count(),
         "recovery": getattr(app.state, "audio_recovery", {}),
-        "resource_governor": {"state": "not_integrated"},
+        "resource_governor": _resource_governor_status(),
         "version": __version__,
     }
 
@@ -505,5 +511,5 @@ async def get_metrics():
             "stt_partial": None,
             "stt_final": None,
         },
-        "resource_governor": {"state": "not_integrated"},
+        "resource_governor": _resource_governor_status(),
     }

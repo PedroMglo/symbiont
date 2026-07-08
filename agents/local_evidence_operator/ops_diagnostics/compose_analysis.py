@@ -82,7 +82,7 @@ def build_compose_analysis_report(workspace: Path, query: str = "") -> dict[str,
         "run the smallest documented smoke test for the affected route or worker",
         ],
         "residual_risks": [
-            "If a named database volume contains an older schema, readiness can pass while migrations are still incompatible.",
+            "If a named database volume contains stale schema state, readiness can pass while schema checks are still incompatible.",
             "Retry/idempotency should be validated with a test that crashes after the side effect and then replays the job.",
             "Static analysis cannot prove runtime DNS or schema state without running the stack.",
         ],
@@ -97,7 +97,7 @@ def format_compose_analysis_report(report: dict[str, Any], *, published_uri: str
         lines.append(f"- error: {report['error']}")
         return "\n".join(lines).strip() + "\n"
     lines.extend([
-        f"- compose file: `{_rel(report.get('compose_file'))}`",
+        f"- compose file: `{_rel(report.get('compose_file'), report.get('workspace'))}`",
         f"- analysis mode: {report.get('analysis_mode')}",
         f"- services: {', '.join(report.get('services', []))}",
         "",
@@ -323,15 +323,15 @@ def _volume_reuse_issues(compose: dict[str, Any]) -> list[dict[str, Any]]:
     volumes = compose.get("volumes") if isinstance(compose, dict) else {}
     if not isinstance(volumes, dict):
         return []
-    suspicious = [name for name in volumes if any(term in name.lower() for term in ("old", "previous"))]
+    suspicious = [name for name in volumes if any(term in name.lower() for term in ("stale", "reused", "archive", "snapshot"))]
     if not suspicious:
         return []
     return [_issue(
         "suspicious-reused-volume",
         "medium",
-        "Named volume suggests reused database state from an older schema.",
+        "Named volume suggests reused database state from stale schema state.",
         "volumes: " + ", ".join(suspicious),
-        "Do not delete volumes as a shortcut; inspect/migrate or create an explicit disposable dev volume.",
+        "Do not delete volumes as a shortcut; inspect schema state or create an explicit disposable dev volume.",
     )]
 
 
@@ -351,7 +351,7 @@ def _wait_script_issues(root: Path) -> list[dict[str, Any]]:
                 "medium",
                 "Wait script claims schema safety but checks only TCP reachability.",
                 f"{path.relative_to(root)} uses socket.create_connection.",
-                "Replace with a command that verifies required schema/migrations and dependent services.",
+                "Replace with a command that verifies required schema state and dependent services.",
             ))
     return issues
 
@@ -459,9 +459,11 @@ def _replace_url_host(value: str, host: str) -> str:
     return parsed._replace(netloc=netloc).geturl()
 
 
-def _rel(value: object) -> str:
+def _rel(value: object, base: object = None) -> str:
     text = str(value or "")
-    marker = "/agentic-stress-lab/"
-    if marker in text:
-        return text.split(marker, 1)[1]
+    if base:
+        try:
+            return Path(text).resolve().relative_to(Path(str(base)).resolve()).as_posix()
+        except (OSError, ValueError):
+            return text
     return text

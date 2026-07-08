@@ -18,7 +18,6 @@ class SpeakerDiarizer:
     """Speaker diarization using pyannote.audio.
 
     - Optional: disabled by default
-    - Graceful degradation: warns and continues if unavailable
     - Requires HF_TOKEN for pyannote model download
     """
 
@@ -96,9 +95,6 @@ class SpeakerDiarizer:
             return []
 
         if not self.available:
-            if cfg.diarization.continue_without_diarization_on_error:
-                logger.warning("Diarization unavailable, continuing without it")
-                return []
             raise DiarizationError(
                 message="Diarization enabled but pyannote.audio not available"
             )
@@ -106,9 +102,6 @@ class SpeakerDiarizer:
         try:
             self._load_pipeline()
         except DiarizationError:
-            if cfg.diarization.continue_without_diarization_on_error:
-                logger.warning("Failed to load diarization pipeline, continuing without it")
-                return []
             raise
 
         min_sp = min_speakers or cfg.diarization.min_speakers
@@ -138,9 +131,6 @@ class SpeakerDiarizer:
             return segments
 
         except Exception as e:
-            if cfg.diarization.continue_without_diarization_on_error:
-                logger.warning(f"Diarization failed: {e}, continuing without it")
-                return []
             raise DiarizationError(
                 message="Diarization processing failed",
                 detail=str(e),

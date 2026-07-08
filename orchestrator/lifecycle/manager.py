@@ -108,6 +108,9 @@ class ContainerLifecycleManager:
         health_poll_interval: float = 0.5,
         idle_check_interval: int = 30,
         startup_reap_grace_seconds: int = 120,
+        pressure_reap_enabled: bool = True,
+        pressure_reap_min_idle_seconds: int = 60,
+        pressure_reap_max_per_cycle: int = 3,
         always_on: list[str] | None = None,
         pre_warm: list[str] | None = None,
         per_service_overrides: dict[str, dict[str, Any]] | None = None,
@@ -122,6 +125,9 @@ class ContainerLifecycleManager:
         self._health_poll_interval = health_poll_interval
         self._idle_check_interval = idle_check_interval
         self._startup_reap_grace_seconds = max(0, startup_reap_grace_seconds)
+        self._pressure_reap_enabled = bool(pressure_reap_enabled)
+        self._pressure_reap_min_idle_seconds = max(0, int(pressure_reap_min_idle_seconds))
+        self._pressure_reap_max_per_cycle = max(1, int(pressure_reap_max_per_cycle))
         self._always_on: set[str] = set(always_on or [])
         self._pre_warm: set[str] = set(pre_warm or [])
         self._per_service_overrides = per_service_overrides or {}
@@ -199,6 +205,9 @@ class ContainerLifecycleManager:
             return
         overrides = self._per_service_overrides.setdefault(service_name, {})
         configured = overrides.get("idle_timeout")
+        if configured is not None and overrides.get("_idle_timeout_explicit"):
+            overrides["idle_timeout"] = int(configured)
+            return
         overrides["idle_timeout"] = timeout if configured is None else max(int(configured), timeout)
 
     def _compose_name(self, service_name: str) -> str:
@@ -682,7 +691,7 @@ class ContainerLifecycleManager:
         log.warning("Container %s did not become healthy within %.0fs", service_name, timeout)
         return False
 
-    def stop_service(self, service_name: str, *, _from_reaper: bool = False) -> bool:
+    def stop_service(self, service_name: str, *, _from_reaper: bool = False, _pressure_reap: bool = False) -> bool:
         """Stop a service container gracefully.
 
         Does not remove the container — just stops it for faster restart.
@@ -706,18 +715,29 @@ class ContainerLifecycleManager:
                 if self._has_active_request(service_name):
                     log.debug("Reaper stop_service: %s has an active request, aborting", service_name)
                     return False
-                # Check hard grace period (container started recently)
-                started_at = self._started_at.get(service_name)
-                idle_timeout = self._get_idle_timeout(service_name)
-                if started_at is not None and (time.time() - started_at) < idle_timeout:
-                    log.debug("Reaper stop_service: %s within grace period, aborting", service_name)
+                if _pressure_reap and self._is_required_by_running_service(service_name):
+                    log.debug("Pressure reaper: %s is required by a running service, aborting", service_name)
                     return False
-                last_used = self._last_used.get(service_name)
-                if last_used is None:
-                    return False  # Just started, no usage yet
-                if (time.time() - last_used) <= idle_timeout:
-                    log.debug("Reaper: %s no longer idle, skipping stop", service_name)
-                    return False
+                if _pressure_reap:
+                    last_used = self._last_used.get(service_name)
+                    started_at = self._started_at.get(service_name)
+                    idle_reference = last_used if last_used is not None else started_at
+                    if idle_reference is None or (time.time() - idle_reference) < self._pressure_reap_min_idle_seconds:
+                        log.debug("Pressure reaper: %s is below pressure idle floor, aborting", service_name)
+                        return False
+                else:
+                    # Check hard grace period (container started recently)
+                    started_at = self._started_at.get(service_name)
+                    idle_timeout = self._get_idle_timeout(service_name)
+                    if started_at is not None and (time.time() - started_at) < idle_timeout:
+                        log.debug("Reaper stop_service: %s within grace period, aborting", service_name)
+                        return False
+                    last_used = self._last_used.get(service_name)
+                    if last_used is None:
+                        return False  # Just started, no usage yet
+                    if (time.time() - last_used) <= idle_timeout:
+                        log.debug("Reaper: %s no longer idle, skipping stop", service_name)
+                        return False
 
             container = self._find_container(service_name)
             if container is None:
@@ -792,10 +812,93 @@ class ContainerLifecycleManager:
         """Background loop that stops idle containers."""
         while not self._stop_event.is_set():
             try:
+                self.reap_under_resource_pressure()
+            except Exception as exc:
+                log.debug("Pressure reaper cycle error: %s", exc)
+            try:
                 self._reap_idle()
             except Exception as exc:
                 log.debug("Reaper cycle error: %s", exc)
             self._stop_event.wait(self._idle_check_interval)
+
+    def _resource_snapshot(self) -> Any | None:
+        try:
+            from orchestrator.resource_governor import get_resource_governor_service
+
+            return get_resource_governor_service().snapshot()
+        except Exception as exc:
+            log.debug("Resource pressure snapshot unavailable for lifecycle reaper: %s", exc)
+            return None
+
+    def _pressure_snapshot_requires_reap(self, snapshot: Any) -> bool:
+        if not self._pressure_reap_enabled:
+            return False
+        level = str(getattr(snapshot, "pressure_level", "") or "").lower()
+        reasons = [str(reason).lower() for reason in getattr(snapshot, "pressure_reasons", []) or []]
+        if level == "critical":
+            return True
+        pressure_prefixes = (
+            "swap_used>",
+            "swap_growth>",
+            "swap_in_use",
+            "psi_memory>",
+            "ram_percent>",
+        )
+        return level == "high" and any(reason.startswith(pressure_prefixes) for reason in reasons)
+
+    def _pressure_reap_candidates(self, now: float) -> list[tuple[float, str]]:
+        candidates: list[tuple[float, str]] = []
+        for service_name in list(_SERVICE_NAME_MAP.keys()):
+            if service_name in self._always_on:
+                continue
+            if service_name in self._starting:
+                continue
+            if self._has_active_request(service_name):
+                continue
+            if not self.is_running(service_name):
+                continue
+            if self._is_required_by_running_service(service_name):
+                continue
+
+            last_used = self._last_used.get(service_name)
+            started_at = self._started_at.get(service_name)
+            idle_reference = last_used if last_used is not None else started_at
+            if idle_reference is None:
+                self._last_used[service_name] = now
+                continue
+            idle_seconds = now - idle_reference
+            if idle_seconds < self._pressure_reap_min_idle_seconds:
+                continue
+            candidates.append((idle_seconds, service_name))
+        candidates.sort(reverse=True)
+        return candidates
+
+    def reap_under_resource_pressure(self, snapshot: Any | None = None) -> list[str]:
+        """Stop idle managed services early when Resource Governor reports pressure."""
+        if not self._docker or not self._pressure_reap_enabled:
+            return []
+        snapshot = snapshot if snapshot is not None else self._resource_snapshot()
+        if snapshot is None or not self._pressure_snapshot_requires_reap(snapshot):
+            return []
+
+        since_manager_start = time.time() - self._manager_started_at
+        if since_manager_start < self._startup_reap_grace_seconds:
+            log.debug(
+                "Pressure reaper skipping startup grace window (%.0fs < %ds)",
+                since_manager_start,
+                self._startup_reap_grace_seconds,
+            )
+            return []
+
+        stopped: list[str] = []
+        for _idle_seconds, service_name in self._pressure_reap_candidates(time.time()):
+            if len(stopped) >= self._pressure_reap_max_per_cycle:
+                break
+            if self.stop_service(service_name, _from_reaper=True, _pressure_reap=True):
+                stopped.append(service_name)
+        if stopped:
+            log.info("Pressure reaper stopped managed idle containers: %s", ", ".join(stopped))
+        return stopped
 
     def _reap_idle(self) -> None:
         """Stop containers that have been idle longer than their timeout."""

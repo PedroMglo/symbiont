@@ -52,8 +52,12 @@ class SourceStatus(BaseModel):
 class ResearchQueryPlan(BaseModel):
     requested_intent: str = "general"
     normalized_intent: str = "general"
+    source_namespace: str = ""
+    source_scoped: bool = False
     include_code: bool = True
     include_code_reason: str = ""
+    include_cag: bool = True
+    include_cag_reason: str = ""
     budget_tokens: int = 2000
     budget_reason: str = ""
     pack_selection: str = "general"
@@ -65,6 +69,7 @@ class ResearchQueryPlan(BaseModel):
     code_payload: dict[str, JsonScalar] = Field(default_factory=dict)
     cag_payload: dict[str, JsonScalar] = Field(default_factory=dict)
     retrieval_modes: list[str] = Field(default_factory=list)
+    namespace: str = ""
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -156,6 +161,9 @@ class SearchRequest(BaseModel):
     budget_tokens: int = 2000
     include_code: bool = True
     intent: str = "general"
+    namespace: str = ""
+    source_paths: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class SearchResponse(BaseModel):
@@ -174,6 +182,32 @@ class SearchResponse(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ResearchSourcePrepareItem(BaseModel):
+    path: str
+    name: str | None = None
+    source_type: str = "auto"
+    exclude_patterns: list[str] = Field(default_factory=list)
+
+
+class ResearchSourcePrepareRequest(BaseModel):
+    sources: list[ResearchSourcePrepareItem] = Field(default_factory=list)
+    target: str = "sources"
+    force: bool = False
+    wait_seconds: float = 0.0
+    poll_interval_seconds: float = 2.0
+
+
+class ResearchSourcePrepareResponse(BaseModel):
+    status: str = "unknown"
+    job_id: str = ""
+    status_url: str = ""
+    target: str = "sources"
+    force: bool = False
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    result: dict[str, Any] = Field(default_factory=dict)
+    error: str = ""
+
+
 class CAGRequest(BaseModel):
     intent: str = "general"
     budget_tokens: int = 2000
@@ -186,7 +220,7 @@ class HealthResponse(ServiceHealthResponse):
 class CapabilitiesResponse(ServiceCapabilitiesResponse):
     name: str = "research"
     capabilities: list[str] = Field(
-        default_factory=lambda: ["semantic_search", "knowledge_retrieval", "rag", "cag"]
+        default_factory=lambda: ["semantic_search", "knowledge_retrieval", "rag", "cag", "source_preparation"]
     )
     description: str = (
         "Retrieves relevant information from personal notes, documents, "

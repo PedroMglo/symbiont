@@ -31,7 +31,7 @@ GENERATED_CATEGORIES = {
     "generated_storage_path",
     "inferred_runtime_budget",
     "private_local_config",
-    "removed_compatibility_path",
+    "retired_path",
 }
 
 PERFORMANCE_TERMS = (
@@ -376,7 +376,7 @@ def classify_field(file: str, key: str, value: Any) -> tuple[str, str, str]:
     if file == "config/orc/i18n.toml" and lowered.startswith("latency."):
         return _classified_manual(
             "language_policy",
-            "Language/runtime latency budgets are explicit i18n product policy in the compatibility surface.",
+            "Language/runtime latency budgets are explicit i18n product policy in the transition surface.",
         )
 
     if lowered.startswith("classification."):

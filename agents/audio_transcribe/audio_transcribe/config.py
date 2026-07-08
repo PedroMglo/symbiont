@@ -95,8 +95,8 @@ class GpuPolicyConfig:
     wait_timeout_seconds: int = 8
     wait_poll_seconds: float = 1.5
     allow_model_downgrade: bool = True
-    fallback_model: str = "small"
-    cpu_fallback_enabled: bool = True
+    degraded_model: str = "small"
+    allow_cpu_degradation: bool = True
 
 
 @dataclass
@@ -105,6 +105,7 @@ class PreprocessingConfig:
     mono: bool = True
     normalize_loudness: bool = True
     noise_reduction: bool = False
+    noise_reduction_backend: str = "none"
     keep_processed_audio: bool = True
 
 
@@ -122,7 +123,7 @@ class VADConfig:
     min_speech_duration_ms: int = 250
     min_silence_duration_ms: int = 500
     speech_pad_ms: int = 200
-    fallback_to_window_segmentation: bool = True
+    allow_window_segmentation: bool = True
 
 
 @dataclass
@@ -132,8 +133,6 @@ class DiarizationConfig:
     hf_token_env: str = "HF_TOKEN"
     min_speakers: Optional[int] = None
     max_speakers: Optional[int] = None
-    persist_speaker_profiles: bool = False
-    continue_without_diarization_on_error: bool = True
 
 
 @dataclass

@@ -1021,6 +1021,115 @@ class AgenticRunner:
             payload=start_payload,
         )
 
+        remote_source = task_metadata.get("material_source")
+        if isinstance(remote_source, dict) and remote_source.get("kind") == "git_remote":
+            source_url = str(remote_source.get("url") or "").strip()
+            repo_name = str(remote_source.get("repo_name") or "repository").strip() or "repository"
+            request = {
+                "original_user_prompt": original_query,
+                "normalized_prompt": working_query,
+                "user_language": user_language,
+                "explicit_paths": [],
+                "inferred_workspace": None,
+                "request_intents": ["material_output", "remote_repository_documentation"],
+                "risk_level": "sandbox_read_network",
+                "allowed_operations": ["git_clone_in_workspace_execution", "read_repo_metadata"],
+                "max_commands": 0,
+                "max_seconds": 0,
+                "max_output_bytes": 0,
+                "require_read_only": True,
+                "reason_for_acquisition": "remote Git source must be acquired inside the workspace_execution sandbox",
+                "remote_source": dict(remote_source),
+            }
+            fingerprint = uuid.uuid5(uuid.NAMESPACE_URL, f"{source_url}|{expected_root}|{working_query[:300]}").hex
+            context = {
+                "request_id": fingerprint[:16],
+                "workspace": "",
+                "boundary_root": "",
+                "resolution_source": "explicit_user_git_remote",
+                "remote_source": dict(remote_source),
+                "workspace_map": {
+                    "root": source_url,
+                    "top_level_entries": [],
+                    "detected_languages": [],
+                    "detected_frameworks": [],
+                    "detected_services": [],
+                    "detected_data_files": [],
+                    "detected_config_files": [],
+                    "detected_test_files": [],
+                    "detected_docs": [],
+                    "large_or_skipped_paths": [],
+                    "git_status_summary": "pending_clone",
+                    "risk_notes": ["Remote source acquisition is delegated to workspace_execution."],
+                },
+                "observations": [],
+                "file_observations": [],
+                "relevant_files": [],
+                "relevant_commands": [],
+                "commands": [],
+                "constraints": {
+                    "read_only": True,
+                    "remote_source_kind": "git_remote",
+                    "expected_artifact_root": expected_root or None,
+                },
+                "enrichment_plan": [],
+                "evidence_summary": (
+                    f"Remote Git repository source {repo_name!r} was detected. "
+                    "Local destination paths were not inspected as source evidence."
+                ),
+                "missing_evidence": [
+                    "Repository clone and file inspection are pending in the workspace_execution sandbox."
+                ],
+                "confidence": 0.62,
+                "cache_fingerprint": f"sha256:{fingerprint}",
+                "context_digest": {
+                    "inspected": {"remote_source": source_url, "repo_name": repo_name},
+                    "not_inspected": ["local publication destination paths"],
+                    "key_evidence": [],
+                    "uncertainties": [
+                        "Remote repository content is not available until sandbox clone completes."
+                    ],
+                    "next_recommended_actions": [
+                        "Clone the remote repository inside workspace_execution, inspect files, then plan documentation."
+                    ],
+                },
+            }
+            duration_ms = (time.time() - started) * 1000
+            update_metadata = {
+                "material_evidence_prepared": True,
+                "material_evidence_owner_enriched": False,
+                "material_evidence_preparation_status": "deferred_to_workspace_execution_remote_source",
+                "material_evidence_preparation_latency_ms": round(duration_ms, 2),
+                "material_evidence_request": request,
+                "material_evidence_context": context,
+                "enrichment_result_count": 0,
+                "enrichment_summary": self._material_enrichment_summary(context),
+            }
+            self.store.update_task(task.id, metadata=update_metadata)
+            complete_payload = {
+                "status": update_metadata["material_evidence_preparation_status"],
+                "workspace": None,
+                "remote_source": {"kind": "git_remote", "repo_name": repo_name},
+                "enrichment_result_count": 0,
+                "context_available": True,
+                "duration_ms": round(duration_ms, 2),
+            }
+            self._record_ai_event(
+                task,
+                event_type="material.evidence_acquisition.completed",
+                producer="agentic.runner",
+                severity="info",
+                payload=complete_payload,
+            )
+            self.store.record_event(
+                task_id=task.id,
+                trace_id=task.trace_id,
+                event_type="material.evidence_acquisition.completed",
+                actor="agentic.runner",
+                payload=complete_payload,
+            )
+            return self.store.get_task(task.id) or task
+
         context = existing_context if isinstance(existing_context, dict) else None
         request = task_metadata.get("material_evidence_request")
         request = request if isinstance(request, dict) else {}
@@ -1044,6 +1153,7 @@ class AgenticRunner:
                     context,
                     invoke_endpoint=feature_client.invoke_endpoint,
                     user_language=user_language,
+                    timeout_seconds=180.0,
                 )
         except Exception as exc:
             status = "degraded"
@@ -1231,7 +1341,7 @@ class AgenticRunner:
                 started_at=time.time(),
                 duration_ms=0,
                 error=synthesis_error,
-                metadata={"material_fast_path": True, "static_fallback_used": False},
+                metadata={"material_fast_path": True, "static_generation_shortcut_used": False},
             )
             self.store.finish_run(
                 run_id,
@@ -1315,7 +1425,7 @@ class AgenticRunner:
                     "success": True,
                     "tokens_used": 0,
                     "latency_ms": 0.0,
-                    "static_fallback_used": False,
+                    "static_generation_shortcut_used": False,
                 },
             )
             return deterministic
@@ -1345,7 +1455,7 @@ class AgenticRunner:
                 "task_id": task.id,
                 "trace_id": task.trace_id,
                 "requires_llm_response": True,
-                "static_fallback_allowed": False,
+                "static_generation_shortcut_allowed": False,
             },
         )
         started = time.time()
@@ -1374,7 +1484,7 @@ class AgenticRunner:
             metadata={
                 "component": "agentic.runner.material_final_response",
                 "duration_ms": (time.time() - started) * 1000,
-                "static_fallback_used": False,
+                "static_generation_shortcut_used": False,
             },
         )
         self._record_ai_event(
@@ -1387,7 +1497,7 @@ class AgenticRunner:
                 "success": bool(output),
                 "tokens_used": response.tokens_used,
                 "latency_ms": response.latency_ms,
-                "static_fallback_used": False,
+                "static_generation_shortcut_used": False,
             },
         )
         if not output:
@@ -1414,7 +1524,7 @@ class AgenticRunner:
                         "role": "material_completion_synthesis",
                         "confidence": response.confidence,
                         "tokens_used": response.tokens_used,
-                        "static_fallback_used": False,
+                        "static_generation_shortcut_used": False,
                     },
                 ),
                 task_id=task.id,
@@ -1641,6 +1751,12 @@ class AgenticRunner:
         session_id = ""
         try:
             feature_client = self._feature_client()
+            if not self._ensure_material_runtime_dependencies(
+                task,
+                feature_client=feature_client,
+                timeout=material_timeout,
+            ):
+                return False
             create_response = feature_client.invoke_endpoint(
                 "material_execution_kernel",
                 method="POST",
@@ -1837,6 +1953,56 @@ class AgenticRunner:
             )
             return False
 
+    def _ensure_material_runtime_dependencies(
+        self,
+        task: Any,
+        *,
+        feature_client: Any,
+        timeout: float,
+    ) -> bool:
+        dependencies = ("material_builder", "workspace_execution", "material_execution_kernel")
+        dependency_timeout = max(10.0, min(45.0, timeout / 4))
+        all_available = True
+        for service_name in dependencies:
+            started = time.time()
+            response = feature_client.invoke_endpoint(
+                service_name,
+                method="GET",
+                path="/health",
+                timeout=dependency_timeout,
+                policy_action="material_runtime.ensure_service",
+            )
+            status = "completed" if response.success else "failed"
+            output_payload = {
+                "service": service_name,
+                "available": response.success,
+                "latency_ms": response.latency_ms,
+                "error": response.error,
+            }
+            self.store.record_tool_call(
+                task_id=task.id,
+                tool_name="material_runtime.ensure_service",
+                risk_level="low",
+                status=status,
+                input_payload={"service": service_name, "path": "/health"},
+                output_payload=output_payload,
+                error=response.error if response.error else None,
+                metadata={
+                    "component": "agentic.runner.material_runtime_dependencies",
+                    "duration_ms": (time.time() - started) * 1000,
+                },
+            )
+            self._record_ai_event(
+                task,
+                event_type="material.runtime_dependency.checked",
+                producer="agentic.runner",
+                severity="info" if response.success else "medium",
+                payload=output_payload,
+            )
+            if not response.success:
+                all_available = False
+        return all_available
+
     def _material_session_request_payload(
         self,
         task: Any,
@@ -1871,6 +2037,9 @@ class AgenticRunner:
             "working_query": working_query,
             "language_context": language_context,
         }
+        material_source = task_metadata.get("material_source")
+        if isinstance(material_source, dict):
+            material_builder_context["material_source"] = dict(material_source)
         evidence_context = task_metadata.get("material_evidence_context")
         if isinstance(evidence_context, dict):
             material_builder_context["evidence_context"] = evidence_context
@@ -5235,7 +5404,11 @@ class AgenticRunner:
             return profile
         if task_metadata.get("background") or task_metadata.get("heavy"):
             profile["lane"] = "background"
-        elif task_metadata.get("material_output_required") or task_metadata.get("workspace_generation_context_profile") == "workspace_generation":
+        elif task_metadata.get("material_output_required") and not task_metadata.get("material_execution_request"):
+            profile["lane"] = "interactive_enrichment"
+            profile.setdefault("resource_class", "cpu")
+            profile.setdefault("capability", "material_orchestration")
+        elif task_metadata.get("material_execution_request") or task_metadata.get("workspace_generation_context_profile") == "workspace_generation":
             profile["lane"] = "interactive"
             profile.setdefault("resource_class", "gpu_llm")
             profile.setdefault("capability", "material_generation")

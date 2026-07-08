@@ -1,0 +1,93 @@
+$kind: http-request
+description: Closest HTTP equivalent to the CLI `@ --no-stream` prompt path. Edit `prompt_text` directly in Params and toggle `stream`/`agentic` there too.
+url: "{{system_base_url}}/query?prompt_text=Mostra os recursos atuais do sistema.&stream=false&agentic=true"
+method: POST
+headers:
+  Authorization: Bearer {{system_api_key}}
+  Content-Type: application/json
+  X-AI-Service: postman
+  X-AI-Feature: system-prompt-test
+  X-AI-Origin-Kind: user
+  X-AI-Origin-Name: postman-system-api
+  X-AI-Origin-Machine: local-postman
+  X-Request-ID: "{{$guid}}"
+queryParams:
+  - key: prompt_text
+    value: Mostra os recursos atuais do sistema.
+    description: Prompt to send to the ai-local gateway.
+  - key: stream
+    value: "false"
+    description: true | false. Default false matches @ --no-stream and is safer for Postman.
+  - key: agentic
+    value: "true"
+    description: true | false. Leave true to exercise the normal system path.
+  - key: client_cwd
+    value: "{{project_root}}"
+    disabled: true
+    description: Optional client working directory sent with the prompt.
+  - key: session_id
+    value: ""
+    disabled: true
+    description: Optional conversation/session id.
+body:
+  type: json
+  content: |-
+    {
+      "query": "Mostra os recursos atuais do sistema.",
+      "stream": false,
+      "agentic": true
+    }
+scripts:
+  - type: beforeRequest
+    code: |-
+      function queryValue(key, fallback) {
+        const query = pm.request.url.query && pm.request.url.query.all ? pm.request.url.query.all() : [];
+        for (let i = 0; i < query.length; i += 1) {
+          if (query[i].key === key && !query[i].disabled) {
+            return pm.variables.replaceIn(String(query[i].value || ''));
+          }
+        }
+        return fallback;
+      }
+
+      function asBool(value, fallback) {
+        const raw = String(value === undefined || value === null ? fallback : value).trim().toLowerCase();
+        return ['true', '1', 'yes', 'sim'].includes(raw);
+      }
+
+      const promptText = queryValue('prompt_text', 'Mostra os recursos atuais do sistema.').trim();
+      const clientCwd = queryValue('client_cwd', '').trim();
+      const sessionId = queryValue('session_id', '').trim();
+      const origin = {
+        kind: 'user',
+        name: 'postman-system-api',
+        feature: 'system-prompt-test',
+        machine: 'local-postman',
+        service: 'postman'
+      };
+      const payload = {
+        query: promptText || 'Mostra os recursos atuais do sistema.',
+        stream: asBool(queryValue('stream', 'false'), false),
+        agentic: asBool(queryValue('agentic', 'true'), true),
+        client_system: {
+          origin: origin,
+          client: 'postman',
+          collection: 'AI Local - System'
+        },
+        client_files: []
+      };
+      if (clientCwd) {
+        payload.client_cwd = clientCwd;
+      }
+      if (sessionId) {
+        payload.session_id = sessionId;
+      }
+      pm.request.body.update(JSON.stringify(payload, null, 2));
+    language: text/javascript
+  - type: afterResponse
+    code: |-
+      pm.test('query accepted', function () {
+        pm.expect(pm.response.code).to.be.oneOf([200, 202]);
+      });
+    language: text/javascript
+order: 1000

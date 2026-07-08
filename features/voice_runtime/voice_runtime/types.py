@@ -33,7 +33,7 @@ class VoiceRuntimeConfig(BaseModel):
     sample_format: Literal["pcm16le"] = "pcm16le"
     chunk_bytes: int = Field(default=PCM16_16KHZ_30MS_FRAME_BYTES, ge=2)
     receive_timeout_seconds: float = Field(default=2.0, ge=0.1, le=30.0)
-    tls_verify: bool = False
+    tls_verify: bool = True
     mode: Literal["fake_pcm", "push_to_talk"] = "fake_pcm"
 
 

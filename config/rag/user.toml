@@ -13,13 +13,13 @@ vault_dirs = []
 backend = "direct"
 
 [retrieval]
-# Retrieval top_k is inferred by obsidian_rag.config.
+# Retrieval top_k is inferred by rag_config.
 context_mode = "auto"
 token_budget = 6000
 
 [api]
 # API key para autenticação (vazio = sem autenticação)
-# Query/rate budgets are inferred by obsidian_rag.config.
+# Query/rate budgets are inferred by rag_config.
 
 # All model selections and rag_capable toggles are centralized in models.json
 
@@ -43,10 +43,10 @@ backend = "temporal"
 [repos]
 # Configure local repositories here after first install.
 # Example: paths = ["~/_projects"]
-paths = []
+paths = ["~/sys.config","~/_projects/ai-local"]
 
 [graphify]
-enabled = false
+enabled = true
 backend = "ollama"
 # model loaded from models.json
 graph_vault_dir = "data/graphify-vault"

@@ -61,7 +61,7 @@ _agentic_actuator = None
 # lifecycle, OpenAPI and dashboard data must authenticate.
 _AUTH_EXEMPT_PATHS = frozenset({"/live", "/health", "/favicon.ico"})
 _INTERNAL_EVENT_BUS_PATHS = frozenset({"/agentic/ai-events"})
-_INTERNAL_API_TOKEN_PREFIXES = ("/resources",)
+_INTERNAL_API_TOKEN_PREFIXES = ("/resources", "/telemetry", "/scheduler")
 
 
 def _read_secret_file(path: str) -> str:
@@ -735,8 +735,10 @@ app.include_router(openai_router)
 # Mount internal Resource Governor routes.
 try:
     from orchestrator.resource_governor.app_routes import router as resource_governor_router
+    from orchestrator.resource_governor.app_routes import telemetry_router
 
     app.include_router(resource_governor_router)
+    app.include_router(telemetry_router)
 except Exception as exc:
     log.warning("Resource Governor router unavailable: %s", exc)
 
@@ -747,6 +749,14 @@ try:
     app.include_router(agentic_router)
 except Exception as exc:
     log.warning("Agentic runtime router unavailable: %s", exc)
+
+# Mount scheduler/admission routes.
+try:
+    from orchestrator.scheduler.app_routes import router as scheduler_router
+
+    app.include_router(scheduler_router)
+except Exception as exc:
+    log.warning("Scheduler router unavailable: %s", exc)
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -902,6 +912,28 @@ def _release_interactive_activity(activity_id: str | None) -> None:
             get_agentic_store().release_resource_lease(activity_id)
         except Exception:
             pass
+    except Exception:
+        pass
+
+
+def _heartbeat_scheduler_lease(lease_id: str | None) -> None:
+    if not lease_id:
+        return
+    try:
+        from orchestrator.resource_governor import get_resource_governor_service
+
+        get_resource_governor_service().heartbeat_lease(lease_id)
+    except Exception:
+        pass
+
+
+def _release_scheduler_lease(lease_id: str | None) -> None:
+    if not lease_id:
+        return
+    try:
+        from orchestrator.resource_governor import get_resource_governor_service
+
+        get_resource_governor_service().release_lease(lease_id)
     except Exception:
         pass
 
@@ -1200,7 +1232,7 @@ async def query(req: QueryRequest):
             model_used="agentic_local_command_bridge",
             intent="system_and_local",
             complexity="normal",
-            sources_used=[],
+            sources_used=[local_route, "client_system" if req.client_system else "runtime"],
             context_tokens=0,
             latency_ms=round(latency_ms, 1),
             session_id=session_id,
@@ -1284,6 +1316,33 @@ async def query(req: QueryRequest):
                 _release_interactive_activity(audio_activity_id)
 
         return StreamingResponse(audio_stream(), media_type="text/event-stream")
+
+    # --- Scheduler Admission ---
+    scheduler_decision = None
+    try:
+        from orchestrator.scheduler.admission import interactive_chat_plan
+        from orchestrator.scheduler.service import get_scheduler_service
+
+        scheduler_decision = get_scheduler_service().admit_route(
+            interactive_chat_plan(session_id=session_id)
+        )
+        if scheduler_decision.decision in {"defer", "reject_policy"}:
+            detail = {
+                "decision": scheduler_decision.decision,
+                "reason": scheduler_decision.reason,
+                "retry_after_s": scheduler_decision.retry_after_s,
+                "pressure_level": scheduler_decision.pressure_level,
+                "pressure_reasons": scheduler_decision.pressure_reasons,
+            }
+            raise HTTPException(
+                status_code=429 if scheduler_decision.decision == "defer" else 403,
+                detail=detail,
+                headers={"Retry-After": str(scheduler_decision.retry_after_s or 10)},
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.debug("scheduler admission skipped: %s", exc)
 
     # --- Admission Control ---
     _admission_backend: str | None = None
@@ -1409,6 +1468,7 @@ async def query(req: QueryRequest):
                         now = _time.monotonic()
                         if now - activity_last_heartbeat >= 10:
                             _heartbeat_interactive_activity(activity_id)
+                            _heartbeat_scheduler_lease(scheduler_decision.lease_id if scheduler_decision is not None else None)
                             activity_last_heartbeat = now
                         full_response.append(token)
                         # SSE spec: multi-line data must use separate "data:" per line
@@ -1444,6 +1504,7 @@ async def query(req: QueryRequest):
                 finally:
                     reset_agentic_context(context_token)
                     _release_interactive_activity(activity_id)
+                    _release_scheduler_lease(scheduler_decision.lease_id if scheduler_decision is not None else None)
                     _release_llm_slot()
                     if _admission_controller is not None and _admission_backend:
                         _admission_controller.release(_admission_backend)
@@ -1458,7 +1519,16 @@ async def query(req: QueryRequest):
                     except Exception:
                         pass
 
-            return StreamingResponse(event_stream(), media_type="text/event-stream")
+            from starlette.background import BackgroundTask
+
+            return StreamingResponse(
+                event_stream(),
+                media_type="text/event-stream",
+                background=BackgroundTask(
+                    _release_scheduler_lease,
+                    scheduler_decision.lease_id if scheduler_decision is not None else None,
+                ),
+            )
 
         from orchestrator.agentic.context import reset_agentic_context, set_agentic_context
 
@@ -1509,7 +1579,7 @@ async def query(req: QueryRequest):
                     model_used="agentic_local_command_bridge",
                     intent="system_and_local",
                     complexity="normal",
-                    sources_used=[],
+                    sources_used=[local_route or "local_command", "client_system" if req.client_system else "runtime"],
                     context_tokens=0,
                     latency_ms=round(latency_ms, 1),
                     session_id=session_id,
@@ -1616,6 +1686,10 @@ async def query(req: QueryRequest):
                 _release_interactive_activity(locals().get("activity_id"))
             except Exception:
                 pass
+            try:
+                _release_scheduler_lease(scheduler_decision.lease_id if scheduler_decision is not None else None)
+            except Exception:
+                pass
             _release_llm_slot()
             if _admission_controller is not None and _admission_backend:
                 _admission_controller.release(_admission_backend)
@@ -1653,6 +1727,30 @@ def prewarm_status():
 def live():
     """Lightweight liveness probe for Docker healthchecks."""
     return {"status": "ok"}
+
+
+@app.get("/image-info")
+def image_info_endpoint():
+    """Runtime image/build identity for live verification."""
+    from orchestrator.gateway.runtime_identity import image_info
+
+    return image_info()
+
+
+@app.get("/runtime-info")
+def runtime_info_endpoint():
+    """Runtime code/config identity for live verification."""
+    from orchestrator.gateway.runtime_identity import runtime_info
+
+    return runtime_info()
+
+
+@app.get("/config-effective")
+def config_effective_endpoint():
+    """Compare generated env values with the container effective environment."""
+    from orchestrator.gateway.runtime_identity import config_effective
+
+    return config_effective()
 
 
 def _config_health_report() -> dict:

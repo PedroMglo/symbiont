@@ -124,7 +124,7 @@ class GeneratedMaterialFile:
 class MaterialPatchProposal:
     issue_id: str
     target_path: str
-    expected_old_sha256: str
+    expected_current_sha256: str
     unified_diff: str
     requirement_refs: list[str] = field(default_factory=list)
     contract_refs: list[str] = field(default_factory=list)
@@ -135,7 +135,7 @@ class MaterialPatchProposal:
 class MaterialReplacementProposal:
     issue_id: str
     target_path: str
-    expected_old_sha256: str
+    expected_current_sha256: str
     replacement_content: str
     replacement_sha256: str
     requirement_refs: list[str] = field(default_factory=list)
@@ -247,12 +247,12 @@ class MaterialBuilderClient(Protocol):
         issue_id: str,
         issue_contract: dict[str, object],
         target_path: str,
-        expected_old_sha256: str,
+        expected_current_sha256: str,
         current_content: str,
         current_context: dict[str, object],
         validation_profile: str | None,
         command_evidence: dict[str, object],
-        previous_patch_rejections: list[dict[str, object]],
+        prior_patch_rejections: list[dict[str, object]],
         patch_blueprints: list[dict[str, object]],
         target_resolution: dict[str, object] | None = None,
         patch_set_blueprints: list[dict[str, object]] | None = None,
@@ -273,7 +273,7 @@ class MaterialBuilderClient(Protocol):
         current_content: str,
         current_context: dict[str, object],
         command_evidence: dict[str, object],
-        previous_patch_rejections: list[dict[str, object]],
+        prior_patch_rejections: list[dict[str, object]],
         repair_arbiter: dict[str, object],
     ) -> MaterialRepairCriticAdvisory:
         """Return optional advisory critique for a repair attempt."""
@@ -330,12 +330,12 @@ class UnavailableMaterialBuilderClient:
         issue_id: str,
         issue_contract: dict[str, object],
         target_path: str,
-        expected_old_sha256: str,
+        expected_current_sha256: str,
         current_content: str,
         current_context: dict[str, object],
         validation_profile: str | None,
         command_evidence: dict[str, object],
-        previous_patch_rejections: list[dict[str, object]],
+        prior_patch_rejections: list[dict[str, object]],
         patch_blueprints: list[dict[str, object]],
         target_resolution: dict[str, object] | None = None,
         patch_set_blueprints: list[dict[str, object]] | None = None,
@@ -356,7 +356,7 @@ class UnavailableMaterialBuilderClient:
         current_content: str,
         current_context: dict[str, object],
         command_evidence: dict[str, object],
-        previous_patch_rejections: list[dict[str, object]],
+        prior_patch_rejections: list[dict[str, object]],
         repair_arbiter: dict[str, object],
     ) -> MaterialRepairCriticAdvisory:
         raise MaterialBuilderUnavailable("material builder client is not configured")
@@ -532,12 +532,12 @@ class HTTPMaterialBuilderClient:
         issue_id: str,
         issue_contract: dict[str, object],
         target_path: str,
-        expected_old_sha256: str,
+        expected_current_sha256: str,
         current_content: str,
         current_context: dict[str, object],
         validation_profile: str | None,
         command_evidence: dict[str, object],
-        previous_patch_rejections: list[dict[str, object]],
+        prior_patch_rejections: list[dict[str, object]],
         patch_blueprints: list[dict[str, object]],
         target_resolution: dict[str, object] | None = None,
         patch_set_blueprints: list[dict[str, object]] | None = None,
@@ -551,12 +551,12 @@ class HTTPMaterialBuilderClient:
             "issue_id": issue_id,
             "issue": issue_contract,
             "target_path": target_path,
-            "expected_old_sha256": expected_old_sha256,
+            "expected_current_sha256": expected_current_sha256,
             "current_content": current_content,
             "current_context": current_context,
             "validation_profile": validation_profile,
             "command_evidence": command_evidence,
-            "previous_patch_rejections": previous_patch_rejections,
+            "prior_patch_rejections": prior_patch_rejections,
             "patch_blueprints": patch_blueprints,
             "target_resolution": target_resolution,
             "patch_set_blueprints": patch_set_blueprints or [],
@@ -589,7 +589,7 @@ class HTTPMaterialBuilderClient:
         current_content: str,
         current_context: dict[str, object],
         command_evidence: dict[str, object],
-        previous_patch_rejections: list[dict[str, object]],
+        prior_patch_rejections: list[dict[str, object]],
         repair_arbiter: dict[str, object],
     ) -> MaterialRepairCriticAdvisory:
         payload: dict[str, Any] = {
@@ -602,7 +602,7 @@ class HTTPMaterialBuilderClient:
             "current_content": current_content,
             "current_context": current_context,
             "command_evidence": command_evidence,
-            "previous_patch_rejections": previous_patch_rejections,
+            "prior_patch_rejections": prior_patch_rejections,
             "repair_arbiter": repair_arbiter,
         }
         data = self._post("/v1/material-builder/repair/critic", payload)
@@ -756,7 +756,7 @@ def _patch_proposal(raw: dict[str, object]) -> MaterialPatchProposal:
     return MaterialPatchProposal(
         issue_id=str(raw["issue_id"]),
         target_path=str(raw["target_path"]),
-        expected_old_sha256=str(raw["expected_old_sha256"]),
+        expected_current_sha256=str(raw["expected_current_sha256"]),
         unified_diff=str(raw["unified_diff"]),
         requirement_refs=[str(ref) for ref in raw.get("requirement_refs", [])],
         contract_refs=[str(ref) for ref in raw.get("contract_refs", [])],
@@ -779,7 +779,7 @@ def _replacement_proposal(raw: dict[str, object]) -> MaterialReplacementProposal
     return MaterialReplacementProposal(
         issue_id=str(raw["issue_id"]),
         target_path=str(raw["target_path"]),
-        expected_old_sha256=str(raw["expected_old_sha256"]),
+        expected_current_sha256=str(raw["expected_current_sha256"]),
         replacement_content=str(raw["replacement_content"]),
         replacement_sha256=str(raw["replacement_sha256"]),
         requirement_refs=[str(ref) for ref in raw.get("requirement_refs", [])],

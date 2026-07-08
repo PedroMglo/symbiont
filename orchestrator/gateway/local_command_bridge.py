@@ -160,6 +160,15 @@ def plan_local_command(query: str, *, client_cwd: str | None = None) -> LocalCom
     storage_status_only = wants_storage and not storage_operation
     storage_score = (5 if wants_storage else 0) + (4 if storage_operation else 0)
     multi_capability_probe = wants_storage and _has_any(intent_text, terms["multi_capability_terms"])
+    wants_storage_boundary = (
+        _has_any(q, terms["storage_boundary_question_terms"])
+        and _has_any(q, terms["storage_boundary_owner_terms"])
+        and _has_any(q, terms["storage_boundary_operation_terms"])
+    )
+    wants_alias_transport = _has_any(q, terms["alias_transport_subject_terms"]) and _has_any(
+        q,
+        terms["alias_transport_evidence_terms"],
+    )
     wants_operational_status = _has_any(q, terms["operational_status_terms"])
     knowledge_only = (
         (re.search(r"\brag\b", intent_text) or _has_any(intent_text, terms["knowledge_terms"]))
@@ -193,6 +202,10 @@ def plan_local_command(query: str, *, client_cwd: str | None = None) -> LocalCom
         )
     if wants_agentic and _has_any(q, terms["agentic_status_terms"]):
         return LocalCommandPlan(kind="agentic_overview", cwd=cwd, commands=())
+    if wants_alias_transport:
+        return LocalCommandPlan(kind="alias_transport", cwd=cwd, commands=())
+    if wants_storage_boundary:
+        return LocalCommandPlan(kind="storage_boundary", cwd=cwd, commands=())
     if resource_score > 0 and resource_score >= storage_score:
         return LocalCommandPlan(kind="system_status", cwd=cwd, commands=())
     if wants_storage and storage_operation:
@@ -254,6 +267,10 @@ async def maybe_answer_local_command(
         return None
     if plan.kind == "agentic_overview":
         return await asyncio.to_thread(_format_agentic_overview, client_system)
+    if plan.kind == "alias_transport":
+        return _format_alias_transport_boundary()
+    if plan.kind == "storage_boundary":
+        return _format_storage_boundary()
     if plan.kind == "system_status":
         return await asyncio.to_thread(_format_system_status, client_system)
     if plan.kind == "storage_status":
@@ -429,7 +446,43 @@ def _format_system_status(client_system: dict[str, Any] | None = None) -> str:
     except Exception:
         runtime_snapshot = {}
 
-    snapshot = {**runtime_snapshot, **{k: v for k, v in client_snapshot.items() if v is not None}}
+    governor_snapshot: dict[str, Any] = {}
+    try:
+        from orchestrator.resource_governor.service import get_resource_governor_service
+
+        resource_snapshot = get_resource_governor_service().snapshot()
+        raw_snapshot = (
+            resource_snapshot.model_dump(mode="json")
+            if hasattr(resource_snapshot, "model_dump")
+            else dict(resource_snapshot)
+        )
+        governor_snapshot = {
+            "cpu_percent": raw_snapshot.get("cpu_percent"),
+            "ram_available_mb": raw_snapshot.get("ram_available_mb"),
+            "ram_total_mb": raw_snapshot.get("ram_total_mb"),
+            "ram_percent": raw_snapshot.get("ram_percent"),
+            "swap_used_mb": raw_snapshot.get("swap_used_mb"),
+            "swap_percent": raw_snapshot.get("swap_percent"),
+            "gpu_name": raw_snapshot.get("gpu_name"),
+            "gpu_vram_free_mb": raw_snapshot.get("vram_free_mb"),
+            "gpu_vram_total_mb": raw_snapshot.get("vram_total_mb"),
+            "gpu_vram_used_mb": raw_snapshot.get("vram_used_mb"),
+            "gpu_utilization_pct": raw_snapshot.get("gpu_utilization_pct"),
+            "gpu_temperature_c": raw_snapshot.get("gpu_temperature_c"),
+            "gpu_power_w": raw_snapshot.get("gpu_power_w"),
+            "gpu_processes": raw_snapshot.get("gpu_processes"),
+            "pressure_level": raw_snapshot.get("pressure_level"),
+            "pressure_reasons": raw_snapshot.get("pressure_reasons"),
+            "telemetry_incomplete": raw_snapshot.get("telemetry_incomplete"),
+        }
+    except Exception:
+        governor_snapshot = {}
+
+    snapshot = {
+        **runtime_snapshot,
+        **{k: v for k, v in governor_snapshot.items() if v is not None},
+        **{k: v for k, v in client_snapshot.items() if v is not None},
+    }
 
     _record_system_tool_call(process_count=process_count, snapshot=snapshot)
 
@@ -458,6 +511,11 @@ def _format_system_status(client_system: dict[str, Any] | None = None) -> str:
     gpu_used = _as_int(snapshot.get("gpu_vram_used_mb"))
     gpu_utilization = snapshot.get("gpu_utilization_pct")
     gpu_temperature = snapshot.get("gpu_temperature_c")
+    gpu_power = snapshot.get("gpu_power_w")
+    gpu_processes = snapshot.get("gpu_processes")
+    pressure_level = str(snapshot.get("pressure_level") or "").strip()
+    pressure_reasons = snapshot.get("pressure_reasons")
+    telemetry_incomplete = snapshot.get("telemetry_incomplete")
     if gpu_used is None and gpu_total is not None and gpu_free is not None:
         gpu_used = max(0, gpu_total - gpu_free)
     disk_total_gb = _as_float(snapshot.get("disk_total_gb"))
@@ -474,6 +532,13 @@ def _format_system_status(client_system: dict[str, Any] | None = None) -> str:
     ollama_vram = snapshot.get("ollama_vram_used_mb")
 
     lines = ["Recursos atuais:"]
+    lines.append("- Modo: deterministic_status; llm_used=false.")
+    if pressure_level:
+        reasons = ", ".join(str(reason) for reason in pressure_reasons or []) or "sem reasons explícitos"
+        lines.append(f"- Pressão Resource Governor: {pressure_level}; reasons: {reasons}.")
+    if telemetry_incomplete is not None:
+        state = "incompleta" if telemetry_incomplete else "completa"
+        lines.append(f"- Telemetria Resource Governor: {state}.")
     if process_count is not None:
         lines.append(f"- Processos: {process_count} visíveis no {process_source}.")
     else:
@@ -505,6 +570,8 @@ def _format_system_status(client_system: dict[str, Any] | None = None) -> str:
                 extras.append(f"utilização {gpu_utilization}%")
             if gpu_temperature is not None:
                 extras.append(f"{gpu_temperature} C")
+            if gpu_power is not None:
+                extras.append(f"{gpu_power} W")
             if extras:
                 gpu_detail += "; " + ", ".join(extras)
             lines.append(gpu_detail + f"{source_detail}.")
@@ -525,6 +592,22 @@ def _format_system_status(client_system: dict[str, Any] | None = None) -> str:
         if ollama_vram is not None:
             ollama_detail += f"; VRAM reportada pela API: {_format_mb(_as_int(ollama_vram) or 0)}"
         lines.append(ollama_detail + ".")
+    if isinstance(gpu_processes, list) and gpu_processes:
+        process_bits = []
+        for proc in gpu_processes[:5]:
+            if not isinstance(proc, dict):
+                continue
+            name = str(proc.get("name") or proc.get("process_name") or "process")
+            pid = proc.get("pid")
+            used = proc.get("used_memory_mb")
+            detail = name
+            if pid is not None:
+                detail += f"[{pid}]"
+            if used is not None:
+                detail += f": {_format_mb(_as_int(used) or 0)}"
+            process_bits.append(detail)
+        if process_bits:
+            lines.append("- GPU processos: " + "; ".join(process_bits) + ".")
     if disk_total_gb is not None and disk_free_gb is not None:
         if disk_used_gb is None:
             disk_used_gb = max(0.0, disk_total_gb - disk_free_gb)
@@ -540,7 +623,7 @@ def _format_system_status(client_system: dict[str, Any] | None = None) -> str:
     elif disk_total_gb is None:
         lines.append("- Disco/SSD: métrica indisponível no snapshot atual.")
     lines.append("")
-    lines.append("Método: agentic local probe `system.status` via snapshot `@` + runtime/Ollama; sem RAG.")
+    lines.append("Método: agentic local probe `system.status` via Resource Governor + snapshot `@` + runtime/Ollama; sem RAG e sem LLM.")
     return "\n".join(lines)
 
 
@@ -554,6 +637,30 @@ def _format_agentic_overview(client_system: dict[str, Any] | None = None) -> str
                 "RAG pode estar acessível mas vazio nesta stack; storage pesado depende do SSD/mount externo; "
                 f"{_format_system_status(client_system)}"
             ),
+        ]
+    )
+
+
+def _format_alias_transport_boundary() -> str:
+    return "\n".join(
+        [
+            "Owner: `orchestrator/cli`.",
+            "Contrato: o alias `@` constrói o payload JSON localmente, grava o payload num ficheiro temporário e passa-o ao curl com `--data-binary @<payloadfile>`.",
+            "Contrato: o header com credenciais também é gravado num ficheiro temporário e passado com `-H @<headerfile>`.",
+            "argv: a linha de comando fica limitada a caminhos temporários e flags; segredos e corpo completo do pedido não são serializados diretamente nos argumentos do processo.",
+            "Método: `orchestrator.cli.alias_transport`; llm_used=false; sem RAG.",
+        ]
+    )
+
+
+def _format_storage_boundary() -> str:
+    return "\n".join(
+        [
+            "Owner: `storage_guardian`.",
+            "Fronteira: `storage_guardian` é o dono de writes geridos, criação/remoção de pastas geridas, archive, restore, manifestos, hashes e cadeia de custódia.",
+            "Orchestrator: pode escolher rota, validar policy, propor `AgentDecision` e chamar o owner por API/dispatch; não deve implementar archive/restore/delete nem interpretar a semântica de storage.",
+            "Execução: nenhuma ação de storage foi executada nesta resposta.",
+            "Método: `storage.boundary`; llm_used=false; sem RAG.",
         ]
     )
 

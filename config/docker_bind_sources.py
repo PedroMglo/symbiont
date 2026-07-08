@@ -13,7 +13,7 @@ from typing import Any
 
 import yaml
 
-from .env_compat import read_env_file
+from .env_files import read_env_file
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DOCKER_CONTEXT = "default"

@@ -14,6 +14,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
         python3.11 \
         python3.11-venv \
@@ -32,8 +33,9 @@ WORKDIR /app
 
 COPY agents/audio_transcribe/requirements.txt agents/audio_transcribe/requirements-gpu.txt /tmp/audio-runtime/
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip \
+    pip install --upgrade pip "setuptools>=83.0.0" "wheel>=0.46.2" "jaraco.context>=6.1.0" \
     && pip install -r /tmp/audio-runtime/requirements.txt -r /tmp/audio-runtime/requirements-gpu.txt \
+    && pip install --upgrade "setuptools>=83.0.0" "wheel>=0.46.2" "jaraco.context>=6.1.0" \
     && rm -rf /tmp/audio-runtime
 
 COPY infra/docker/images/symbiont/base/entrypoint.sh /usr/local/bin/entrypoint.sh

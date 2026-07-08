@@ -1,0 +1,14 @@
+$kind: collection
+description: |-
+  System-level ai-local API collection for Postman. Use this to exercise the
+  gateway HTTP path equivalent to the CLI @ flow, inspect model/routing state,
+  and query recent agentic tasks without bypassing service owners.
+
+  Local shell helpers:
+  export SYSTEM_API_KEY="$(tr -d '\n' < infra/docker/secrets/orc_api_key)"
+  export SYSTEM_HOST_PORT="$(awk -F= '$1=="ORC_PORT_SYMBIONT"{print $2}' .env.services.generated)"
+
+  Default base URL: https://127.0.0.1:8586
+variables:
+  system_base_url: https://127.0.0.1:8586
+  system_api_key: ""

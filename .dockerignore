@@ -14,7 +14,6 @@
 .local
 .tmp
 graphify-out/
-fulldocagi/
 
 # --- Python artifacts ---
 **/__pycache__
@@ -106,6 +105,8 @@ docs/
 !obsidian-rag/README.md
 !orchestrator/**/prompt/*.md
 !orchestrator/**/prompt/**/*.md
+!obsidian-rag/**/prompt/*.md
+!obsidian-rag/**/prompt/**/*.md
 !agents/**/prompt/*.md
 !agents/**/prompt/**/*.md
 !features/**/prompt/*.md

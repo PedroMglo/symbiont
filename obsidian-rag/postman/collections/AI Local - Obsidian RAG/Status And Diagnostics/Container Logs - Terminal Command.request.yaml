@@ -1,0 +1,8 @@
+$kind: http-request
+description: |-
+  Postman cannot run local Docker commands directly. Use this terminal command while running the HTTP requests:
+
+  docker logs -f --tail=120 orc-rag
+url: "{{rag_host_base_url}}/health"
+method: GET
+order: 6000

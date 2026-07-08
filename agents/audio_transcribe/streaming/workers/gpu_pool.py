@@ -275,11 +275,11 @@ class GPUWorker:
 
         except Exception as e:
             logger.error(f"Transcription failed for {segment_id}: {e}")
-            await event_bus.publish_result(
+            await event_bus.publish_error(
                 session_id=session_id,
                 segment_id=segment_id,
-                text=f"[TRANSCRIPTION ERROR: {str(e)[:100]}]",
-                is_final=True,
+                code="transcription_failed",
+                message=str(e)[:200],
             )
 
     @property

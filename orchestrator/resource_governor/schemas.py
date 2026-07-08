@@ -30,6 +30,7 @@ class Lane(_ValueEnum):
     BACKGROUND = "background"
     STORAGE = "storage"
     HEAVY_GPU = "heavy_gpu"
+    SYSTEM_STATUS_FAST = "system_status_fast"
 
 
 class LeaseScope(_ValueEnum):
@@ -43,6 +44,7 @@ class LeaseScope(_ValueEnum):
 
 class ResourceClass(_ValueEnum):
     CPU = "cpu"
+    RAM = "ram"
     VRAM = "vram"
     IO_WRITE = "io_write"
     QDRANT_WRITE = "qdrant_write"
@@ -53,12 +55,17 @@ class Capability(_ValueEnum):
     BM25_REBUILD = "bm25_rebuild"
     CHAT_STREAM = "chat_stream"
     STORAGE_ARCHIVE = "storage_archive"
+    DOCUMENT_ETL = "document_etl"
     EMBEDDING_GPU_BATCH = "embedding_gpu_batch"
+    EMBEDDING_CPU_BATCH = "embedding_cpu_batch"
     AUDIO_TRANSCRIBE_GPU = "audio_transcribe_gpu"
+    AUDIO_TRANSCRIBE_CPU = "audio_transcribe_cpu"
     GRAPH_LLM = "graph_llm"
     DEEP_REASONING_BATCH = "deep_reasoning_batch"
+    MATERIAL_ORCHESTRATION = "material_orchestration"
     MATERIAL_GENERATION = "material_generation"
     MODEL_WARMUP = "model_warmup"
+    RAG_QUERY = "rag_query"
     RERANK = "rerank"
 
 
@@ -95,6 +102,7 @@ class LeaseDecisionKind(_ValueEnum):
     SKIP_OPTIONAL = "skip_optional"
     DEFER = "defer"
     DENY = "deny"
+    QUEUE_BACKGROUND = "queue_background"
 
 
 class DecisionType(_ValueEnum):
@@ -256,10 +264,15 @@ class ResourceSnapshot(_Model):
     psi_memory_some: float | None = None
     psi_io_some: float | None = None
     gpu_available: bool = False
+    gpu_name: str | None = None
     vram_total_mb: int | None = None
     vram_used_mb: int | None = None
     vram_free_mb: int | None = None
     gpu_utilization_pct: float | None = None
+    gpu_temperature_c: float | None = None
+    gpu_power_w: float | None = None
+    gpu_processes: list[dict[str, Any]] = Field(default_factory=list)
+    telemetry_incomplete: bool = False
     battery_percent: float | None = None
     battery_power_plugged: bool | None = None
     thermal_max_celsius: float | None = None
@@ -277,6 +290,7 @@ class EffectivePolicy(_Model):
     limits: dict[str, Any] = Field(default_factory=dict)
     lanes: dict[str, Any] = Field(default_factory=dict)
     thresholds: dict[str, Any] = Field(default_factory=dict)
+    pressure_policy: dict[str, Any] = Field(default_factory=dict)
     gpu_conflict_matrix: dict[str, Any] = Field(default_factory=dict)
 
 

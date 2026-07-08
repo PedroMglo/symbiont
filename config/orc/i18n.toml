@@ -57,5 +57,4 @@ enabled = true
 log_translation_latency = true
 log_cache_hit = true
 log_route_diff = true
-log_fallback_reason = true
 log_ptpt_linter_changes = true

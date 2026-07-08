@@ -1,0 +1,31 @@
+schema_version: owner-capability.v1
+component: resource_governor
+owner: orchestrator/resource_governor
+description: Resource pressure authority, telemetry, leases, admission policy, and model lifecycle coordination.
+routing:
+  terms:
+    - resource governor
+    - resource_governor
+    - telemetry authority
+    - telemetry
+    - gpu saturation
+    - gpu_saturated
+    - vram_low
+    - thermal_high
+    - /resources/snapshot
+    - /telemetry/snapshot
+    - lease
+    - leases
+    - scheduler lane
+  context_sources:
+    - system
+    - graph
+    - repo
+evidence_policy:
+  local_evidence_required: true
+  generic_answer_allowed: false
+public_surfaces:
+  endpoints:
+    - GET /resources/snapshot
+    - POST /resources/leases
+    - GET /telemetry/snapshot

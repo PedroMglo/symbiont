@@ -1,0 +1,27 @@
+$kind: http-request
+description: Full admin job history, newest first. Includes completed, cancelled, failed, deferred and active jobs. Use optional `status` to filter, for example `failed,failed_resource_pressure,cancelled`.
+url: "{{rag_host_base_url}}/admin/jobs?active_only=false&limit=100"
+method: GET
+headers:
+  Authorization: Bearer {{rag_api_key}}
+queryParams:
+  - key: active_only
+    value: "false"
+    description: false returns historical jobs instead of only active ones.
+  - key: limit
+    value: "100"
+    description: Maximum jobs to return. API clamps this to 200.
+  - key: status
+    value: ""
+    disabled: true
+    description: Optional comma-separated filter such as completed,cancelled,failed,failed_resource_pressure.
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('job history listed', function () {
+        pm.expect(pm.response.code).to.eql(200);
+        const payload = pm.response.json();
+        pm.expect(payload).to.have.property('jobs').that.is.an('array');
+      });
+    language: text/javascript
+order: 4000

@@ -77,7 +77,7 @@ Users should be able to open this folder and understand:
 | --- | --- | --- | --- |
 | First orientation | open `docs/README.md` | current reading path | valid links to all hand-written docs |
 | Owner-level review | open `docs/owners/README.md` | detailed docs for agents, features, config, storage, orchestrator, RAG and infra | owner docs cite live README/SPEC/manifest files |
-| Setup and daily use | read `docs/user-guide.md` | command sequence and `@` examples | `make check-doc-targets` confirms command targets |
+| Setup and daily use | read `docs/user-guide.md` | command sequence and `@` examples | docs target guard confirms command targets in source CI |
 | Architecture review | read `docs/architecture.md` | owner map and diagrams | cited owner manifests/specs |
 | Operations/debugging | read `docs/operations.md` | command and evidence map | generated reports in `docs/generated/` |
 | Future work planning | read `docs/implementation-backlog.md` | single backlog by owner | each item has exit proof |
@@ -93,8 +93,7 @@ Users should be able to open this folder and understand:
 ### Local Commands
 
 ```bash
-make check-doc-targets
-git diff --check -- docs README.md scripts/check_make_doc_targets.py
+git diff --check -- docs README.md
 ```
 
 ### API Or Contract
@@ -201,7 +200,7 @@ stateDiagram-v2
 | Failure | Detection | User impact | Owner | Recovery |
 | --- | --- | --- | --- | --- |
 | Hand-written doc misses template sections | template compliance check | docs feel incomplete or inconsistent | `docs/` | add official sections or choose correct template |
-| Stale command reference | `make check-doc-targets` | user runs dead command | `docs/` | update docs or Makefile intentionally |
+| Stale command reference | docs target guard in source CI | user runs dead command | `docs/` | update docs or Makefile intentionally |
 | Broken relative link | link scan | reader reaches missing file | `docs/` | fix or delete link |
 | Generated report edited manually | git diff/re-generation drift | evidence becomes untrustworthy | report owner | regenerate from script |
 | Owner behavior copied into docs as truth | code/spec drift | docs mislead maintainers | owning component | cite owner source and summarize only |
@@ -244,13 +243,12 @@ make rollback
 ### Health
 
 ```bash
-make check-doc-targets
+find docs -maxdepth 2 -type f | sort
 ```
 
 ### Debug
 
 ```bash
-python scripts/check_make_doc_targets.py
 find docs -maxdepth 2 -type f | sort
 ```
 
@@ -281,7 +279,7 @@ find docs -maxdepth 2 -type f | sort
 | Check | Command or source | Expected result | Last run |
 | --- | --- | --- | --- |
 | Static docs check | `git diff --check -- docs README.md scripts/check_make_doc_targets.py templates/INDEX.md` | no whitespace errors | 2026-06-29 |
-| Owner tests | `make check-doc-targets` | all referenced Makefile targets exist | 2026-06-29 |
+| Owner tests | docs target guard in source CI | all referenced Makefile targets exist | 2026-06-29 |
 | Runtime smoke | `docs/generated/docker-runtime-smoke.md` | generated runtime evidence available | 2026-06-29 |
 
 ## Open Questions

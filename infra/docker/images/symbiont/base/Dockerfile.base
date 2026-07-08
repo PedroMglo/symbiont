@@ -53,8 +53,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     if [ -n "$git_rewrite_url" ]; then \
         git config --global url."$git_rewrite_url".insteadOf "ssh://git@github.com/"; \
     fi; \
-    pip install --upgrade pip; \
+    pip install --upgrade pip "setuptools>=83.0.0" "wheel>=0.46.2" "jaraco.context>=6.1.0"; \
     pip install /app/ai-local; \
+    pip install --upgrade "setuptools>=83.0.0" "wheel>=0.46.2" "jaraco.context>=6.1.0"; \
     if [ -n "$git_rewrite_url" ]; then \
         git config --global --remove-section url."$git_rewrite_url" || true; \
     fi
@@ -69,7 +70,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         "pydantic-settings>=2.2" \
         "tomli>=2.0" \
         "python-dotenv>=1.0" \
-        "psutil>=5.9"
+        "psutil>=5.9" \
+    && pip install --upgrade "setuptools>=83.0.0" "wheel>=0.46.2" "jaraco.context>=6.1.0"
 
 # Entrypoint: validates API keys before starting any service
 COPY infra/docker/images/symbiont/base/entrypoint.sh /usr/local/bin/entrypoint.sh

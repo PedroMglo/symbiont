@@ -67,7 +67,9 @@ dispatch must still behave as if prewarming did not exist.
 - `example_queries`: optional documentation/eval hints only.
 - `prewarm_policy`: `standard`, `aggressive`, `conservative`, or `never`.
 - `prewarm_threshold`, `startup_cost`, `uses_gpu`, `ttl_idle`, and `priority`:
-  resource-policy inputs, not service behavior.
+  resource-policy inputs, not service behavior. `ttl_idle` is a catalog hint
+  that may extend non-explicit lifecycle defaults, but explicit lifecycle config
+  or generated production env values remain authoritative.
 
 Semantic routers must build embeddings/vectors from service intent documents,
 not from `example_queries`. Prompt examples are allowed only as non-authoritative

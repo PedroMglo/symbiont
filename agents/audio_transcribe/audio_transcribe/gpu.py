@@ -7,7 +7,10 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+from audio_transcribe.errors import DeviceUnavailableError, InvalidTranscriptionConfigError
+
 logger = logging.getLogger(__name__)
+VALID_COMPUTE_TYPES = ("float16", "int8_float16", "int8", "float32")
 
 
 @dataclass
@@ -22,7 +25,7 @@ class GPUInfo:
 
 
 def detect_gpu() -> GPUInfo:
-    """Detect NVIDIA GPU via ctranslate2 or torch, with fallbacks."""
+    """Detect NVIDIA GPU via the installed CUDA provider probes."""
     info = GPUInfo()
 
     # Try ctranslate2 first (lighter dependency)
@@ -53,7 +56,7 @@ def detect_gpu() -> GPUInfo:
     except Exception:
         pass
 
-    # Fallback to torch
+    # Use torch as the final CUDA availability probe.
     if not info.available:
         try:
             import torch
@@ -93,8 +96,7 @@ def select_device(config_device: str) -> str:
     if config_device == "cuda":
         gpu = detect_gpu()
         if not gpu.available:
-            logger.warning("CUDA requested but not available, falling back to CPU")
-            return "cpu"
+            raise DeviceUnavailableError("CUDA requested but not available; no CPU degradation for explicit CUDA")
         return "cuda"
     # auto
     gpu = detect_gpu()
@@ -104,21 +106,21 @@ def select_device(config_device: str) -> str:
 def select_compute_type(requested: str, device: str) -> str:
     """Select safe compute type based on device.
 
-    For CPU, float16 is not well-supported, fallback to int8 or float32.
+    For CPU, float16 is not well-supported, so use an explicit CPU-safe type.
     """
+    if requested not in VALID_COMPUTE_TYPES:
+        raise InvalidTranscriptionConfigError(
+            message=f"Unsupported compute_type '{requested}'",
+            detail=f"Allowed values: {', '.join(VALID_COMPUTE_TYPES)}",
+        )
     if device == "cpu":
         # CPU doesn't support float16 well with CTranslate2
         if requested in ("float16", "int8_float16"):
-            logger.info(f"Compute type {requested} not ideal for CPU, using int8")
+            logger.info(f"Compute type {requested} is not supported for CPU; using int8")
             return "int8"
         return requested
 
-    # GPU supports all types
-    valid_types = ("float16", "int8_float16", "int8", "float32")
-    if requested in valid_types:
-        return requested
-    logger.warning(f"Unknown compute_type '{requested}', defaulting to float16")
-    return "float16"
+    return requested
 
 
 # Cached GPU info singleton
@@ -155,7 +157,7 @@ def wait_for_gpu_memory(
 
 
 def clear_gpu_cache() -> None:
-    """Best-effort release of cached CUDA memory after failed loads."""
+    """Attempt to release cached CUDA memory after failed loads."""
     try:
         import torch
 

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from audio_transcribe.config import get_config
-from audio_transcribe.errors import JobCancelledError
+from audio_transcribe.errors import JobCancelledError, TranscriptionError
 from audio_transcribe.jobs import get_job, update_job
 from audio_transcribe.observability import JobObserver
 from audio_transcribe.storage import (
@@ -108,7 +108,12 @@ async def process_job(job_id: str) -> None:
 
             from audio_transcribe.noise_reduction import create_noise_reducer
 
-            reducer = create_noise_reducer(enabled=True)
+            reducer = create_noise_reducer(
+                enabled=True,
+                backend=cfg.preprocessing.noise_reduction_backend,
+            )
+            if reducer is None:
+                raise RuntimeError("noise reduction stage started without a reducer")
             nr_output = processed_dir / "audio_nr.wav"
             audio_path = await asyncio.to_thread(reducer.process, audio_path, nr_output)
 
@@ -165,37 +170,12 @@ async def process_job(job_id: str) -> None:
         options = record.options
         queue = get_queue()
         all_transcript_segments: list[TranscriptSegment] = []
-        load_device = options.device
-        gpu_lease = None
-
-        if options.device in {"auto", "cuda"}:
-            try:
-                from audio_transcribe.resource_governor import request_audio_gpu_lease
-
-                gpu_lease = await request_audio_gpu_lease(
-                    job_id,
-                    model_name=options.model,
-                    duration_seconds=metadata.duration_seconds,
-                )
-                if not gpu_lease.granted:
-                    reason = gpu_lease.decision.reason
-                    if cfg.gpu_policy.cpu_fallback_enabled:
-                        load_device = "cpu"
-                        update_job(job_id, warning=f"GPU deferred by Resource Governor; using CPU fallback: {reason}")
-                    else:
-                        retry = min(gpu_lease.decision.retry_after_seconds or 10, 30)
-                        update_job(job_id, warning=f"GPU deferred by Resource Governor; waiting {retry}s: {reason}")
-                        await asyncio.sleep(retry)
-                        await gpu_lease.release()
-                        gpu_lease = await request_audio_gpu_lease(
-                            job_id,
-                            model_name=options.model,
-                            duration_seconds=metadata.duration_seconds,
-                        )
-                        if not gpu_lease.granted:
-                            raise RuntimeError(f"audio GPU lease denied: {gpu_lease.decision.reason}")
-            except Exception as exc:
-                logger.debug("Resource Governor audio lease skipped: %s", exc)
+        load_device, gpu_lease = await _select_load_device_with_resource_governor(
+            job_id,
+            options,
+            metadata.duration_seconds,
+            cfg,
+        )
 
         # Serialize model load and transcription so two jobs cannot race for VRAM.
         try:
@@ -516,6 +496,12 @@ async def _transcribe_segments(
         if cfg.performance.enable_segment_checkpoints:
             save_checkpoint(job_id, checkpoint)
 
+        if not success:
+            raise TranscriptionError(
+                message=f"Segment {seg.index} failed after {max_retries + 1} attempts",
+                detail=checkpoint.error or "",
+            )
+
         # Update progress
         processed_so_far += seg.duration
         if total_duration > 0:
@@ -523,3 +509,54 @@ async def _transcribe_segments(
             update_job(job_id, progress=progress, processed_duration=processed_so_far)
 
     return all_segments
+
+
+async def _select_load_device_with_resource_governor(
+    job_id: str,
+    options,
+    duration_seconds: float | None,
+    cfg,
+):
+    """Apply Resource Governor GPU lease decisions when that integration is configured."""
+    load_device = options.device
+    if options.device not in {"auto", "cuda"}:
+        return load_device, None
+
+    from audio_transcribe.resource_governor import (
+        is_resource_governor_configured,
+        request_audio_gpu_lease,
+    )
+
+    if not is_resource_governor_configured():
+        return load_device, None
+
+    gpu_lease = await request_audio_gpu_lease(
+        job_id,
+        model_name=options.model,
+        duration_seconds=duration_seconds,
+    )
+    if gpu_lease.granted:
+        return load_device, gpu_lease
+
+    reason = gpu_lease.decision.reason
+    if options.device == "cuda":
+        await gpu_lease.release()
+        raise RuntimeError(f"audio GPU lease denied: {reason}")
+
+    if options.device == "auto" and cfg.gpu_policy.allow_cpu_degradation:
+        await gpu_lease.release()
+        update_job(job_id, warning=f"GPU deferred by Resource Governor; using CPU degradation: {reason}")
+        return "cpu", None
+
+    retry = min(gpu_lease.decision.retry_after_seconds or 10, 30)
+    update_job(job_id, warning=f"GPU deferred by Resource Governor; waiting {retry}s: {reason}")
+    await asyncio.sleep(retry)
+    await gpu_lease.release()
+    gpu_lease = await request_audio_gpu_lease(
+        job_id,
+        model_name=options.model,
+        duration_seconds=duration_seconds,
+    )
+    if not gpu_lease.granted:
+        raise RuntimeError(f"audio GPU lease denied: {gpu_lease.decision.reason}")
+    return load_device, gpu_lease

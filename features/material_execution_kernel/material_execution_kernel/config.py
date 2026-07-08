@@ -83,7 +83,7 @@ class MaterialKernelSettings:
             "lanes": list(self.material_model_lanes),
             "prewarm_material_lanes": self.prewarm_material_lanes,
             "timeout_semantics": "no_progress_watchdog",
-            "static_fallback_allowed": False,
+            "static_generation_shortcut_allowed": False,
         }
 
 

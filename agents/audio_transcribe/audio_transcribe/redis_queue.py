@@ -1,7 +1,7 @@
-"""Redis-backed job queue — drop-in replacement for asyncio.Queue-based JobQueue.
+"""Redis-backed job queue for deployments that require external queue state.
 
-Uses redis.asyncio for non-blocking operations. Falls back to the in-memory
-asyncio queue if Redis is unavailable (graceful degradation).
+Uses redis.asyncio for non-blocking operations. When this backend is configured,
+Redis availability is required and connection failures are surfaced to callers.
 
 Config: Set AUDIO_TRANSCRIBE_REDIS_URL env var or redis_url in [jobs] config.
 """
@@ -162,11 +162,11 @@ class RedisJobQueue:
             observed_type = observed.decode("utf-8") if isinstance(observed, bytes) else str(observed)
             if observed_type in {"none", expected_type}:
                 continue
-            backup_key = f"{key}:legacy:{int(time.time())}"
+            backup_key = f"{key}:incompatible:{int(time.time())}"
             try:
                 await self._redis.rename(key, backup_key)
                 logger.warning(
-                    "RedisJobQueue preserved incompatible key %s type=%s expected=%s as %s",
+                    "RedisJobQueue quarantined incompatible key %s type=%s expected=%s as %s",
                     key,
                     observed_type,
                     expected_type,
@@ -174,7 +174,7 @@ class RedisJobQueue:
                 )
             except Exception as exc:
                 logger.error(
-                    "RedisJobQueue could not preserve incompatible key %s type=%s expected=%s: %s",
+                    "RedisJobQueue could not quarantine incompatible key %s type=%s expected=%s: %s",
                     key,
                     observed_type,
                     expected_type,

@@ -20,8 +20,8 @@ _CODE_EXTENSIONS = {
 }
 
 
-def _safe_run(cmd: list[str], cwd: str | None = None) -> str:
-    """Run a command safely, returning stdout or empty string."""
+def _run_git_read(cmd: list[str], cwd: str | None = None) -> tuple[str, str | None]:
+    """Run a read-only Git command and return stdout plus a structured error."""
     try:
         result = subprocess.run(
             cmd,
@@ -30,9 +30,16 @@ def _safe_run(cmd: list[str], cwd: str | None = None) -> str:
             timeout=5,
             cwd=cwd,
         )
-        return result.stdout.strip() if result.returncode == 0 else ""
-    except Exception:
-        return ""
+    except FileNotFoundError:
+        return "", "git_unavailable"
+    except subprocess.TimeoutExpired:
+        return "", "git_timeout"
+    except OSError as exc:
+        return "", f"git_os_error:{type(exc).__name__}"
+    if result.returncode != 0:
+        command = cmd[1] if len(cmd) > 1 else "unknown"
+        return "", f"git_{command}_failed:{result.returncode}"
+    return result.stdout.strip(), None
 
 
 def _find_git_repos(scan_paths: list[str], max_depth: int = 2) -> list[Path]:
@@ -72,8 +79,8 @@ def get_repo_status(repo_path: str | None = None) -> RepoStatusResponse:
         if not cwd:
             return RepoStatusResponse()
 
-    branch = _safe_run(["git", "branch", "--show-current"], cwd=cwd)
-    status_output = _safe_run(["git", "status", "--porcelain"], cwd=cwd)
+    branch, branch_error = _run_git_read(["git", "branch", "--show-current"], cwd=cwd)
+    status_output, status_error = _run_git_read(["git", "status", "--porcelain"], cwd=cwd)
 
     modified = []
     untracked = []
@@ -89,6 +96,7 @@ def get_repo_status(repo_path: str | None = None) -> RepoStatusResponse:
         branch=branch,
         modified_files=modified[:50],
         untracked_files=untracked[:20],
+        error=branch_error or status_error,
     )
 
 
@@ -100,13 +108,14 @@ def get_repo_context(query: str) -> str:
 
     repos = _find_git_repos(cfg.repo.scan_paths)
     if not repos:
-        return ""
+        return "## Repository\n\nRepo context unavailable: git_repository_not_found"
 
     # Build combined status for up to 5 repos
     all_parts: list[str] = []
     for repo_path in repos[:5]:
         status = get_repo_status(str(repo_path))
-        if not status.branch:
+        if status.error and not status.branch:
+            all_parts.append(f"## Repo: {repo_path.name}\n\nStatus unavailable: {status.error}")
             continue
         parts = [f"## Repo: {repo_path.name}\n\nBranch: `{status.branch}`"]
         if status.modified_files:

@@ -1,6 +1,6 @@
 """Material builder proposal logic.
 
-The current implementation intentionally has no static generation fallback.  It
+The current implementation intentionally has no static generation shortcut. It
 can validate explicit contract blueprints supplied by a caller, and otherwise
 returns a typed blocked state until an LLM proposal backend is wired through the
 material lanes.
@@ -58,7 +58,7 @@ def create_plan(request: MaterialPlanRequest) -> MaterialPlanResponse:
                 ),
                 details={
                     "task_id": request.task_id,
-                    "static_fallback_used": False,
+                    "static_generation_shortcut_used": False,
                     "required_capabilities": request.required_capabilities,
                 },
             )
@@ -91,7 +91,7 @@ def create_plan(request: MaterialPlanRequest) -> MaterialPlanResponse:
         plan=plan,
         generation_backend="contract_blueprint",
         file_contents={str(path): str(content) for path, content in dict(file_contents).items()},
-        notes=["contract_blueprint accepted; no static fallback project was used"],
+        notes=["contract_blueprint accepted; no static generation shortcut was used"],
     )
 
 
@@ -118,9 +118,9 @@ def repair_plan(request: MaterialPlanRepairRequest) -> MaterialPlanRepairRespons
         return MaterialPlanRepairResponse(
             plan=plan,
             generation_backend="contract_blueprint",
-            static_fallback_used=False,
+            static_generation_shortcut_used=False,
             notes=[
-                "contract_blueprint repair accepted; no static fallback project was used",
+                "contract_blueprint repair accepted; no static generation shortcut was used",
                 *completion_notes,
             ],
         )
@@ -135,7 +135,7 @@ def repair_plan(request: MaterialPlanRepairRequest) -> MaterialPlanRepairRespons
             details={
                 "task_id": request.task_id,
                 "session_id": request.session_id,
-                "static_fallback_used": False,
+                "static_generation_shortcut_used": False,
                 "coverage_issue_types": [issue.issue_type for issue in request.coverage_issues],
             },
         )
@@ -148,7 +148,7 @@ def repair_plan(request: MaterialPlanRepairRequest) -> MaterialPlanRepairRespons
         return MaterialPlanRepairResponse(
             plan=plan,
             generation_backend=response.generation_backend,
-            static_fallback_used=False,
+            static_generation_shortcut_used=False,
             notes=[*response.notes, *completion_notes],
             model_route=response.model_route,
         )
@@ -165,14 +165,14 @@ def generate_files(request: MaterialFileGenerationRequest) -> MaterialFileGenera
                     "material_builder has no LLM file generation backend configured and no "
                     "explicit file_contents were provided"
                 ),
-                details={"task_id": request.task_id, "static_fallback_used": False},
+                details={"task_id": request.task_id, "static_generation_shortcut_used": False},
         )
         try:
             files, lane_metrics = generate_files_with_llm(request, llm)
             return MaterialFileGenerationResponse(
                 files=files,
                 generation_backend="llm",
-                static_fallback_used=False,
+                static_generation_shortcut_used=False,
                 model_route=llm.route,
                 lane_metrics=lane_metrics,
             )
@@ -199,7 +199,7 @@ def generate_files(request: MaterialFileGenerationRequest) -> MaterialFileGenera
     return MaterialFileGenerationResponse(
         files=files,
         generation_backend="contract_blueprint",
-        static_fallback_used=False,
+        static_generation_shortcut_used=False,
     )
 
 
@@ -211,7 +211,7 @@ def propose_patch(request: MaterialPatchGenerationRequest) -> MaterialPatchGener
         return MaterialPatchGenerationResponse(
             patch_set=blueprint,
             generation_backend="contract_blueprint",
-            static_fallback_used=False,
+            static_generation_shortcut_used=False,
         )
     for blueprint in request.replacement_blueprints:
         if blueprint.issue_id != request.issue_id and blueprint.target_path != request.target_path:
@@ -222,20 +222,20 @@ def propose_patch(request: MaterialPatchGenerationRequest) -> MaterialPatchGener
                 "replacement blueprint target_path does not match the requested repair target",
                 details={"expected_path": request.target_path, "actual_path": blueprint.target_path},
             )
-        if blueprint.expected_old_sha256 != request.expected_old_sha256:
+        if blueprint.expected_current_sha256 != request.expected_current_sha256:
             raise MaterialBuilderBlocked(
                 "replacement_checksum_mismatch",
-                "replacement blueprint expected_old_sha256 does not match the current target hash",
+                "replacement blueprint expected_current_sha256 does not match the current target hash",
                 details={
                     "target_path": request.target_path,
-                    "expected_old_sha256": request.expected_old_sha256,
-                    "actual_old_sha256": blueprint.expected_old_sha256,
+                    "expected_current_sha256": request.expected_current_sha256,
+                    "actual_current_sha256": blueprint.expected_current_sha256,
                 },
             )
         return MaterialPatchGenerationResponse(
             replacement=blueprint,
             generation_backend="contract_blueprint",
-            static_fallback_used=False,
+            static_generation_shortcut_used=False,
         )
     for blueprint in request.regeneration_blueprints:
         if blueprint.issue_id != request.issue_id:
@@ -249,7 +249,7 @@ def propose_patch(request: MaterialPatchGenerationRequest) -> MaterialPatchGener
         return MaterialPatchGenerationResponse(
             regeneration=blueprint,
             generation_backend="contract_blueprint",
-            static_fallback_used=False,
+            static_generation_shortcut_used=False,
         )
     for blueprint in request.patch_blueprints:
         if blueprint.issue_id != request.issue_id and blueprint.target_path != request.target_path:
@@ -260,20 +260,20 @@ def propose_patch(request: MaterialPatchGenerationRequest) -> MaterialPatchGener
                 "patch blueprint target_path does not match the requested repair target",
                 details={"expected_path": request.target_path, "actual_path": blueprint.target_path},
             )
-        if blueprint.expected_old_sha256 != request.expected_old_sha256:
+        if blueprint.expected_current_sha256 != request.expected_current_sha256:
             raise MaterialBuilderBlocked(
                 "patch_checksum_mismatch",
-                "patch blueprint expected_old_sha256 does not match the current target hash",
+                "patch blueprint expected_current_sha256 does not match the current target hash",
                 details={
                     "target_path": request.target_path,
-                    "expected_old_sha256": request.expected_old_sha256,
-                    "actual_old_sha256": blueprint.expected_old_sha256,
+                    "expected_current_sha256": request.expected_current_sha256,
+                    "actual_current_sha256": blueprint.expected_current_sha256,
                 },
             )
         return MaterialPatchGenerationResponse(
             patch=blueprint,
             generation_backend="contract_blueprint",
-            static_fallback_used=False,
+            static_generation_shortcut_used=False,
         )
     if (
         request.patch_blueprints
@@ -294,7 +294,7 @@ def propose_patch(request: MaterialPatchGenerationRequest) -> MaterialPatchGener
                 "material_builder has no LLM patch proposal backend configured and no "
                 "explicit patch_blueprints were provided"
             ),
-            details={"task_id": request.task_id, "issue_id": request.issue_id, "static_fallback_used": False},
+            details={"task_id": request.task_id, "issue_id": request.issue_id, "static_generation_shortcut_used": False},
         )
     try:
         repair, lane_metrics = generate_patch_with_llm(request, llm)
@@ -302,7 +302,7 @@ def propose_patch(request: MaterialPatchGenerationRequest) -> MaterialPatchGener
             return MaterialPatchGenerationResponse(
                 replacement=repair,
                 generation_backend="llm",
-                static_fallback_used=False,
+                static_generation_shortcut_used=False,
                 model_route=llm.route,
                 lane_metrics=lane_metrics,
             )
@@ -310,14 +310,14 @@ def propose_patch(request: MaterialPatchGenerationRequest) -> MaterialPatchGener
             return MaterialPatchGenerationResponse(
                 patch_set=repair,
                 generation_backend="llm",
-                static_fallback_used=False,
+                static_generation_shortcut_used=False,
                 model_route=llm.route,
                 lane_metrics=lane_metrics,
             )
         return MaterialPatchGenerationResponse(
             patch=repair,
             generation_backend="llm",
-            static_fallback_used=False,
+            static_generation_shortcut_used=False,
             model_route=llm.route,
             lane_metrics=lane_metrics,
         )
@@ -331,7 +331,7 @@ def critique_repair(request: MaterialRepairCriticRequest) -> MaterialRepairCriti
         raise MaterialBuilderBlocked(
             "material_builder_critic_unavailable",
             "material_builder has no configured material critic lane",
-            details={"task_id": request.task_id, "issue_id": request.issue_id, "static_fallback_used": False},
+            details={"task_id": request.task_id, "issue_id": request.issue_id, "static_generation_shortcut_used": False},
         )
     try:
         return critique_repair_with_llm(request, llm)

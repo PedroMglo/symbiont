@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from orchestrator.capabilities.owner_capabilities import (
+    owner_context_sources_for_query,
+    owner_evidence_required_for_query,
+)
 from orchestrator.routing.path_intents import (
     is_code_path_request,
     is_extrator_path_request,
@@ -77,6 +81,9 @@ def context_sources_for_query(query: str, default_sources: list[str]) -> list[st
         return ["storage"]
 
     context_sources = list(default_sources)
+    for source in owner_context_sources_for_query(query):
+        if source not in context_sources:
+            context_sources.append(source)
     if is_extrator_path_request(query):
         context_sources = ["extrator"]
     elif is_code_path_request(query) or needs_repo_context(query):
@@ -92,4 +99,13 @@ def context_sources_for_query(query: str, default_sources: list[str]) -> list[st
 
 
 def requires_context_gather(query: str) -> bool:
-    return is_storage_request(query) or is_extrator_path_request(query) or needs_system_context(query)
+    return (
+        is_storage_request(query)
+        or is_extrator_path_request(query)
+        or needs_system_context(query)
+        or owner_evidence_required_for_query(query)
+    )
+
+
+def requires_local_evidence(query: str) -> bool:
+    return owner_evidence_required_for_query(query)

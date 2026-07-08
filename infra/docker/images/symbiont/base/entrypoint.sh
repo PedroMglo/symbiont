@@ -36,7 +36,7 @@ load_secrets() {
         esac
         case "$var_file" in
             SSL_CERT_FILE|AI_LOCAL_TLS_CERT_FILE|AI_LOCAL_TLS_KEY_FILE|AI_LOCAL_TLS_CA_CERT_FILE|\
-            AI_LOCAL_TLS_CA_KEY_FILE|AI_LOCAL_TLS_CA_BUNDLE_FILE)
+            AI_LOCAL_TLS_CA_KEY_FILE|AI_LOCAL_TLS_CA_BUNDLE_FILE|AI_TELEMETRY_AUTHORITY_CA_BUNDLE_FILE)
                 continue
                 ;;
         esac

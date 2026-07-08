@@ -30,6 +30,9 @@ EXCLUDED_DIR_NAMES = {
     "venv",
 }
 HIDDEN_BENCHMARK_FILES = {"GROUND_TRUTH.md", "EVALUATION.md"}
+GENERATED_ARTIFACT_MARKER_FILES = {"validation-evidence.txt"}
+GENERATED_ARTIFACT_MARKER_DIRS = {"__failure_snapshot__"}
+GENERATED_ARTIFACT_PREFIXES = ("failure-snapshot-",)
 
 DOCUMENT_EXTENSIONS = {
     ".doc",
@@ -228,8 +231,13 @@ def _inspect_workspace(
     max_excerpt_bytes: int,
 ) -> dict[str, Any]:
     artifact_root = str(expected_artifact_root or "").strip().strip("/").casefold()
-    top_level_entries = [entry.name for entry in _safe_iterdir(workspace)[:150]]
+    top_level_entries = [
+        entry.name
+        for entry in _safe_iterdir(workspace)[:150]
+        if not _should_skip_path(entry, artifact_root=artifact_root)
+    ]
     files, skipped = _bounded_files(workspace, artifact_root=artifact_root, max_depth=max_depth, max_files=max_files)
+    generated_artifact_paths = _generated_artifact_paths(workspace, artifact_root=artifact_root)
     detected_docs: list[str] = []
     detected_data: list[str] = []
     detected_config: list[str] = []
@@ -274,6 +282,7 @@ def _inspect_workspace(
         "detected_config_files": _dedupe(detected_config),
         "detected_test_files": _dedupe(detected_tests),
         "detected_docs": _dedupe(detected_docs),
+        "generated_artifact_paths": generated_artifact_paths,
         "large_or_skipped_paths": skipped,
         "git_status_summary": "not_collected",
         "risk_notes": [],
@@ -309,6 +318,7 @@ def _inspect_workspace(
             "max_files": max_files,
             "max_file_bytes": max_file_bytes,
             "max_excerpt_bytes": max_excerpt_bytes,
+            "expected_artifact_root": artifact_root,
         },
         "enrichment_plan": _enrichment_plan(detected_docs, detected_media),
         "evidence_summary": _evidence_summary(workspace_map, observations),
@@ -498,6 +508,42 @@ def _should_skip_path(path: Path, *, artifact_root: str) -> bool:
         return True
     if artifact_root and lower == artifact_root:
         return True
+    if _looks_like_generated_artifact_path(path, artifact_root=artifact_root):
+        return True
+    return False
+
+
+def _generated_artifact_paths(workspace: Path, *, artifact_root: str) -> list[str]:
+    paths: list[str] = []
+    for entry in _safe_iterdir(workspace):
+        if _looks_like_generated_artifact_path(entry, artifact_root=artifact_root):
+            paths.append(_relative_path(workspace, entry))
+    return _dedupe(paths)
+
+
+def _looks_like_generated_artifact_path(path: Path, *, artifact_root: str) -> bool:
+    lower = path.name.casefold()
+    if lower in GENERATED_ARTIFACT_MARKER_DIRS:
+        return True
+    if any(lower.startswith(prefix) for prefix in GENERATED_ARTIFACT_PREFIXES):
+        return True
+    if artifact_root and lower in {f"{artifact_root}.tar.gz", f"{artifact_root}.zip"}:
+        return True
+    if not path.is_dir():
+        return False
+    if any((path / marker).exists() for marker in GENERATED_ARTIFACT_MARKER_DIRS):
+        return True
+    has_validation_marker = any((path / marker).is_file() for marker in GENERATED_ARTIFACT_MARKER_FILES)
+    if not has_validation_marker or not (path / "README.md").is_file():
+        return False
+    for child in _safe_iterdir(path)[:50]:
+        if child.is_file() and child.suffix.casefold() in {".md", ".markdown", ".txt", ".json"}:
+            return True
+        if child.is_dir() and any(
+            grandchild.suffix.casefold() in {".md", ".markdown", ".txt", ".json"}
+            for grandchild in _safe_iterdir(child)[:20]
+        ):
+            return True
     return False
 
 

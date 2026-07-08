@@ -1,0 +1,11 @@
+$kind: http-request
+description: Paste the job id in the request path variable `job_id`.
+url: "{{rag_host_base_url}}/admin/jobs/:job_id"
+method: GET
+headers:
+  Authorization: Bearer {{rag_api_key}}
+pathVariables:
+  - key: job_id
+    value: paste-job-id-here
+    description: Paste the job_id returned by POST /admin/reprocess or GET /admin/jobs.
+order: 5000

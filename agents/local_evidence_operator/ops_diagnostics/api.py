@@ -74,8 +74,8 @@ def log_performance(request: OpsDiagnosticsRequest) -> OpsDiagnosticsResponse:
     limits = request.limits or {}
     report = build_log_performance_report(
         workspace,
-        previous_start=limits.get("previous_start"),
-        previous_end=limits.get("previous_end"),
+        baseline_start=limits.get("baseline_start"),
+        baseline_end=limits.get("baseline_end"),
         current_start=limits.get("current_start"),
         current_end=limits.get("current_end"),
         min_requests=int(limits.get("min_requests", 1000)),

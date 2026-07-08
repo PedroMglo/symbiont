@@ -11,7 +11,7 @@ from code_analysis.config import get_settings
 log = logging.getLogger(__name__)
 
 
-def _fallback_summary(item: dict) -> str:
+def _derived_summary(item: dict) -> str:
     parts: list[str] = []
     summaries = [str(s) for s in item.get("summaries", []) if s]
     god_nodes = [str(n) for n in item.get("god_nodes", []) if n]
@@ -51,17 +51,17 @@ def get_graph_context(query: str, budget_tokens: int = 2000) -> str:
         resp = httpx.post(url, json=payload, headers=headers, timeout=cfg.graph.timeout_seconds)
         if resp.status_code != 200:
             log.debug("Graph API: HTTP %d", resp.status_code)
-            return ""
+            return _unavailable_context(f"http_status_{resp.status_code}")
 
         data = resp.json()
         results = data.get("results", [])
         if not results:
-            return ""
+            return _unavailable_context("no_results")
 
         parts: list[str] = []
         for item in results:
             title = item.get("title") or item.get("repo", "")
-            summary = item.get("summary") or _fallback_summary(item)
+            summary = item.get("summary") or _derived_summary(item)
             if title:
                 parts.append(f"### {title}\n{summary}" if summary else f"### {title}")
 
@@ -69,4 +69,8 @@ def get_graph_context(query: str, budget_tokens: int = 2000) -> str:
 
     except Exception as exc:
         log.debug("Graph API: request failed: %s", exc)
-        return ""
+        return _unavailable_context(type(exc).__name__)
+
+
+def _unavailable_context(reason: str) -> str:
+    return f"## Knowledge Graph\n\nGraph context unavailable: {reason}"

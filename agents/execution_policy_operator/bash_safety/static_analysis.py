@@ -89,12 +89,14 @@ _DENIED_COMMANDS = frozenset({
     "zsh",
 })
 _SAFE_GIT_SUBCOMMANDS = frozenset({
-    "branch",
     "diff",
     "log",
     "rev-parse",
     "show",
     "status",
+})
+_SAFE_GIT_BRANCH_FLAGS = frozenset({
+    "--show-current",
 })
 _DENIED_PATH_MARKERS = (
     "/run/docker.sock",
@@ -120,27 +122,7 @@ _DENIED_TEXT_MARKERS = (
 _REDIRECTION_PATTERN = re.compile(r"(^|\s)([12]?>>?|<)($|\s)")
 _WORKSPACE_GENERATION_PROFILE = "workspace_generation"
 _WORKSPACE_GENERATION_MAX_COMMAND_LENGTH = 32000
-_WORKSPACE_GENERATION_DENIED_EXECUTABLES = frozenset({
-    "chgrp",
-    "chmod",
-    "chown",
-    "curl",
-    "dd",
-    "docker",
-    "eval",
-    "mkfs",
-    "mount",
-    "nc",
-    "rm",
-    "rsync",
-    "scp",
-    "ssh",
-    "su",
-    "sudo",
-    "umount",
-    "wget",
-    "wipefs",
-})
+_WORKSPACE_GENERATION_DENIED_EXECUTABLES = _DENIED_COMMANDS
 _WORKSPACE_GENERATION_HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 _WORKSPACE_GENERATION_SEGMENT_RE = re.compile(r"\s*(?:&&|\|\||[;|])\s*")
 
@@ -409,10 +391,15 @@ def _classify_command_segment(tokens: list[str]) -> tuple[str, str]:
         return "deny", f"command_not_allowlisted:{executable}"
 
     if executable == "git":
-        subcommand = next((token for token in tokens[1:] if not token.startswith("-")), "")
+        subcommand_index = next((index for index, token in enumerate(tokens[1:], 1) if not token.startswith("-")), 0)
+        subcommand = tokens[subcommand_index] if subcommand_index else ""
+        if subcommand == "branch":
+            if _git_branch_args_are_read_only(tokens[subcommand_index + 1 :]):
+                return "low", "read_only:git"
+            return "deny", "git_branch_mutation_or_unknown_denied"
         if subcommand not in _SAFE_GIT_SUBCOMMANDS:
             return "deny", f"git_subcommand_denied:{subcommand or 'missing'}"
-    if executable == "sed" and any(token == "-i" or token.startswith("-i") for token in tokens[1:]):
+    if executable == "sed" and any(token == "-i" or token.startswith("-i") for token in tokens[1:]):  # nosec B105 - command flag, not a password
         return "deny", "sed_in_place_denied"
     if executable == "find" and "-delete" in tokens:
         return "deny", "find_delete_denied"
@@ -426,6 +413,10 @@ def _classify_command_segment(tokens: list[str]) -> tuple[str, str]:
 def _max_command_risk(left: str, right: str) -> str:
     order = {"low": 0, "medium": 1, "high": 2, "deny": 3}
     return left if order[left] >= order[right] else right
+
+
+def _git_branch_args_are_read_only(args: list[str]) -> bool:
+    return all(token in _SAFE_GIT_BRANCH_FLAGS for token in args)
 
 
 def _command_deny(command: str, reason: str, markers: tuple[str, ...] | list[str] = ()) -> dict[str, Any]:
@@ -477,8 +468,6 @@ def _find_scripts(root: Path) -> list[Path]:
         if len(scripts) >= 40:
             break
         if not path.is_file():
-            continue
-        if path.name in {"GROUND_TRUTH.md", "EVALUATION.md"}:
             continue
         if path.suffix.lower() in _SCRIPT_SUFFIXES:
             scripts.append(path)

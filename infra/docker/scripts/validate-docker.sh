@@ -59,7 +59,7 @@ AI_LOCAL_BASE_TAG="${AI_LOCAL_BASE_TAG:-dev}"
 if "${DOCKER[@]}" image inspect "ai-local-base:${AI_LOCAL_BASE_TAG}" &>/dev/null 2>&1; then
     check "ai-local-base:${AI_LOCAL_BASE_TAG} exists" "ok"
 else
-    check "ai-local-base:${AI_LOCAL_BASE_TAG} exists" "NOT BUILT (run: make build-base)"
+    check "ai-local-base:${AI_LOCAL_BASE_TAG} exists" "NOT BUILT (run: make infra-build)"
 fi
 
 echo ""

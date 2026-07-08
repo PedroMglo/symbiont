@@ -250,7 +250,7 @@ def _repair_json_string_syntax(text: str) -> str:
     literal newlines or Markdown escape sequences such as ``\\.`` inside those
     strings. JSON requires control characters to be escaped and only permits a
     small set of backslash escapes. This pass is intentionally lexical: it does
-    not invent fields or fallback content; it only makes string tokens parseable.
+    not invent fields or canned content; it only makes string tokens parseable.
     """
 
     out: list[str] = []
@@ -341,7 +341,7 @@ def _call_governed_json(messages: list[dict[str, str]], llm: LLMSettings) -> LLM
             base_url=llm.base_url,
             temperature=llm.temperature,
             max_tokens=llm.max_tokens,
-            timeout=llm.timeout_seconds,
+            timeout=_llm_effective_timeout_seconds(llm),
             phase="material_builder.json",
             post=httpx.post,
         )
@@ -412,7 +412,7 @@ def _call_governed_json(messages: list[dict[str, str]], llm: LLMSettings) -> LLM
                 phase="material_builder.json_repair",
                 temperature=0.0,
                 max_tokens=llm.max_tokens,
-                timeout=llm.timeout_seconds,
+                timeout=_llm_effective_timeout_seconds(llm),
                 post=httpx.post,
             )
         except httpx.TimeoutException as repair_exc:
@@ -488,6 +488,18 @@ def _governed_chat_completion(
         ) from exc
 
 
+def _llm_effective_timeout_seconds(llm: LLMSettings) -> float:
+    values = [
+        float(getattr(llm, "timeout_seconds", 0.0) or 0.0),
+        float(getattr(llm, "no_progress_timeout_seconds", 0.0) or 0.0),
+        float(getattr(llm, "wall_budget_seconds", 0.0) or 0.0),
+    ]
+    positive = [value for value in values if value > 0]
+    if not positive:
+        return 1.0
+    return max(1.0, min(positive))
+
+
 def _estimate_message_tokens(messages: list[dict[str, str]]) -> int:
     text = "\n".join(str(message.get("content") or "") for message in messages)
     return _estimate_tokens(text)
@@ -523,8 +535,9 @@ def _lane_metrics(
         "timeout_seconds": llm.timeout_seconds,
         "no_progress_watchdog_seconds": llm.no_progress_timeout_seconds,
         "wall_budget_seconds": llm.wall_budget_seconds,
+        "effective_timeout_seconds": _llm_effective_timeout_seconds(llm),
         "timeout_reason": timeout_reason,
-        "static_fallback_used": False,
+        "static_generation_shortcut_used": False,
     }
 
 
@@ -554,11 +567,7 @@ def _merge_lane_metrics(*items: dict[str, Any]) -> dict[str, Any]:
         "no_progress_watchdog_seconds": metrics[0].get("no_progress_watchdog_seconds"),
         "wall_budget_seconds": metrics[0].get("wall_budget_seconds"),
         "timeout_reason": next((item.get("timeout_reason") for item in metrics if item.get("timeout_reason")), None),
-        "static_fallback_used": any(bool(item.get("static_fallback_used")) for item in metrics),
-        "static_fallback_reason": next(
-            (item.get("static_fallback_reason") for item in metrics if item.get("static_fallback_reason")),
-            None,
-        ),
+        "static_generation_shortcut_used": any(bool(item.get("static_generation_shortcut_used")) for item in metrics),
         "path_override_used": any(bool(item.get("path_override_used")) for item in metrics),
         "path_override_reason": next(
             (item.get("path_override_reason") for item in metrics if item.get("path_override_reason")),
@@ -645,8 +654,8 @@ def _normalize_plan_payload(payload: dict[str, Any], *, expected_project_root: s
             input_path = str(normalized_file.get("path") or "")
             normalized_file["path"] = _replace_plan_path_root(
                 normalized_file.get("path"),
-                old_root=source_root_for_rename,
-                new_root=expected_root,
+                source_root=source_root_for_rename,
+                target_root=expected_root,
             )
             normalized_file["path"] = _normalize_plan_path(
                 normalized_file.get("path"),
@@ -679,7 +688,7 @@ def _normalize_plan_payload(payload: dict[str, Any], *, expected_project_root: s
                 depends_on = normalized_file["depends_on"]
                 if expected_root:
                     depends_on = [
-                        _replace_plan_path_root(path, old_root=source_root_for_rename, new_root=expected_root)
+                        _replace_plan_path_root(path, source_root=source_root_for_rename, target_root=expected_root)
                         for path in depends_on
                     ]
                 normalized_file["depends_on"] = _normalize_plan_paths(
@@ -786,17 +795,17 @@ def _normalize_plan_payload(payload: dict[str, Any], *, expected_project_root: s
     return normalized
 
 
-def _replace_plan_path_root(value: Any, *, old_root: str, new_root: str) -> Any:
-    if not old_root or not new_root or old_root == new_root:
+def _replace_plan_path_root(value: Any, *, source_root: str, target_root: str) -> Any:
+    if not source_root or not target_root or source_root == target_root:
         return value
     path = str(value or "").strip().strip("/").replace("\\", "/")
-    if path == old_root:
-        return new_root
-    if path.startswith(f"{old_root}/"):
-        suffix = path[len(old_root) + 1 :]
-        if suffix == new_root or suffix.startswith(f"{new_root}/"):
+    if path == source_root:
+        return target_root
+    if path.startswith(f"{source_root}/"):
+        suffix = path[len(source_root) + 1 :]
+        if suffix == target_root or suffix.startswith(f"{target_root}/"):
             return suffix
-        return f"{new_root}/{suffix}"
+        return f"{target_root}/{suffix}"
     return value
 
 
@@ -1099,7 +1108,7 @@ def _normalize_plan_requirement_refs(
                     project_root=project_root,
                     path_renames=path_renames,
                     path_requirement_refs=path_requirement_refs,
-                    fallback_refs=inferred_refs,
+                    default_refs=inferred_refs,
                 )
             refs_for_path = file_entry.get("requirement_refs")
             if not isinstance(refs_for_path, list) or not refs_for_path:
@@ -1121,7 +1130,7 @@ def _normalize_plan_requirement_refs(
                 project_root=project_root,
                 path_renames=path_renames,
                 path_requirement_refs=path_requirement_refs,
-                fallback_refs=_infer_requirement_refs_for_entry(
+                default_refs=_infer_requirement_refs_for_entry(
                     item,
                     requirement_ids=requirement_ids,
                     requirement_catalog=requirement_catalog,
@@ -1139,7 +1148,7 @@ def _normalize_plan_requirement_refs(
                 project_root=project_root,
                 path_renames=path_renames,
                 path_requirement_refs=path_requirement_refs,
-                fallback_refs=requirement_ids,
+                default_refs=requirement_ids,
             )
     dependency_strategy = plan.get("dependency_strategy")
     if isinstance(dependency_strategy, dict) and isinstance(dependency_strategy.get("requirement_refs"), list):
@@ -1150,7 +1159,7 @@ def _normalize_plan_requirement_refs(
             project_root=project_root,
             path_renames=path_renames,
             path_requirement_refs=path_requirement_refs,
-            fallback_refs=requirement_ids,
+            default_refs=requirement_ids,
         )
     return plan
 
@@ -1181,7 +1190,7 @@ def _normalize_requirement_refs(
     project_root: str,
     path_renames: dict[str, str] | None,
     path_requirement_refs: dict[str, list[str]],
-    fallback_refs: list[str] | None = None,
+    default_refs: list[str] | None = None,
 ) -> list[str]:
     normalized: list[str] = []
     for value in values:
@@ -1204,8 +1213,8 @@ def _normalize_requirement_refs(
                 requirement_catalog=requirement_catalog,
             )
         )
-    if not normalized and fallback_refs:
-        normalized.extend(ref for ref in fallback_refs if ref in requirement_ids)
+    if not normalized and default_refs:
+        normalized.extend(ref for ref in default_refs if ref in requirement_ids)
     return _dedupe_strings([ref for ref in normalized if ref in requirement_ids])
 
 
@@ -1532,7 +1541,7 @@ def _normalize_patch_payload(payload: dict[str, Any], *, request: MaterialPatchG
     normalized_patch = dict(patch_payload)
     target_path = request.target_path
     normalized_patch["target_path"] = target_path
-    normalized_patch["expected_old_sha256"] = request.expected_old_sha256
+    normalized_patch["expected_current_sha256"] = request.expected_current_sha256
     diff = normalized_patch.get("unified_diff")
     if isinstance(diff, str):
         normalized_patch["unified_diff"] = _canonical_single_target_diff(diff, target_path=target_path)
@@ -1548,7 +1557,7 @@ def _normalize_replacement_payload_shape(
 ) -> dict[str, Any]:
     normalized = dict(payload)
     normalized["target_path"] = request.target_path
-    normalized["expected_old_sha256"] = request.expected_old_sha256
+    normalized["expected_current_sha256"] = request.expected_current_sha256
     if not isinstance(normalized.get("replacement_content"), str):
         content = normalized.get("content")
         if isinstance(content, list):
@@ -1561,21 +1570,21 @@ def _normalize_replacement_payload_shape(
 def _canonical_single_target_diff(diff: str, *, target_path: str) -> str:
     if "@@" not in diff:
         return diff
-    old_header = f"--- a/{target_path}"
-    new_header = f"+++ b/{target_path}"
+    source_header = f"--- a/{target_path}"
+    target_header = f"+++ b/{target_path}"
     if "--- " not in diff and "+++ " not in diff:
-        return f"{old_header}\n{new_header}\n{diff}"
+        return f"{source_header}\n{target_header}\n{diff}"
     lines = diff.splitlines()
-    replaced_old = False
-    replaced_new = False
+    replaced_source_header = False
+    replaced_target_header = False
     for index, line in enumerate(lines):
-        if line.startswith("--- ") and not replaced_old:
-            lines[index] = old_header
-            replaced_old = True
+        if line.startswith("--- ") and not replaced_source_header:
+            lines[index] = source_header
+            replaced_source_header = True
             continue
-        if line.startswith("+++ ") and not replaced_new:
-            lines[index] = new_header
-            replaced_new = True
+        if line.startswith("+++ ") and not replaced_target_header:
+            lines[index] = target_header
+            replaced_target_header = True
     return "\n".join(lines) + ("\n" if diff.endswith("\n") else "")
 
 
@@ -1621,7 +1630,7 @@ def _repair_plan_invalid_response(
             phase="material_builder.plan_response_repair",
             temperature=0.0,
             max_tokens=llm.max_tokens,
-            timeout=llm.timeout_seconds,
+            timeout=_llm_effective_timeout_seconds(llm),
             post=httpx.post,
         )
     except Exception as exc:
@@ -1675,7 +1684,7 @@ def _repair_plan_schema_payload(
             phase="material_builder.plan_schema_repair",
             temperature=0.0,
             max_tokens=llm.max_tokens,
-            timeout=llm.timeout_seconds,
+            timeout=_llm_effective_timeout_seconds(llm),
             post=httpx.post,
         )
     except Exception as exc:
@@ -1690,414 +1699,6 @@ def _repair_plan_schema_payload(
     except MaterialLLMError as exc:
         exc.details["response_excerpt"] = _compact_text(repaired, 1000)
         raise
-
-
-def _complete_sparse_plan_payload(
-    payload: dict[str, Any],
-    *,
-    request: MaterialPlanRequest,
-    validation_error: ValidationError,
-) -> dict[str, Any] | None:
-    plan_payload = payload.get("plan", payload)
-    if not isinstance(plan_payload, dict):
-        return None
-    existing_files = plan_payload.get("files")
-    project_root = (
-        _expected_project_root_for_plan_request(request)
-        or _normalize_expected_project_root(str(plan_payload.get("project_root") or ""))
-        or _project_root_from_payload_paths(existing_files)
-    )
-    if not project_root:
-        return None
-    if isinstance(existing_files, list) and existing_files:
-        if not _validation_missing_required_field(validation_error, "project_root"):
-            return None
-        completed = dict(plan_payload)
-        completed["project_root"] = project_root
-        return _normalize_file_kinds(
-            _normalize_plan_payload(
-                completed,
-                expected_project_root=project_root,
-            )
-        )
-    if not _validation_missing_required_field(validation_error, "files"):
-        return None
-    synthesized = _structural_plan_payload_from_request(
-        request,
-        project_root=project_root,
-        seed_payload=plan_payload,
-    )
-    return _normalize_file_kinds(
-        _normalize_plan_payload(
-            synthesized,
-            expected_project_root=project_root,
-        )
-    )
-
-
-def _structural_plan_payload_for_request(request: MaterialPlanRequest) -> dict[str, Any] | None:
-    project_root = _expected_project_root_for_plan_request(request)
-    if not project_root:
-        return None
-    return _normalize_file_kinds(
-        _normalize_plan_payload(
-            _structural_plan_payload_from_request(
-                request,
-                project_root=project_root,
-                seed_payload={},
-            ),
-            expected_project_root=project_root,
-        )
-    )
-
-
-def _structural_plan_preflight_payload(request: MaterialPlanRequest) -> dict[str, Any] | None:
-    documentation_payload = _documentation_plan_payload_from_evidence(request)
-    if documentation_payload is not None:
-        return documentation_payload
-    if not _explicit_python_material_request(request):
-        return None
-    return _structural_plan_payload_for_request(request)
-
-
-def _documentation_plan_payload_from_evidence(request: MaterialPlanRequest) -> dict[str, Any] | None:
-    project_root = _expected_project_root_for_plan_request(request)
-    if not project_root:
-        return None
-    capabilities = _normalized_capabilities(request)
-    query = " ".join(
-        str(value or "")
-        for value in (
-            request.working_query,
-            request.original_query,
-            " ".join(request.required_capabilities),
-        )
-    ).casefold()
-    if "python" in capabilities or "python" in query:
-        return None
-    if not _query_requests_folder_documentation(query, capabilities):
-        return None
-    evidence = request.constraints.get("evidence_context")
-    if not isinstance(evidence, dict):
-        return None
-    workspace_map = evidence.get("workspace_map")
-    if not isinstance(workspace_map, dict):
-        return None
-    subject_entries = _documentation_subject_entries(workspace_map.get("top_level_entries"))
-    if not subject_entries:
-        return None
-
-    files_by_subject = _evidence_files_by_subject(evidence, subject_entries)
-    file_observations_by_subject = _evidence_file_observations_by_subject(evidence, subject_entries)
-    enrichment_plan = _evidence_enrichment_plan(evidence)
-    enrichment_by_subject = _evidence_enrichment_by_subject(enrichment_plan, subject_entries)
-    enrichment_results = _evidence_enrichment_results(evidence)
-    enrichment_results_by_subject = _evidence_enrichment_results_by_subject(enrichment_results, subject_entries)
-    output_language = _documentation_target_language_from_request(request)
-    requirements: list[dict[str, Any]] = [
-        {
-            "requirement_id": "req:artifact",
-            "description": "Produce the requested documentation artifact.",
-            "source": "user",
-            "capability_refs": ["artifact"],
-        },
-        {
-            "requirement_id": "req:docs",
-            "description": "Create organized documentation grounded in observed local evidence.",
-            "source": "user",
-            "capability_refs": ["docs"],
-        },
-        {
-            "requirement_id": "req:evidence",
-            "description": "Record the read-only evidence and validation limitations used to build the documentation.",
-            "source": "derived",
-            "capability_refs": ["artifact"],
-        },
-        {
-            "requirement_id": "req:enrichment",
-            "description": "Record any specialist enrichment tasks needed for file types that require owned extraction or transcription capabilities.",
-            "source": "derived",
-            "capability_refs": ["artifact"],
-        },
-    ]
-    files: list[dict[str, Any]] = [
-        {
-            "path": f"{project_root}/README.md",
-            "purpose": (
-                "Documentation index for the inspected workspace. Include the inspected path, evidence summary, "
-                "observed top-level folders, generated documentation map, validation status, and limitations."
-            ),
-            "kind": "markdown",
-            "max_tokens": 2200,
-            "prefer_chunked": False,
-            "depends_on": [],
-            "requirement_refs": ["req:artifact", "req:docs", "req:evidence"],
-            "contract_refs": [],
-        }
-    ]
-    file_refs = [files[0]["path"]]
-    for index, entry in enumerate(subject_entries, start=1):
-        slug = _documentation_entry_slug(entry, used={Path(path).stem for path in file_refs})
-        requirement_id = f"req:subject:{slug}"
-        requirements.append(
-            {
-                "requirement_id": requirement_id,
-                "description": f"Document the observed top-level folder {entry!r}.",
-                "source": "derived",
-                "capability_refs": ["docs"],
-            }
-        )
-        evidence_files = files_by_subject.get(entry, [])
-        evidence_observations_json = _documentation_observation_json_for_purpose(
-            file_observations_by_subject.get(entry, [])
-        )
-        enrichment_json = _documentation_enrichment_json_for_purpose(
-            enrichment_by_subject.get(entry, [])
-        )
-        enrichment_results_json = _documentation_enrichment_results_json_for_purpose(
-            enrichment_results_by_subject.get(entry, [])
-        )
-        inventory_json = _documentation_inventory_json_for_purpose(evidence_files)
-        purpose = _documentation_subject_purpose(
-            entry=entry,
-            evidence_files=evidence_files,
-            inventory_json=inventory_json,
-            evidence_observations_json=evidence_observations_json,
-            enrichment_json=enrichment_json,
-            enrichment_results_json=enrichment_results_json,
-        )
-        files.append(
-            {
-                "path": f"{project_root}/subfolders/{index:02d}-{slug}.md",
-                "purpose": purpose,
-                "kind": "markdown",
-                "max_tokens": 2600,
-                "prefer_chunked": False,
-                "depends_on": [],
-                "requirement_refs": ["req:docs", "req:enrichment", requirement_id],
-                "contract_refs": [],
-            }
-        )
-        file_refs.append(files[-1]["path"])
-    files.append(
-        {
-            "path": f"{project_root}/validation-evidence.txt",
-            "purpose": (
-                "Validation and evidence log. Include the read-only commands, inspected workspace, files sampled, "
-                "Storage Guardian publication note, and known limitations."
-            ),
-            "kind": "text",
-            "max_tokens": 1800,
-            "prefer_chunked": False,
-            "depends_on": [],
-            "requirement_refs": ["req:artifact", "req:evidence"],
-            "contract_refs": [],
-        }
-    )
-    file_refs.append(files[-1]["path"])
-    detected_docs = _filter_subject_paths(workspace_map.get("detected_docs"), subject_entries)
-    detected_data_config = _filter_subject_paths(
-        [*workspace_map.get("detected_data_files", []), *workspace_map.get("detected_config_files", [])],
-        subject_entries,
-    )
-    architecture_notes = [
-        "Documentation plan derived from read-only evidence_context; no scenario-specific path assumptions were used.",
-        f"Output language: {output_language}",
-        f"Inspected workspace: {evidence.get('workspace') or workspace_map.get('root') or 'unknown'}",
-        f"Evidence summary: {_compact_text(str(evidence.get('evidence_summary') or ''), 900)}",
-        f"Commands: {_compact_text('; '.join(str(item) for item in evidence.get('commands', []) if item), 900)}",
-        f"File observations: {len(evidence.get('file_observations') or []) if isinstance(evidence.get('file_observations'), list) else 0}",
-        f"Enrichment plan: {_documentation_enrichment_summary_for_notes(enrichment_plan)}",
-        f"Enrichment results: {_documentation_enrichment_result_summary_for_notes(enrichment_results)}",
-        f"Detected docs: {_compact_text('; '.join(detected_docs), 900)}",
-        f"Detected data/config: {_compact_text('; '.join(detected_data_config), 900)}",
-    ]
-    plan = {
-        "schema_version": "material_plan.v3.2",
-        "project_root": project_root,
-        "requirements": requirements,
-        "files": files,
-        "intended_interfaces": [],
-        "required_validation_profiles": [],
-        "optional_validation_profiles": [],
-        "validation_commands": {},
-        "artifact_expectations": [
-            {
-                "artifact_id": "artifact:documentation",
-                "root": project_root,
-                "purpose": "Packaged documentation output grounded in read-only workspace evidence.",
-                "requirement_refs": ["req:artifact", "req:docs"],
-                "file_refs": file_refs,
-            }
-        ],
-        "completion_criteria": [
-            {
-                "criterion_id": "criterion:documented-subfolders",
-                "description": "The documentation index, per-folder pages, and validation evidence are materialized.",
-                "requirement_refs": [item["requirement_id"] for item in requirements],
-                "validation_refs": [],
-                "artifact_refs": ["artifact:documentation"],
-                "contract_refs": [],
-            }
-        ],
-        "dependency_strategy": {
-            "declared_dependency_files": [],
-            "external_dependencies": [],
-            "install_profiles": [],
-            "lockfiles": [],
-            "native_builds_required": False,
-            "network_required": "none",
-            "requirement_refs": ["req:artifact", "req:docs"],
-            "contract_refs": [],
-        },
-        "architecture_notes": architecture_notes,
-        "variation_reason": "evidence-grounded documentation plan from observed workspace entries",
-    }
-    return _normalize_file_kinds(_normalize_plan_payload(plan, expected_project_root=project_root))
-
-
-def _query_requests_folder_documentation(query: str, capabilities: set[str]) -> bool:
-    if "docs" in capabilities:
-        return True
-    documentation_markers = (
-        "documentation",
-        "documentacao",
-        "documentação",
-        "document ",
-        "documentar",
-        "docs",
-        "readme",
-        "relatorio",
-        "relatório",
-    )
-    folder_markers = (
-        "folder",
-        "folders",
-        "subfolder",
-        "subfolders",
-        "directory",
-        "directories",
-        "pasta",
-        "pastas",
-        "subpasta",
-        "subpastas",
-    )
-    return any(marker in query for marker in documentation_markers) and any(marker in query for marker in folder_markers)
-
-
-def _documentation_target_language_from_request(request: MaterialPlanRequest) -> str:
-    candidates: list[object] = [
-        request.original_language,
-        request.language_context.get("response_language"),
-        request.language_context.get("original_language"),
-        request.language_context.get("user_language"),
-    ]
-    for candidate in candidates:
-        value = str(candidate or "").strip()
-        if not value:
-            continue
-        lowered = value.casefold()
-        if lowered.startswith("pt") or "portugu" in lowered:
-            return "pt-PT"
-        return value[:32]
-    return "en"
-
-
-def _documentation_subject_entries(raw_entries: object) -> list[str]:
-    if not isinstance(raw_entries, list):
-        return []
-    subjects: list[str] = []
-    excluded_names = {"docs", ".ai-local", ".git", "__pycache__"}
-    skipped_prefixes = ("task_", "failure-snapshot-")
-    for item in raw_entries:
-        name = str(item or "").strip().strip("/")
-        if not name or "/" in name:
-            continue
-        lower = name.casefold()
-        if lower in excluded_names or any(lower.startswith(prefix) for prefix in skipped_prefixes):
-            continue
-        if Path(name).suffix:
-            continue
-        subjects.append(name)
-    return _dedupe_strings(subjects[:40])
-
-
-def _evidence_files_by_subject(evidence: dict[str, Any], subjects: list[str]) -> dict[str, list[str]]:
-    workspace_map = evidence.get("workspace_map") if isinstance(evidence.get("workspace_map"), dict) else {}
-    values: list[str] = []
-    for key in (
-        "relevant_files",
-        "detected_docs",
-        "detected_data_files",
-        "detected_config_files",
-        "detected_test_files",
-    ):
-        source = evidence.get(key) if key == "relevant_files" else workspace_map.get(key)
-        if isinstance(source, list):
-            values.extend(str(item).strip() for item in source if str(item).strip())
-    result: dict[str, list[str]] = {subject: [] for subject in subjects}
-    for path in _dedupe_strings(values):
-        normalized = path.strip().lstrip("./")
-        for subject in subjects:
-            if normalized == subject or normalized.startswith(f"{subject}/"):
-                result[subject].append(normalized)
-                break
-    return {subject: files[:200] for subject, files in result.items()}
-
-
-def _evidence_file_observations_by_subject(evidence: dict[str, Any], subjects: list[str]) -> dict[str, list[dict[str, Any]]]:
-    raw_observations = evidence.get("file_observations")
-    if not isinstance(raw_observations, list):
-        return {subject: [] for subject in subjects}
-    result: dict[str, list[dict[str, Any]]] = {subject: [] for subject in subjects}
-    for raw in raw_observations:
-        if not isinstance(raw, dict):
-            continue
-        path = str(raw.get("path") or "").strip().lstrip("./")
-        if not path:
-            continue
-        for subject in subjects:
-            if path == subject or path.startswith(f"{subject}/"):
-                result[subject].append(_compact_file_observation(raw))
-                break
-    return {subject: values[:16] for subject, values in result.items()}
-
-
-def _evidence_enrichment_plan(evidence: dict[str, Any]) -> list[dict[str, Any]]:
-    raw_plan = evidence.get("enrichment_plan")
-    if not isinstance(raw_plan, list):
-        return []
-    tasks: list[dict[str, Any]] = []
-    for raw in raw_plan:
-        if not isinstance(raw, dict):
-            continue
-        provider = str(raw.get("provider") or "").strip()
-        capability = str(raw.get("capability") or "").strip()
-        raw_paths = raw.get("input_paths")
-        paths = [
-            str(path).strip().lstrip("./")
-            for path in raw_paths
-            if str(path).strip()
-        ] if isinstance(raw_paths, list) else []
-        if not provider or not capability or not paths:
-            continue
-        expected = raw.get("expected_evidence_types")
-        tasks.append(
-            {
-                "provider": provider,
-                "capability": capability,
-                "input_paths": _dedupe_strings(paths)[:25],
-                "reason": str(raw.get("reason") or "").strip(),
-                "execution_mode": str(raw.get("execution_mode") or "deferred").strip() or "deferred",
-                "expected_evidence_types": [
-                    str(item).strip()
-                    for item in expected[:8]
-                    if str(item).strip()
-                ] if isinstance(expected, list) else [],
-            }
-        )
-    return tasks[:12]
-
 
 def _documentation_subject_purpose(
     *,
@@ -2134,14 +1735,16 @@ def _documentation_subject_purpose(
         results_json: str,
     ) -> str:
         observed_files = _documentation_representative_files_for_purpose(evidence_files, limit=observed_limit)
+        required_anchors = _documentation_required_anchor_paths_for_purpose(evidence_files)
         return (
-            f"Documentation page for observed top-level folder {entry!r}. "
-            "Summarize observed files, evidence, specialist enrichment state, limitations, and next steps. "
+            f"Documentation page for observed source area {entry!r}. "
+            "Summarize observed files, readable content evidence, limitations, and next steps. "
+            f"Required source path anchors: {required_anchors or 'none'}. "
             f"Observed files: {observed_files or 'no nested files were sampled'}. "
             f"Inventory JSON: {inventory_payload or '{}'}. "
             f"Evidence observations JSON: {observations_json}. "
-            f"Specialist enrichment JSON: {tasks_json}. "
-            f"Specialist enrichment results JSON: {results_json}."
+            f"Content evidence tasks JSON: {tasks_json}. "
+            f"Content evidence results JSON: {results_json}."
         )
 
     candidates = [
@@ -2188,36 +1791,16 @@ def _documentation_subject_purpose(
             return purpose
 
     purpose = (
-        f"Documentation page for observed top-level folder {entry!r}. "
-        "Summarize observed files, evidence, specialist enrichment state, limitations, and next steps. "
+        f"Documentation page for observed source area {entry!r}. "
+        "Summarize observed files, readable content evidence, limitations, and next steps. "
+        f"Required source path anchors: {_documentation_required_anchor_paths_for_purpose(evidence_files) or 'none'}. "
         f"Observed files: {_documentation_representative_files_for_purpose(evidence_files, limit=100) or 'no nested files were sampled'}. "
         "Inventory JSON: {}. "
         "Evidence observations JSON: []. "
-        "Specialist enrichment JSON: []. "
-        "Specialist enrichment results JSON: []."
+        "Content evidence tasks JSON: []. "
+        "Content evidence results JSON: []."
     )
     return purpose[:DOCUMENTATION_PURPOSE_LIMIT]
-
-
-def _evidence_enrichment_by_subject(
-    tasks: list[dict[str, Any]],
-    subjects: list[str],
-) -> dict[str, list[dict[str, Any]]]:
-    result: dict[str, list[dict[str, Any]]] = {subject: [] for subject in subjects}
-    for task in tasks:
-        paths = [str(path).strip().lstrip("./") for path in task.get("input_paths", []) if str(path).strip()]
-        for subject in subjects:
-            subject_paths = [
-                display_path
-                for path in paths
-                if (display_path := _documentation_subject_relative_path(path, subject))
-            ]
-            if not subject_paths:
-                continue
-            compact = dict(task)
-            compact["input_paths"] = subject_paths[:12]
-            result[subject].append(compact)
-    return {subject: values[:8] for subject, values in result.items()}
 
 
 def _documentation_enrichment_json_for_purpose(tasks: list[dict[str, Any]]) -> str:
@@ -2230,19 +1813,6 @@ def _documentation_enrichment_json_for_purpose(tasks: list[dict[str, Any]]) -> s
         }
         compact.append(item)
     return json.dumps(compact, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def _documentation_enrichment_summary_for_notes(tasks: list[dict[str, Any]]) -> str:
-    if not tasks:
-        return "none"
-    parts: list[str] = []
-    for task in tasks[:8]:
-        provider = str(task.get("provider") or "").strip()
-        capability = str(task.get("capability") or "").strip()
-        count = len(task.get("input_paths") or [])
-        if provider and capability and count:
-            parts.append(f"{provider}.{capability}={count}")
-    return _compact_text("; ".join(parts) or "none", 900)
 
 
 def _evidence_enrichment_results(evidence: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2613,39 +2183,6 @@ def _compact_semantic_digest_for_documentation(value: Any) -> dict[str, Any]:
     return {key: item for key, item in compact.items() if item not in ({}, [], "")}
 
 
-def _documentation_enrichment_result_summary_for_notes(results: list[dict[str, Any]]) -> str:
-    if not results:
-        return "none"
-    counts: dict[tuple[str, str, str], int] = {}
-    for result in results:
-        provider = str(result.get("provider") or "").strip()
-        capability = str(result.get("capability") or "").strip()
-        status = str(result.get("status") or "").strip() or "unknown"
-        if provider and capability:
-            count = len(result.get("input_paths") or []) or 1
-            key = (provider, capability, status)
-            counts[key] = counts.get(key, 0) + count
-    parts = [
-        f"{provider}.{capability}:{status}={count}"
-        for (provider, capability, status), count in counts.items()
-    ]
-    return _compact_text("; ".join(parts) or "none", 900)
-
-
-def _filter_subject_paths(raw_values: object, subjects: list[str]) -> list[str]:
-    if not isinstance(raw_values, list):
-        return []
-    result: list[str] = []
-    for item in raw_values:
-        path = str(item or "").strip().lstrip("./")
-        for subject in subjects:
-            display_path = _documentation_subject_relative_path(path, subject)
-            if display_path:
-                result.append(display_path)
-                break
-    return _dedupe_strings(result)
-
-
 def _documentation_subject_relative_path(path: str, subject: str) -> str:
     normalized_path = _documentation_normalized_path_segments(path)
     normalized_subject = _documentation_normalized_path_segments(subject)
@@ -2792,51 +2329,13 @@ def _documentation_representative_files_for_purpose(files: list[str], *, limit: 
     return _documentation_observed_files_for_purpose(selected, limit=limit)
 
 
-def _documentation_entry_slug(entry: str, *, used: set[str]) -> str:
-    normalized = unicodedata.normalize("NFKD", entry).encode("ascii", "ignore").decode("ascii")
-    slug = re.sub(r"[^A-Za-z0-9]+", "-", normalized.casefold()).strip("-")
-    if not slug:
-        slug = "entry"
-    base = slug
-    counter = 2
-    while slug in used:
-        slug = f"{base}-{counter}"
-        counter += 1
-    used.add(slug)
-    return slug
-
-
-def _explicit_python_material_request(request: MaterialPlanRequest) -> bool:
-    if not _expected_project_root_for_plan_request(request):
-        return False
-    capabilities = _normalized_capabilities(request)
-    query = " ".join(
-        str(value or "")
-        for value in (
-            request.working_query,
-            request.original_query,
-            " ".join(request.required_capabilities),
-        )
-    ).casefold()
-    wants_python = "python" in capabilities or "python" in query
-    if not wants_python:
-        return False
-    signals = {
-        "cli": bool({"cli"} & capabilities) or "--help" in query or "console script" in query,
-        "tests": bool({"tests", "test"} & capabilities) or "pytest" in query or "test" in query,
-        "packaging": "pyproject" in query or ".tar.gz" in query or "packag" in query or "empacot" in query,
-        "docs": "readme" in query or "documentation" in query,
-        "evidence": "validation-evidence" in query or "evidence" in query or "valida" in query,
-    }
-    return sum(1 for matched in signals.values() if matched) >= 3
-
-
-def _validation_missing_required_field(error: ValidationError, field_name: str) -> bool:
-    for item in error.errors(include_url=False):
-        loc = tuple(str(part) for part in item.get("loc", ()))
-        if loc == (field_name,) and item.get("type") == "missing":
-            return True
-    return False
+def _documentation_required_anchor_paths_for_purpose(files: list[str], *, limit: int = 12) -> str:
+    selected = [
+        str(path).strip().lstrip("./")
+        for path in files
+        if str(path).strip() and not _observed_omission_match(str(path).strip())
+    ]
+    return "; ".join(_dedupe_strings(selected)[:limit])
 
 
 def _project_root_from_payload_paths(files: object) -> str:
@@ -2883,349 +2382,6 @@ def _expected_project_root_for_plan_request(request: MaterialPlanRequest) -> str
 
 
 
-def _structural_plan_payload_from_request(
-    request: MaterialPlanRequest,
-    *,
-    project_root: str,
-    seed_payload: dict[str, Any],
-) -> dict[str, Any]:
-    capabilities = _normalized_capabilities(request)
-    query = " ".join(
-        str(value or "")
-        for value in (
-            request.working_query,
-            request.original_query,
-            " ".join(request.required_capabilities),
-        )
-    ).lower()
-    behavior_summary = _request_behavior_summary(request)
-    wants_python = "python" in capabilities or "python" in query
-    wants_tests = bool({"tests", "test", "pytest"} & capabilities) or "pytest" in query or "test" in query
-    wants_cli = "cli" in capabilities or " --help" in query or "console script" in query or "command-line" in query
-    wants_packaging = (
-        "artifact" in capabilities
-        or "package" in query
-        or "packag" in query
-        or "pyproject" in query
-        or ".tar.gz" in query
-    )
-    wants_docs = "readme" in query or "documentation" in query or "docs" in capabilities or wants_packaging
-    wants_validation_evidence = "evidence" in query or "validation-evidence" in query or "validat" in query
-    package_name = _stable_python_stem_from_project_root(project_root) or "generated_project"
-
-    requirements: list[dict[str, Any]] = [
-        {
-            "requirement_id": "req:artifact",
-            "description": "Produce a material artifact rooted at the requested project directory.",
-            "source": "user",
-            "capability_refs": ["artifact"],
-        }
-    ]
-    if wants_python:
-        requirements.append(
-            {
-                "requirement_id": "req:library",
-                "description": f"Provide importable reusable Python behavior that implements the user request: {behavior_summary}",
-                "source": "user",
-                "capability_refs": ["python", "api"],
-            }
-        )
-    if wants_cli:
-        requirements.append(
-            {
-                "requirement_id": "req:cli",
-                "description": f"Expose a command-line interface with help output and bounded behavior for the user request: {behavior_summary}",
-                "source": "user",
-                "capability_refs": ["cli"],
-            }
-        )
-    if wants_tests:
-        requirements.append(
-            {
-                "requirement_id": "req:tests",
-                "description": f"Include executable tests that exercise the concrete requested behavior: {behavior_summary}",
-                "source": "user",
-                "capability_refs": ["tests"],
-            }
-        )
-    if wants_docs:
-        requirements.append(
-            {
-                "requirement_id": "req:docs",
-                "description": "Document installation, usage, examples, and validation commands.",
-                "source": "user",
-                "capability_refs": ["docs"],
-            }
-        )
-    if wants_validation_evidence:
-        requirements.append(
-            {
-                "requirement_id": "req:evidence",
-                "description": "Record validation evidence and any validation limitations.",
-                "source": "user",
-                "capability_refs": ["artifact"],
-            }
-        )
-
-    files: list[dict[str, Any]] = []
-    if wants_packaging or wants_python:
-        files.append(
-            {
-                "path": f"{project_root}/pyproject.toml",
-                "purpose": (
-                    "Project metadata and packaging configuration; include console script metadata when CLI is requested."
-                ),
-                "kind": "config",
-                "requirement_refs": ["req:artifact", *(["req:cli"] if wants_cli else [])],
-            }
-        )
-    if wants_docs:
-        files.append(
-            {
-                "path": f"{project_root}/README.md",
-                "purpose": "User-facing project documentation with local setup, CLI examples, and validation commands.",
-                "kind": "markdown",
-                "requirement_refs": ["req:docs", "req:artifact"],
-            }
-        )
-    if wants_python:
-        files.extend(
-            [
-                {
-                    "path": f"{project_root}/src/{package_name}/__init__.py",
-                    "purpose": "Importable package surface that re-exports reusable behavior without side effects.",
-                    "kind": "python",
-                    "requirement_refs": ["req:library"],
-                },
-                {
-                    "path": f"{project_root}/src/{package_name}/core.py",
-                    "purpose": f"Reusable standard-library Python implementation of the user-requested behavior: {behavior_summary}",
-                    "kind": "python",
-                    "requirement_refs": ["req:library"],
-                    "depends_on": [f"{project_root}/src/{package_name}/__init__.py"],
-                },
-            ]
-        )
-    if wants_cli:
-        files.append(
-            {
-                "path": f"{project_root}/src/{package_name}/__main__.py",
-                "purpose": f"CLI entrypoint with argparse help and JSON stdout for requested processing: {behavior_summary}",
-                "kind": "python",
-                "requirement_refs": ["req:cli", "req:library"],
-                "depends_on": [f"{project_root}/src/{package_name}/core.py"],
-            }
-        )
-    if wants_tests:
-        if wants_python:
-            files.append(
-                {
-                    "path": f"{project_root}/tests/conftest.py",
-                    "purpose": "Pytest bootstrap for src-layout imports when tests run before package installation.",
-                    "kind": "test",
-                    "requirement_refs": ["req:tests", "req:library"],
-                    "depends_on": [f"{project_root}/src/{package_name}/__init__.py"],
-                }
-            )
-        files.append(
-            {
-                "path": f"{project_root}/tests/test_core.py",
-                "purpose": (
-                    "Pytest coverage for the reusable API and CLI behavior from the user request; keep imports portable "
-                    f"for src layout. Requested behavior: {behavior_summary}"
-                ),
-                "kind": "test",
-                "requirement_refs": ["req:tests", "req:library", *(["req:cli"] if wants_cli else [])],
-                "depends_on": [f"{project_root}/src/{package_name}/core.py"],
-            }
-        )
-    if wants_validation_evidence:
-        files.append(
-            {
-                "path": f"{project_root}/validation-evidence.txt",
-                "purpose": "Human-readable record of validation commands executed and their expected status.",
-                "kind": "text",
-                "requirement_refs": ["req:evidence", "req:artifact"],
-            }
-        )
-    if not files:
-        files.append(
-            {
-                "path": f"{project_root}/README.md",
-                "purpose": "Material artifact documentation for the requested output.",
-                "kind": "markdown",
-                "requirement_refs": ["req:artifact"],
-            }
-        )
-
-    required_profiles: list[str] = []
-    if wants_python:
-        required_profiles.append("python-basic")
-    if wants_tests:
-        required_profiles.append("python-pytest")
-    if wants_cli:
-        required_profiles.append("cli")
-    required_profiles = _dedupe_strings(required_profiles)
-
-    validation_commands: dict[str, Any] = {}
-    if wants_cli:
-        validation_commands["cli"] = {
-            "profile": "cli",
-            "argv": ["python", "-m", package_name, "--help"],
-            "cwd": project_root,
-            "timeout_seconds": 30,
-            "env": {"PYTHONPATH": "src"},
-            "purpose": "Verify that the generated CLI exposes help without error.",
-            "requirement_refs": ["req:cli"],
-        }
-
-    file_refs = [file["path"] for file in files]
-    plan = {
-        "schema_version": "material_plan.v3.2",
-        "project_root": project_root,
-        "requirements": requirements,
-        "files": files,
-        "intended_interfaces": _structural_interfaces(
-            project_root=project_root,
-            package_name=package_name,
-            file_refs=file_refs,
-            wants_python=wants_python,
-            wants_cli=wants_cli,
-        ),
-        "required_validation_profiles": required_profiles,
-        "optional_validation_profiles": [],
-        "validation_commands": validation_commands,
-        "artifact_expectations": [
-            {
-                "artifact_id": "artifact:project",
-                "root": project_root,
-                "purpose": "Packaged material output for the requested project.",
-                "requirement_refs": ["req:artifact"],
-                "file_refs": file_refs,
-            }
-        ],
-        "completion_criteria": [
-            {
-                "criterion_id": "criterion:validated-artifact",
-                "description": "Required validations pass and the artifact can be packaged for publication.",
-                "requirement_refs": [item["requirement_id"] for item in requirements],
-                "validation_refs": required_profiles,
-                "artifact_refs": ["artifact:project"],
-            }
-        ],
-        "dependency_strategy": {
-            "declared_dependency_files": [path for path in file_refs if path.endswith("pyproject.toml")],
-            "external_dependencies": [],
-            "install_profiles": [],
-            "lockfiles": [],
-            "native_builds_required": False,
-            "network_required": "none",
-            "requirement_refs": [item["requirement_id"] for item in requirements],
-        },
-        "architecture_notes": [
-            "Sparse LLM plan completed structurally from the request; file content remains generated by file lanes.",
-            "Do not add undeclared runtime dependencies; use only the standard library unless the plan declares otherwise.",
-            f"Concrete user request summary for generation and tests: {behavior_summary}",
-        ],
-        "variation_reason": str(seed_payload.get("variation_reason") or "").strip()
-        or "structural completion of sparse material plan",
-    }
-    return plan
-
-
-def _request_behavior_summary(request: MaterialPlanRequest) -> str:
-    text = "\n".join(
-        str(value).strip()
-        for value in (request.working_query, request.original_query)
-        if str(value or "").strip()
-    )
-    text = re.sub(r"\s+", " ", text).strip()
-    behavior_clauses = _request_behavior_clauses(text)
-    summary = _compact_text(text, 900)
-    if behavior_clauses:
-        behavior_summary = _compact_text("; ".join(behavior_clauses), 650)
-        summary = f"{summary} Key behavior requirements: {behavior_summary}"
-    return _compact_text(summary, 1600) or "the requested behavior"
-
-
-def _request_behavior_clauses(text: str) -> list[str]:
-    clauses = [
-        clause.strip(" -:;")
-        for clause in re.split(r"(?:\s+-\s+)|(?<=[.!?])\s+", text)
-        if clause.strip(" -:;")
-    ]
-    selected: list[str] = []
-    for clause in clauses:
-        normalized = clause.casefold()
-        if not any(
-            marker in normalized
-            for marker in (
-                "accept",
-                "aceitar",
-                "stdin",
-                "stdout",
-                "json",
-                "normaliz",
-                "estat",
-                "statistic",
-                "calculate",
-                "calcular",
-                "cli",
-                "--help",
-                "pytest",
-            )
-        ):
-            continue
-        selected.append(clause)
-    return _dedupe_strings(selected[:8])
-
-
-def _normalized_capabilities(request: MaterialPlanRequest) -> set[str]:
-    return {
-        str(capability or "").strip().lower().replace("_", "-")
-        for capability in request.required_capabilities
-        if str(capability or "").strip()
-    }
-
-
-def _structural_interfaces(
-    *,
-    project_root: str,
-    package_name: str,
-    file_refs: list[str],
-    wants_python: bool,
-    wants_cli: bool,
-) -> list[dict[str, Any]]:
-    interfaces: list[dict[str, Any]] = []
-    if wants_python:
-        library_refs = [
-            path
-            for path in file_refs
-            if path.startswith(f"{project_root}/src/{package_name}/") and not path.endswith("__main__.py")
-        ]
-        interfaces.append(
-            {
-                "interface_id": "interface:library",
-                "kind": "library",
-                "name": package_name,
-                "purpose": "Reusable importable Python API for the requested artifact.",
-                "requirement_refs": ["req:library"],
-                "file_refs": library_refs,
-            }
-        )
-    if wants_cli:
-        cli_path = f"{project_root}/src/{package_name}/__main__.py"
-        interfaces.append(
-            {
-                "interface_id": "interface:cli",
-                "kind": "cli",
-                "name": package_name,
-                "purpose": "Command-line interface for the generated artifact.",
-                "requirement_refs": ["req:cli"],
-                "file_refs": [cli_path] if cli_path in file_refs else [],
-            }
-        )
-    return interfaces
 
 
 def _repair_patch_schema_payload(
@@ -3249,7 +2405,7 @@ def _repair_patch_schema_payload(
                     "issue_id": request.issue_id,
                     "issue": request.issue.model_dump(mode="json"),
                     "target_path": request.target_path,
-                    "expected_old_sha256": request.expected_old_sha256,
+                    "expected_current_sha256": request.expected_current_sha256,
                     "current_content": request.current_content,
                     "current_context": request.current_context,
                     "target_resolution": request.target_resolution.model_dump(mode="json")
@@ -3258,8 +2414,8 @@ def _repair_patch_schema_payload(
                     "validation_profile": request.validation_profile,
                     "expected_symbols": _expected_symbols_from_repair_request(request),
                     "command_evidence": request.command_evidence,
-                    "previous_patch_rejections": [
-                        rejection.model_dump(mode="json") for rejection in request.previous_patch_rejections
+                    "prior_patch_rejections": [
+                        rejection.model_dump(mode="json") for rejection in request.prior_patch_rejections
                     ],
                     "invalid_payload": invalid_payload,
                     "validation_errors": _json_safe(validation_errors),
@@ -3277,7 +2433,7 @@ def _repair_patch_schema_payload(
             phase="material_builder.patch_schema_repair",
             temperature=0.0,
             max_tokens=llm.max_tokens,
-            timeout=llm.timeout_seconds,
+            timeout=_llm_effective_timeout_seconds(llm),
             post=httpx.post,
         )
     except Exception as exc:
@@ -3295,22 +2451,6 @@ def generate_plan_with_llm(
     *,
     repair_llm: LLMSettings | None = None,
 ) -> MaterialPlanResponse:
-    preflight_payload = _structural_plan_preflight_payload(request)
-    if preflight_payload is not None:
-        plan = MaterialPlan.model_validate(preflight_payload)
-        return MaterialPlanResponse(
-            plan=plan,
-            generation_backend="contract_blueprint",
-            static_fallback_used=False,
-            model_route={"lane": "plan", "route": "structural_preflight"},
-            lane_metrics={
-                "lane": "plan",
-                "contract_completion": "structural_plan_preflight",
-                "static_fallback_used": False,
-                "llm_call_skipped": True,
-            },
-            notes=["Explicit material request satisfied by structural plan preflight; file content remains generated."],
-        )
     messages = [
         {
             "role": "system",
@@ -3364,99 +2504,49 @@ def generate_plan_with_llm(
                 invalid_response=invalid_response,
                 parse_error=str(exc),
             )
-        except MaterialLLMError as repair_exc:
-            structural_payload = _structural_plan_payload_for_request(request)
-            if structural_payload is None:
-                raise repair_exc
-            payload = structural_payload
+        except MaterialLLMError:
+            raise
+    try:
+        plan = MaterialPlan.model_validate(payload.get("plan", payload))
+    except ValidationError as exc:
+        repaired_payload = _repair_plan_schema_payload(
+            messages=messages,
+            request=request,
+            llm=repair_llm or llm,
+            invalid_payload=payload,
+            validation_error=exc,
+        )
+        try:
+            plan = MaterialPlan.model_validate(repaired_payload.get("plan", repaired_payload))
+            payload = repaired_payload
             result = LLMJSONResult(
                 payload=payload,
                 lane_metrics={
                     **result.lane_metrics,
                     "schema_retries": int(result.lane_metrics.get("schema_retries") or 0) + 1,
-                    "contract_completion": "structural_plan_after_invalid_json",
-                    "plan_repair_error": repair_exc.code,
                 },
             )
-    try:
-        plan = MaterialPlan.model_validate(payload.get("plan", payload))
-    except ValidationError as exc:
-        completed_payload = _complete_sparse_plan_payload(payload, request=request, validation_error=exc)
-        if completed_payload is not None:
-            try:
-                plan = MaterialPlan.model_validate(completed_payload.get("plan", completed_payload))
-                payload = completed_payload
-                result = LLMJSONResult(
-                    payload=payload,
-                    lane_metrics={
-                        **result.lane_metrics,
-                        "schema_retries": int(result.lane_metrics.get("schema_retries") or 0) + 1,
-                        "contract_completion": "sparse_plan_files",
-                    },
-                )
-            except ValidationError:
-                completed_payload = None
-        if completed_payload is None:
-            repaired_payload = _repair_plan_schema_payload(
-                messages=messages,
-                request=request,
-                llm=repair_llm or llm,
-                invalid_payload=payload,
-                validation_error=exc,
-            )
-            try:
-                plan = MaterialPlan.model_validate(repaired_payload.get("plan", repaired_payload))
-                payload = repaired_payload
-                result = LLMJSONResult(
-                    payload=payload,
-                    lane_metrics={
-                        **result.lane_metrics,
-                        "schema_retries": int(result.lane_metrics.get("schema_retries") or 0) + 1,
-                    },
-                )
-            except ValidationError as repaired_exc:
-                completed_repaired_payload = _complete_sparse_plan_payload(
-                    repaired_payload,
-                    request=request,
-                    validation_error=repaired_exc,
-                )
-                if completed_repaired_payload is not None:
-                    try:
-                        plan = MaterialPlan.model_validate(
-                            completed_repaired_payload.get("plan", completed_repaired_payload)
-                        )
-                        payload = completed_repaired_payload
-                        result = LLMJSONResult(
-                            payload=payload,
-                            lane_metrics={
-                                **result.lane_metrics,
-                                "schema_retries": int(result.lane_metrics.get("schema_retries") or 0) + 2,
-                                "contract_completion": "sparse_plan_files_after_repair",
-                            },
-                        )
-                    except ValidationError:
-                        completed_repaired_payload = None
-                if completed_repaired_payload is None:
-                    raise MaterialLLMError(
-                        "llm_schema_invalid",
-                        "LLM material plan did not satisfy the material plan contract",
-                        details={
-                            "validation_errors": _validation_errors(repaired_exc),
-                            "initial_validation_errors": _validation_errors(exc),
-                            "initial_payload_excerpt": _compact_text(json.dumps(payload, ensure_ascii=False), 1000),
-                            "repaired_payload_excerpt": _compact_text(
-                                json.dumps(repaired_payload, ensure_ascii=False),
-                                1000,
-                            ),
-                        },
-                    ) from repaired_exc
+        except ValidationError as repaired_exc:
+            raise MaterialLLMError(
+                "llm_schema_invalid",
+                "LLM material plan did not satisfy the material plan contract",
+                details={
+                    "validation_errors": _validation_errors(repaired_exc),
+                    "initial_validation_errors": _validation_errors(exc),
+                    "initial_payload_excerpt": _compact_text(json.dumps(payload, ensure_ascii=False), 1000),
+                    "repaired_payload_excerpt": _compact_text(
+                        json.dumps(repaired_payload, ensure_ascii=False),
+                        1000,
+                    ),
+                },
+            ) from repaired_exc
     return MaterialPlanResponse(
         plan=plan,
         generation_backend="llm",
-        static_fallback_used=False,
+        static_generation_shortcut_used=False,
         model_route=llm.route,
         lane_metrics=result.lane_metrics,
-        notes=["LLM material plan accepted; no static fallback project was used"],
+        notes=["LLM material plan accepted; no static generation shortcut was used"],
     )
 
 
@@ -3533,20 +2623,8 @@ def repair_plan_with_llm(
                 invalid_response=invalid_response,
                 parse_error=str(exc),
             )
-        except MaterialLLMError as repair_exc:
-            structural_payload = _structural_plan_payload_for_request(plan_request)
-            if structural_payload is None:
-                raise repair_exc
-            payload = structural_payload
-            result = LLMJSONResult(
-                payload=payload,
-                lane_metrics={
-                    **result.lane_metrics,
-                    "schema_retries": int(result.lane_metrics.get("schema_retries") or 0) + 1,
-                    "contract_completion": "structural_plan_after_invalid_json",
-                    "plan_repair_error": repair_exc.code,
-                },
-            )
+        except MaterialLLMError:
+            raise
     try:
         plan = MaterialPlan.model_validate(payload.get("plan", payload))
     except ValidationError as exc:
@@ -3560,79 +2638,43 @@ def repair_plan_with_llm(
             required_capabilities=request.required_capabilities,
             constraints=request.constraints,
         )
-        completed_payload = _complete_sparse_plan_payload(payload, request=plan_request, validation_error=exc)
-        if completed_payload is not None:
-            try:
-                plan = MaterialPlan.model_validate(completed_payload.get("plan", completed_payload))
-                result = LLMJSONResult(
-                    payload=completed_payload,
-                    lane_metrics={
-                        **result.lane_metrics,
-                        "schema_retries": int(result.lane_metrics.get("schema_retries") or 0) + 1,
-                        "contract_completion": "sparse_plan_files",
-                    },
-                )
-            except ValidationError:
-                completed_payload = None
-        if completed_payload is None:
-            repaired_payload = _repair_plan_schema_payload(
-                messages=messages,
-                request=plan_request,
-                llm=schema_repair_llm or llm,
-                invalid_payload=payload,
-                validation_error=exc,
+        repaired_payload = _repair_plan_schema_payload(
+            messages=messages,
+            request=plan_request,
+            llm=schema_repair_llm or llm,
+            invalid_payload=payload,
+            validation_error=exc,
+        )
+        try:
+            plan = MaterialPlan.model_validate(repaired_payload.get("plan", repaired_payload))
+            result = LLMJSONResult(
+                payload=repaired_payload,
+                lane_metrics={
+                    **result.lane_metrics,
+                    "schema_retries": int(result.lane_metrics.get("schema_retries") or 0) + 1,
+                },
             )
-            try:
-                plan = MaterialPlan.model_validate(repaired_payload.get("plan", repaired_payload))
-                result = LLMJSONResult(
-                    payload=repaired_payload,
-                    lane_metrics={
-                        **result.lane_metrics,
-                        "schema_retries": int(result.lane_metrics.get("schema_retries") or 0) + 1,
-                    },
-                )
-            except ValidationError as repaired_exc:
-                completed_repaired_payload = _complete_sparse_plan_payload(
-                    repaired_payload,
-                    request=plan_request,
-                    validation_error=repaired_exc,
-                )
-                if completed_repaired_payload is not None:
-                    try:
-                        plan = MaterialPlan.model_validate(
-                            completed_repaired_payload.get("plan", completed_repaired_payload)
-                        )
-                        result = LLMJSONResult(
-                            payload=completed_repaired_payload,
-                            lane_metrics={
-                                **result.lane_metrics,
-                                "schema_retries": int(result.lane_metrics.get("schema_retries") or 0) + 2,
-                                "contract_completion": "sparse_plan_files_after_repair",
-                            },
-                        )
-                    except ValidationError:
-                        completed_repaired_payload = None
-                if completed_repaired_payload is None:
-                    raise MaterialLLMError(
-                        "llm_schema_invalid",
-                        "LLM material plan repair did not satisfy the material plan contract",
-                        details={
-                            "validation_errors": _validation_errors(repaired_exc),
-                            "initial_validation_errors": _validation_errors(exc),
-                            "initial_payload_excerpt": _compact_text(json.dumps(payload, ensure_ascii=False), 1000),
-                            "repaired_payload_excerpt": _compact_text(
-                                json.dumps(repaired_payload, ensure_ascii=False),
-                                1000,
-                            ),
-                        },
-                    ) from repaired_exc
+        except ValidationError as repaired_exc:
+            raise MaterialLLMError(
+                "llm_schema_invalid",
+                "LLM material plan repair did not satisfy the material plan contract",
+                details={
+                    "validation_errors": _validation_errors(repaired_exc),
+                    "initial_validation_errors": _validation_errors(exc),
+                    "initial_payload_excerpt": _compact_text(json.dumps(payload, ensure_ascii=False), 1000),
+                    "repaired_payload_excerpt": _compact_text(
+                        json.dumps(repaired_payload, ensure_ascii=False),
+                        1000,
+                    ),
+                },
+            ) from repaired_exc
     return MaterialPlanRepairResponse(
         plan=plan,
         generation_backend="llm",
-        static_fallback_used=False,
+        static_generation_shortcut_used=False,
         model_route=llm.route,
         lane_metrics=result.lane_metrics,
-        notes=["LLM material plan repair accepted; no static fallback project was used"],
+        notes=["LLM material plan repair accepted; no static generation shortcut was used"],
     )
 
 
@@ -3657,28 +2699,85 @@ def generate_files_with_llm(
     lane_metrics: list[dict[str, Any]] = []
     documentation_bundle = _plan_is_documentation_bundle(request.plan)
     for file_spec in requested_files:
-        deterministic_content = _deterministic_file_content_for_plan_file(file_spec, request.plan)
-        if deterministic_content is not None and not documentation_bundle:
-            deterministic_issues = _file_generation_contract_issues(
-                deterministic_content,
+        rendered_content = _render_documentation_content_for_plan_file(file_spec, request.plan)
+        if rendered_content is not None:
+            if documentation_bundle:
+                rendered_content = _sanitize_documentation_public_content(
+                    rendered_content,
+                    portuguese=_documentation_is_portuguese(request.plan),
+                )
+            rendered_issues = _file_generation_contract_issues(
+                rendered_content,
                 path=file_spec.path,
                 kind=file_spec.kind,
                 project_root=request.plan.project_root,
                 planned_modules=planned_local_modules,
                 declared_dependency_roots=_declared_dependency_roots(request.plan),
             )
-            if not deterministic_issues:
-                lane_metrics.append(
-                    {
-                        "lane": "deterministic",
-                        "static_fallback_used": True,
-                        "static_fallback_reason": "plan_behavior_blueprint",
-                    }
+            rendered_quality_issues = (
+                _documentation_file_quality_issues(
+                    rendered_content,
+                    file_spec=file_spec,
+                    plan=request.plan,
                 )
+                if documentation_bundle
+                else []
+            )
+            if documentation_bundle and (rendered_issues or rendered_quality_issues):
+                augmented_content = _documentation_contractual_evidence_augmentation(
+                    rendered_content,
+                    file_spec=file_spec,
+                    plan=request.plan,
+                    contract_issues=[*rendered_issues, *rendered_quality_issues],
+                )
+                if augmented_content is not None:
+                    augmented_content = _sanitize_documentation_public_content(
+                        augmented_content,
+                        portuguese=_documentation_is_portuguese(request.plan),
+                    )
+                    augmented_issues = _file_generation_contract_issues(
+                        augmented_content,
+                        path=file_spec.path,
+                        kind=file_spec.kind,
+                        project_root=request.plan.project_root,
+                        planned_modules=planned_local_modules,
+                        declared_dependency_roots=_declared_dependency_roots(request.plan),
+                    )
+                    augmented_quality_issues = _documentation_file_quality_issues(
+                        augmented_content,
+                        file_spec=file_spec,
+                        plan=request.plan,
+                    )
+                    if not augmented_issues and not augmented_quality_issues:
+                        rendered_content = augmented_content
+                        rendered_issues = []
+                        rendered_quality_issues = []
+                    elif not augmented_issues:
+                        rendered_content = augmented_content
+                        rendered_issues = []
+                        rendered_quality_issues = augmented_quality_issues
+            if documentation_bundle and (rendered_issues or rendered_quality_issues):
+                raise MaterialLLMError(
+                    "documentation_quality_violation",
+                    "contract-rendered documentation does not satisfy the requested evidence contract",
+                    details={
+                        "path": file_spec.path,
+                        "file_contract_issues": [*rendered_issues, *rendered_quality_issues],
+                    },
+                )
+            if not rendered_issues and not rendered_quality_issues:
+                if documentation_bundle:
+                    lane_metrics.append(
+                        {
+                            "lane": "contract_renderer",
+                            "documentation_contract_renderer_used": True,
+                            "static_generation_shortcut_used": False,
+                        }
+                    )
                 proposals.append(
                     GeneratedFileProposal.from_content(
                         path=file_spec.path,
-                        content=deterministic_content,
+                        content=rendered_content,
                         kind=file_spec.kind,
                         source_plan_ref=request.source_plan_ref,
                     )
@@ -3697,6 +2796,10 @@ def generate_files_with_llm(
                         "session_id": request.session_id,
                         "plan": plan_summary,
                         "requested_file": file_spec.model_dump(mode="json"),
+                        "documentation_contract": _documentation_file_generation_contract_payload(
+                            file_spec,
+                            plan=request.plan,
+                        ),
                         "allowed_local_import_roots": allowed_local_import_roots,
                         "planned_local_modules": planned_local_modules,
                     },
@@ -3740,23 +2843,7 @@ def generate_files_with_llm(
                             "actual_path": path,
                         }
                     ]
-                    fallback_content = _deterministic_file_content_for_generation_contract_failure(
-                        file_spec=file_spec,
-                        plan=request.plan,
-                        contract_issues=path_issues,
-                    )
-                    if fallback_content is not None:
-                        content = fallback_content
-                        lane_metrics.append(
-                            {
-                                "lane": "deterministic",
-                                "static_fallback_used": True,
-                                "static_fallback_reason": _deterministic_file_generation_fallback_reason(
-                                    path_issues
-                                ),
-                            }
-                        )
-                    elif attempt < max_attempts - 1:
+                    if attempt < max_attempts - 1:
                         messages = [
                             *messages,
                             {
@@ -3790,6 +2877,20 @@ def generate_files_with_llm(
                     "LLM file proposal returned non-string content",
                     details={"path": file_spec.path},
                 )
+            if documentation_bundle:
+                sanitized_content = _sanitize_documentation_public_content(
+                    content,
+                    portuguese=_documentation_is_portuguese(request.plan),
+                )
+                if sanitized_content != content:
+                    content = sanitized_content
+                    lane_metrics.append(
+                        {
+                            "lane": "contract",
+                            "documentation_public_sanitizer_used": True,
+                            "path": file_spec.path,
+                        }
+                    )
             file_contract_issues = _file_generation_contract_issues(
                 content,
                 path=file_spec.path,
@@ -3806,35 +2907,42 @@ def generate_files_with_llm(
             if not file_contract_issues and not documentation_quality_issues:
                 break
             contract_issues = [*file_contract_issues, *documentation_quality_issues]
-            fallback_content = _deterministic_file_content_for_generation_contract_failure(
+            augmented_content = _documentation_contractual_evidence_augmentation(
+                content,
                 file_spec=file_spec,
                 plan=request.plan,
                 contract_issues=contract_issues,
             )
-            if fallback_content is None and documentation_quality_issues:
-                fallback_content = _deterministic_documentation_content_for_plan_file(file_spec, request.plan)
-            if fallback_content is not None:
-                fallback_issues = _file_generation_contract_issues(
-                    fallback_content,
+            if augmented_content is not None:
+                augmented_content = _sanitize_documentation_public_content(
+                    augmented_content,
+                    portuguese=_documentation_is_portuguese(request.plan),
+                )
+                augmented_file_issues = _file_generation_contract_issues(
+                    augmented_content,
                     path=file_spec.path,
                     kind=file_spec.kind,
                     project_root=request.plan.project_root,
                     planned_modules=planned_local_modules,
                     declared_dependency_roots=_declared_dependency_roots(request.plan),
                 )
-                fallback_quality_issues = _documentation_file_quality_issues(
-                    fallback_content,
+                augmented_quality_issues = _documentation_file_quality_issues(
+                    augmented_content,
                     file_spec=file_spec,
                     plan=request.plan,
                 )
-                if not fallback_issues and not fallback_quality_issues:
-                    content = fallback_content
+                if not augmented_file_issues and not augmented_quality_issues:
+                    content = augmented_content
                     lane_metrics.append(
                         {
-                            "lane": "deterministic",
-                            "static_fallback_used": True,
-                            "static_fallback_reason": _deterministic_file_generation_fallback_reason(
-                                contract_issues
+                            "lane": "contract",
+                            "documentation_contractual_augmentation_used": True,
+                            "documentation_contractual_augmentation_reason": sorted(
+                                {
+                                    str(issue.get("issue_type") or "")
+                                    for issue in contract_issues
+                                    if str(issue.get("issue_type") or "").startswith("documentation_")
+                                }
                             ),
                         }
                     )
@@ -3861,7 +2969,7 @@ def generate_files_with_llm(
                 continue
             raise MaterialLLMError(
                 "llm_contract_violation",
-                "LLM file proposal does not satisfy the Python file contract",
+                "LLM file proposal does not satisfy the requested file contract",
                 details={
                     "path": file_spec.path,
                     "planned_local_modules": planned_local_modules,
@@ -3907,6 +3015,55 @@ def _file_contract_attempts(llm: LLMSettings) -> int:
     return max(2, min(5, attempts))
 
 
+def _documentation_file_generation_contract_payload(
+    file_spec: MaterialFileSpec,
+    *,
+    plan: MaterialPlan,
+) -> dict[str, Any]:
+    if not _plan_is_documentation_bundle(plan):
+        return {}
+    normalized_path = file_spec.path.strip().strip("/").replace("\\", "/")
+    rel_path = _plan_relative_path(normalized_path, plan)
+    if rel_path == "validation-evidence.txt" or not rel_path.endswith(".md"):
+        return {}
+    payload: dict[str, Any] = {
+        "public_page": True,
+        "private_context_labels": [
+            "Inventory JSON",
+            "Evidence observations JSON",
+            "Content evidence tasks JSON",
+            "Content evidence results JSON",
+        ],
+        "forbidden_public_terms": [
+            "storage_guardian://",
+            "material_builder",
+            "material_execution_kernel",
+            "audio_transcribe",
+            "the extractor returned",
+        ],
+    }
+    expected_workspace = _documentation_readme_expected_workspace(file_spec.purpose)
+    if expected_workspace:
+        payload["expected_workspace_anchor"] = expected_workspace
+    source_paths = _documentation_source_paths_from_file_spec(file_spec)
+    if source_paths:
+        sample_count = min(len(source_paths), 12)
+        payload["required_source_paths"] = source_paths[:16]
+        payload["source_path_min_matches"] = 1 if sample_count == 1 else min(4, max(2, (sample_count + 3) // 4))
+    terms = _documentation_salient_evidence_terms(file_spec, limit=24)
+    if len(terms) >= 6:
+        payload["required_evidence_terms"] = terms[:16]
+        payload["required_evidence_match_count"] = min(5, max(2, len(terms) // 5))
+    key_terms = _documentation_key_evidence_terms(file_spec, limit=18)
+    if len(key_terms) >= 3:
+        payload["required_narrative_terms"] = key_terms[:12]
+        payload["required_narrative_match_count"] = min(3, max(2, len(key_terms) // 6))
+    if rel_path.startswith("subfolders/"):
+        payload["min_heading_count"] = 5
+        payload["subfolder_page"] = True
+    return payload
+
+
 def _file_local_import_retry_payload(
     *,
     content: str,
@@ -3932,6 +3089,20 @@ def _file_local_import_retry_payload(
         }
     )
     current_module = _python_module_name_for_plan_path(str(file_spec.get("path") or ""), project_root)
+    documentation_repair = _documentation_contract_retry_payload(
+        file_spec=file_spec,
+        contract_issues=local_import_issues,
+    )
+    documentation_instruction = ""
+    if documentation_repair:
+        documentation_instruction = (
+            " For documentation quality issues, regenerate the file as user-facing documentation grounded in "
+            "requested_file.purpose. Include representative exact source paths from required_source_paths, "
+            "include the requested evidence terms when documentation_repair provides them, "
+            "keep the inspected workspace distinct from the output project root, and do not copy private JSON "
+            "context labels into Markdown. Remove forbidden_public_terms and do not use placeholder completion "
+            "states for planned documentation pages."
+        )
     return {
         "instruction": (
             "Regenerate exactly the same requested file. The next JSON response must keep the same path. "
@@ -3940,6 +3111,7 @@ def _file_local_import_retry_payload(
             "The next content must not import any forbidden_modules, must not call or dereference "
             "placeholder values, and Python test targets must keep at least one test discoverable by "
             "pytest or unittest with no undefined names inside test functions."
+            f"{documentation_instruction}"
         ),
         "requested_file": file_spec,
         "current_file_module": current_module,
@@ -3948,9 +3120,96 @@ def _file_local_import_retry_payload(
         "forbidden_local_modules": forbidden_modules,
         "forbidden_placeholder_symbols": forbidden_placeholder_symbols,
         "local_import_issues": local_import_issues,
+        "contract_issues": local_import_issues,
+        "documentation_repair": documentation_repair,
         "remaining_contract_repair_attempts": remaining_attempts,
         "invalid_content_excerpt": _compact_text(content, 4000),
     }
+
+
+def _documentation_contract_retry_payload(
+    *,
+    file_spec: dict[str, Any],
+    contract_issues: list[dict[str, Any]],
+) -> dict[str, Any]:
+    issue_types = {str(issue.get("issue_type") or "") for issue in contract_issues}
+    if not any(
+        issue_type.startswith("documentation_") or issue_type in {name for name, _ in _DOCUMENTATION_PUBLIC_PAGE_FORBIDDEN_PATTERNS}
+        for issue_type in issue_types
+    ):
+        return {}
+    purpose = str(file_spec.get("purpose") or "")
+    required_source_paths = _documentation_source_paths_from_purpose(purpose, limit=12)
+    forbidden_public_terms = [
+        str(issue.get("excerpt") or "").strip()
+        for issue in contract_issues
+        if str(issue.get("excerpt") or "").strip()
+    ]
+    required_evidence_terms = _documentation_issue_sample_terms(
+        contract_issues,
+        issue_types={"documentation_missing_evidence_terms"},
+    )
+    required_narrative_terms = _documentation_issue_sample_terms(
+        contract_issues,
+        issue_types={"documentation_narrative_missing_key_evidence_terms"},
+    )
+    required_evidence_count = max(
+        [
+            int(issue.get("required_match_count") or 0)
+            for issue in contract_issues
+            if issue.get("issue_type") == "documentation_missing_evidence_terms"
+        ]
+        or [0]
+    )
+    required_narrative_count = max(
+        [
+            int(issue.get("required_match_count") or 0)
+            for issue in contract_issues
+            if issue.get("issue_type") == "documentation_narrative_missing_key_evidence_terms"
+        ]
+        or [0]
+    )
+    return {
+        "issue_types": sorted(issue_types),
+        "required_source_paths": required_source_paths,
+        "required_evidence_terms": required_evidence_terms[:16],
+        "required_evidence_match_count": required_evidence_count,
+        "required_narrative_terms": required_narrative_terms[:12],
+        "required_narrative_match_count": required_narrative_count,
+        "forbidden_public_terms": _dedupe_strings(forbidden_public_terms)[:12],
+        "source_path_rule": (
+            "If required_source_paths is non-empty, cite representative exact relative paths in the public page."
+        ),
+        "evidence_term_rule": (
+            "If required_evidence_terms or required_narrative_terms are non-empty, include enough exact terms "
+            "from them in natural user-facing prose or source-summary lists."
+        ),
+        "placeholder_status_rule": (
+            "Do not describe planned documentation pages as not documented, pending, unavailable, TODO, or TBD."
+        ),
+        "private_context_labels": [
+            "Inventory JSON",
+            "Evidence observations JSON",
+            "Content evidence tasks JSON",
+            "Content evidence results JSON",
+        ],
+    }
+
+
+def _documentation_issue_sample_terms(
+    contract_issues: list[dict[str, Any]],
+    *,
+    issue_types: set[str],
+) -> list[str]:
+    terms: list[str] = []
+    for issue in contract_issues:
+        if issue.get("issue_type") not in issue_types:
+            continue
+        sample_terms = issue.get("sample_terms")
+        if not isinstance(sample_terms, list):
+            continue
+        terms.extend(str(term).strip() for term in sample_terms if str(term).strip())
+    return _dedupe_strings(terms)
 
 
 def _file_generation_contract_issues(
@@ -4021,89 +3280,7 @@ def _file_generation_contract_issues(
     return _dedupe_contract_issues(issues)
 
 
-def _deterministic_file_content_for_generation_contract_failure(
-    *,
-    file_spec: MaterialFileSpec,
-    plan: MaterialPlan,
-    contract_issues: list[dict[str, Any]],
-) -> str | None:
-    path = file_spec.path.replace("\\", "/")
-    issue_types = {str(issue.get("issue_type") or "") for issue in contract_issues}
-    if "path_mismatch" in issue_types:
-        filename = path.rsplit("/", 1)[-1].casefold()
-        if filename == "readme.md":
-            return _deterministic_readme_content_for_plan(plan)
-        if filename == "validation-evidence.txt":
-            return _deterministic_validation_evidence_content_for_plan(plan)
-    if not path.endswith("/pyproject.toml") and path != "pyproject.toml":
-        return None
-    if "toml_parse_error" not in issue_types:
-        return None
-    return _deterministic_pyproject_content_for_plan(plan, target_path=file_spec.path)
-
-
-def _deterministic_file_generation_fallback_reason(contract_issues: list[dict[str, Any]]) -> str:
-    issue_types = {str(issue.get("issue_type") or "") for issue in contract_issues}
-    if any(issue_type.startswith("documentation_") for issue_type in issue_types) or any(
-        issue_type
-        in {
-            "provider_id",
-            "owner_name",
-            "storage_owner_name",
-            "storage_ref",
-            "container_path",
-            "command_trace",
-            "workspace_trace",
-            "owner_return_wording",
-            "internal_heading",
-            "raw_extraction_wording",
-            "raw_file_warning",
-            "metadata_only_status",
-        }
-        for issue_type in issue_types
-    ):
-        return "generated_documentation_quality_violation"
-    if "toml_parse_error" in issue_types:
-        return "generated_toml_parse_error"
-    if "path_mismatch" in issue_types:
-        return "generated_file_path_mismatch"
-    if "python_syntax_error" in issue_types:
-        return "generated_python_syntax_error"
-    return "generated_file_contract_failure"
-
-
-def _deterministic_file_content_for_plan_file(file_spec: MaterialFileSpec, plan: MaterialPlan) -> str | None:
-    documentation_content = _deterministic_documentation_content_for_plan_file(file_spec, plan)
-    if documentation_content is not None:
-        return documentation_content
-    if not _plan_requests_text_processing(plan):
-        return None
-    path = file_spec.path.strip().strip("/").replace("\\", "/")
-    rel_path = _plan_relative_path(path, plan)
-    package_name = _primary_src_package_from_material_plan(plan)
-    if not package_name:
-        return None
-    package_prefix = f"src/{package_name}/"
-    if rel_path == "pyproject.toml":
-        return _deterministic_pyproject_content_for_plan(plan, target_path=file_spec.path)
-    if rel_path == "README.md":
-        return _deterministic_text_processing_readme_content_for_plan(plan)
-    if rel_path == "validation-evidence.txt":
-        return _deterministic_validation_evidence_content_for_plan(plan)
-    if rel_path == f"{package_prefix}__init__.py":
-        return _deterministic_text_processing_init_content()
-    if rel_path == f"{package_prefix}core.py":
-        return _deterministic_text_processing_core_content()
-    if rel_path == f"{package_prefix}__main__.py":
-        return _deterministic_text_processing_cli_content(package_name)
-    if rel_path == "tests/conftest.py":
-        return _deterministic_src_layout_conftest_content()
-    if rel_path == "tests/test_core.py":
-        return _deterministic_text_processing_test_content(package_name)
-    return None
-
-
-def _deterministic_documentation_content_for_plan_file(
+def _render_documentation_content_for_plan_file(
     file_spec: MaterialFileSpec,
     plan: MaterialPlan,
 ) -> str | None:
@@ -4112,11 +3289,11 @@ def _deterministic_documentation_content_for_plan_file(
     path = file_spec.path.strip().strip("/").replace("\\", "/")
     rel_path = _plan_relative_path(path, plan)
     if rel_path == "README.md":
-        return _deterministic_documentation_readme_content_for_plan(plan)
+        return _render_documentation_readme_content_for_plan(plan)
     if rel_path == "validation-evidence.txt":
-        return _deterministic_documentation_validation_content_for_plan(plan)
+        return _render_documentation_validation_content_for_plan(plan)
     if rel_path.startswith("subfolders/") and rel_path.endswith(".md"):
-        return _deterministic_subfolder_documentation_content(file_spec, plan)
+        return _render_subfolder_documentation_content(file_spec, plan)
     return None
 
 
@@ -4141,23 +3318,26 @@ def _plan_is_documentation_bundle(plan: MaterialPlan) -> bool:
     return any(marker in text for marker in ("documentation", "documentacao", "documentação", "docs"))
 
 
-def _deterministic_documentation_readme_content_for_plan(plan: MaterialPlan) -> str:
+def _render_documentation_readme_content_for_plan(plan: MaterialPlan) -> str:
     portuguese = _documentation_is_portuguese(plan)
     docs = [
         item.path for item in plan.files if item.path.endswith(".md") and not item.path.endswith("README.md")
     ]
+    readme_spec = next((item for item in plan.files if item.path.endswith("README.md")), None)
+    expected_workspace = _documentation_readme_expected_workspace(readme_spec.purpose if readme_spec else "")
+    source_label = expected_workspace or "folder indicated by the user request"
     doc_map = "\n".join(f"- [{path.rsplit('/', 1)[-1]}]({path[len(plan.project_root.strip('/')) + 1:] if path.startswith(plan.project_root.strip('/') + '/') else path})" for path in docs)
     if portuguese:
         return (
             "# Documentação\n\n"
             "Documentação organizada dos materiais observados na pasta pedida.\n\n"
             "## Pasta Documentada\n\n"
-            "- Origem: pasta indicada no pedido do utilizador.\n"
-            "- Organização: uma página por subpasta com ficheiros, temas e conteúdos identificados.\n\n"
+            f"- Origem: {source_label}.\n"
+            "- Organização: páginas por área observada, incluindo ficheiros de raiz quando existirem, subpastas, temas e conteúdos identificados.\n\n"
             "## Índice\n\n"
             f"{doc_map or '- Não foram planeadas páginas por subpasta.'}\n\n"
             "## Como Ler Esta Documentação\n\n"
-            "- Cada página de subpasta resume os ficheiros observados, os tipos de material e o conteúdo textual ou tabular disponível.\n"
+            "- Cada página resume os ficheiros observados, os tipos de material e o conteúdo textual ou tabular disponível nessa área.\n"
             "- Ficheiros muito grandes ou binários podem aparecer com leitura parcial quando só havia amostras ou metadados seguros.\n"
             "- A evidência técnica de execução fica em `validation-evidence.txt` para não contaminar a documentação de domínio.\n\n"
             "## Limitações\n\n"
@@ -4167,12 +3347,12 @@ def _deterministic_documentation_readme_content_for_plan(plan: MaterialPlan) -> 
         "# Documentation\n\n"
         "Organized documentation for the materials observed in the requested folder.\n\n"
         "## Documented Folder\n\n"
-        "- Source: folder indicated by the user request.\n"
-        "- Organization: one page per subfolder with files, themes and identified content.\n\n"
+        f"- Source: {source_label}.\n"
+        "- Organization: one page per observed area, including root files when present, subfolders, themes and identified content.\n\n"
         "## Index\n\n"
         f"{doc_map or '- No per-subfolder pages were planned.'}\n\n"
         "## How To Read This Documentation\n\n"
-        "- Each subfolder page summarizes observed files, material types and available textual or tabular content.\n"
+        "- Each page summarizes observed files, material types and available textual or tabular content for that area.\n"
         "- Very large or binary files may be represented by partial reads when only safe samples or metadata were available.\n"
         "- Technical execution evidence is kept in `validation-evidence.txt` so the domain documentation stays focused.\n\n"
         "## Limitations\n\n"
@@ -4180,8 +3360,9 @@ def _deterministic_documentation_readme_content_for_plan(plan: MaterialPlan) -> 
     )
 
 
-def _deterministic_subfolder_documentation_content(file_spec: MaterialFileSpec, plan: MaterialPlan) -> str:
+def _render_subfolder_documentation_content(file_spec: MaterialFileSpec, plan: MaterialPlan) -> str:
     subject = _subject_name_from_documentation_purpose(file_spec.purpose) or _title_from_path(file_spec.path)
+    is_repository_subject = subject.casefold() == "repository"
     observed = _observed_files_from_documentation_purpose(file_spec.purpose)
     observations = _file_observations_from_documentation_purpose(file_spec.purpose)
     enrichment_tasks = _enrichment_tasks_from_documentation_purpose(file_spec.purpose)
@@ -4210,7 +3391,11 @@ def _deterministic_subfolder_documentation_content(file_spec: MaterialFileSpec, 
         media_count = len(media)
         other_count = len(other)
     evidence_lines = _documentation_file_evidence_lines(observations, portuguese=portuguese)
-    semantic_lines = _documentation_semantic_evidence_lines(enrichment_results, portuguese=portuguese)
+    semantic_lines = _documentation_semantic_evidence_lines(
+        enrichment_results,
+        observations=observations,
+        portuguese=portuguese,
+    )
     content_summary_lines = _documentation_content_summary_lines(
         enrichment_results,
         observations,
@@ -4232,10 +3417,16 @@ def _deterministic_subfolder_documentation_content(file_spec: MaterialFileSpec, 
         portuguese=portuguese,
     )
     if portuguese:
+        title = "Ficheiros de Raiz do Repositório" if is_repository_subject else subject
+        scope = (
+            "Esta página documenta os ficheiros observados na raiz do repositório a partir do conteúdo legível disponível."
+            if is_repository_subject
+            else f"Esta página documenta a subpasta `{subject}` a partir dos ficheiros observados e do conteúdo legível disponível."
+        )
         return (
-            f"# {subject}\n\n"
+            f"# {title}\n\n"
             "## Âmbito\n\n"
-            f"Esta página documenta a subpasta `{subject}` a partir dos ficheiros observados e do conteúdo legível disponível.\n\n"
+            f"{scope}\n\n"
             "## Ficheiros Observados\n\n"
             f"{_markdown_list(displayed_observed, empty='Não foram amostrados ficheiros desta subpasta.')}\n\n"
             "## Tipos de Material Detectados\n\n"
@@ -4261,10 +3452,16 @@ def _deterministic_subfolder_documentation_content(file_spec: MaterialFileSpec, 
             f"{_documentation_domain_next_steps(enrichment_tasks, enrichment_results, portuguese=True)}\n"
             "- Fazer uma revisão humana para interpretação específica do domínio antes de usar isto como documentação final.\n"
         )
+    title = "Repository Root Files" if is_repository_subject else subject
+    scope = (
+        "This page documents the files observed at the repository root from the available readable content."
+        if is_repository_subject
+        else f"This page documents the `{subject}` subfolder from the observed files and available readable content."
+    )
     return (
-        f"# {subject}\n\n"
+        f"# {title}\n\n"
         "## Scope\n\n"
-        f"This page documents the `{subject}` subfolder from the observed files and available readable content.\n\n"
+        f"{scope}\n\n"
         "## Observed Files\n\n"
         f"{_markdown_list(displayed_observed, empty='No nested files were sampled for this folder.')}\n\n"
         "## Detected Material Types\n\n"
@@ -4292,7 +3489,7 @@ def _deterministic_subfolder_documentation_content(file_spec: MaterialFileSpec, 
     )
 
 
-def _deterministic_documentation_validation_content_for_plan(plan: MaterialPlan) -> str:
+def _render_documentation_validation_content_for_plan(plan: MaterialPlan) -> str:
     commands = _documentation_note_value(plan, "Commands")
     if _documentation_is_portuguese(plan):
         return (
@@ -4335,28 +3532,6 @@ def _documentation_is_portuguese(plan: MaterialPlan) -> bool:
     return language.startswith("pt") or "portugu" in language
 
 
-def _documentation_requirement_display(description: str, *, portuguese: bool) -> str:
-    if not portuguese:
-        return description
-    stripped = description.strip()
-    known = {
-        "Produce the requested documentation artifact.": "Produzir o artefacto de documentação pedido.",
-        "Create organized documentation grounded in observed local evidence.": "Criar documentação organizada com base na evidência local observada.",
-        "Record the read-only evidence and validation limitations used to build the documentation.": (
-            "Registar a evidência read-only e as limitações de validação usadas para construir a documentação."
-        ),
-        "Record any specialist enrichment tasks needed for file types that require owned extraction or transcription capabilities.": (
-            "Registar as tarefas de enriquecimento especializado necessárias para tipos de ficheiro que exigem extração ou transcrição pelo dono correcto."
-        ),
-    }
-    if stripped in known:
-        return known[stripped]
-    match = re.fullmatch(r"Document the observed top-level folder ['\"]([^'\"]+)['\"]\.", stripped)
-    if match:
-        return f"Documentar a subpasta de topo observada `{match.group(1)}`."
-    return stripped
-
-
 def _subject_name_from_documentation_purpose(purpose: str) -> str:
     match = re.search(r"folder\s+['\"]([^'\"]+)['\"]", purpose)
     return match.group(1).strip() if match else ""
@@ -4370,13 +3545,7 @@ def _observed_files_from_documentation_purpose(purpose: str) -> list[str]:
         index = purpose.find(marker)
     if index < 0:
         return []
-    raw = purpose[index + len(marker) :]
-    inventory_marker = "Inventory JSON:"
-    if inventory_marker in raw:
-        raw = raw.split(inventory_marker, 1)[0]
-    observations_marker = "Evidence observations JSON:"
-    if observations_marker in raw:
-        raw = raw.split(observations_marker, 1)[0]
+    raw = _documentation_text_before_next_marker(purpose[index + len(marker) :])
     raw = raw.strip().rstrip(".")
     if raw.casefold().startswith("no nested files"):
         return []
@@ -4387,6 +3556,22 @@ def _observed_files_from_documentation_purpose(purpose: str) -> list[str]:
             continue
         values.append(clean)
     return _dedupe_strings(values)[:80]
+
+
+def _required_source_anchor_paths_from_documentation_purpose(purpose: str) -> list[str]:
+    marker = "Required source path anchors:"
+    index = purpose.find(marker)
+    if index < 0:
+        return []
+    raw = _documentation_text_before_next_marker(purpose[index + len(marker) :]).strip().rstrip(".")
+    if not raw or raw.casefold() == "none":
+        return []
+    values: list[str] = []
+    for item in raw.split(";"):
+        clean = item.strip()
+        if clean and clean != "[truncated]":
+            values.append(clean)
+    return _dedupe_strings(values)[:40]
 
 
 def _inventory_from_documentation_purpose(purpose: str) -> dict[str, Any]:
@@ -4429,9 +3614,7 @@ def _file_observations_from_documentation_purpose(purpose: str) -> list[dict[str
     if index < 0:
         return []
     raw = purpose[index + len(marker) :].strip()
-    enrichment_marker = "Specialist enrichment JSON:"
-    if enrichment_marker in raw:
-        raw = raw.split(enrichment_marker, 1)[0].strip()
+    raw = _documentation_text_before_next_marker(raw)
     if raw.endswith("."):
         raw = raw[:-1].rstrip()
     try:
@@ -4448,16 +3631,15 @@ def _file_observations_from_documentation_purpose(purpose: str) -> list[dict[str
 
 
 def _enrichment_tasks_from_documentation_purpose(purpose: str) -> list[dict[str, Any]]:
-    marker = "Specialist enrichment JSON:"
-    index = purpose.find(marker)
-    if index < 0:
+    raw = _documentation_json_block_after_marker(
+        purpose,
+        (
+            "Content evidence tasks JSON:",
+            "Specialist enrichment JSON:",
+        ),
+    )
+    if not raw:
         return []
-    raw = purpose[index + len(marker) :].strip()
-    results_marker = "Specialist enrichment results JSON:"
-    if results_marker in raw:
-        raw = raw.split(results_marker, 1)[0].strip()
-    if raw.endswith("."):
-        raw = raw[:-1].rstrip()
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
@@ -4477,13 +3659,15 @@ def _enrichment_tasks_from_documentation_purpose(purpose: str) -> list[dict[str,
 
 
 def _enrichment_results_from_documentation_purpose(purpose: str) -> list[dict[str, Any]]:
-    marker = "Specialist enrichment results JSON:"
-    index = purpose.find(marker)
-    if index < 0:
+    raw = _documentation_json_block_after_marker(
+        purpose,
+        (
+            "Content evidence results JSON:",
+            "Specialist enrichment results JSON:",
+        ),
+    )
+    if not raw:
         return []
-    raw = purpose[index + len(marker) :].strip()
-    if raw.endswith("."):
-        raw = raw[:-1].rstrip()
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
@@ -4497,247 +3681,55 @@ def _enrichment_results_from_documentation_purpose(purpose: str) -> list[dict[st
         provider = str(item.get("provider") or "").strip()
         capability = str(item.get("capability") or "").strip()
         paths = item.get("input_paths")
-        if provider and capability and isinstance(paths, list) and paths:
+        has_content = bool(
+            str(item.get("content_excerpt") or "").strip()
+            or _semantic_digest_excerpts(item)
+            or item.get("semantic_digest")
+        )
+        if isinstance(paths, list) and paths and ((provider and capability) or has_content):
             results.append(item)
     return results[:12]
 
 
-def _documentation_enrichment_lines(tasks: list[dict[str, Any]], *, portuguese: bool = False) -> str:
-    if not tasks:
-        if portuguese:
-            return "- Não foi planeado enriquecimento especializado para esta pasta a partir dos tipos de ficheiro observados."
-        return "- No specialist enrichment was planned for this folder from the observed file types."
-    lines: list[str] = []
-    for task in tasks:
-        provider = str(task.get("provider") or "").strip()
-        capability = str(task.get("capability") or "").strip()
-        reason = str(task.get("reason") or "").strip()
-        paths = [str(path).strip() for path in task.get("input_paths", []) if str(path).strip()]
-        expected = [str(item).strip() for item in task.get("expected_evidence_types", []) if str(item).strip()]
-        title = ".".join(part for part in (provider, capability) if part)
-        if portuguese:
-            lines.append(
-                f"- `{title or 'specialist'}` planeado para {len(paths)} ficheiro(s)"
-                f"{f' porque {reason}' if reason else ''}."
-            )
-        else:
-            lines.append(f"- `{title or 'specialist'}` planned for {len(paths)} file(s){f' because {reason}' if reason else ''}.")
-        for path in paths[:8]:
-            lines.append(f"  - `{path}`")
-        if expected:
-            label = "Evidência esperada" if portuguese else "Expected evidence"
-            lines.append(f"  - {label}: {', '.join(expected[:6])}")
-    return "\n".join(lines)
+def _documentation_json_block_after_marker(purpose: str, markers: tuple[str, ...]) -> str:
+    starts: list[tuple[int, str]] = []
+    for marker in markers:
+        index = purpose.find(marker)
+        if index >= 0:
+            starts.append((index, marker))
+    if not starts:
+        return ""
+    index, marker = min(starts, key=lambda item: item[0])
+    raw = purpose[index + len(marker) :].strip()
+    next_markers = (
+        "Observed files:",
+        "Inventory JSON:",
+        "Evidence observations JSON:",
+        "Content evidence tasks JSON:",
+        "Content evidence results JSON:",
+        "Specialist enrichment JSON:",
+        "Specialist enrichment results JSON:",
+    )
+    raw = _documentation_text_before_next_marker(raw, markers=next_markers)
+    if raw.endswith("."):
+        raw = raw[:-1].rstrip()
+    return raw
 
 
-def _documentation_enrichment_plan_lines(
-    tasks: list[dict[str, Any]],
-    results: list[dict[str, Any]],
-    *,
-    portuguese: bool = False,
-) -> str:
-    if tasks:
-        return _documentation_enrichment_lines(tasks, portuguese=portuguese)
-    if not results:
-        return _documentation_enrichment_lines(tasks, portuguese=portuguese)
-    groups: dict[tuple[str, str], set[str]] = {}
-    for result in results:
-        provider = str(result.get("provider") or "").strip()
-        capability = str(result.get("capability") or "").strip()
-        if not provider or not capability:
-            continue
-        paths = {
-            str(path).strip()
-            for path in result.get("input_paths", [])
-            if str(path).strip()
-        }
-        groups.setdefault((provider, capability), set()).update(paths)
-    if not groups:
-        return _documentation_enrichment_lines(tasks, portuguese=portuguese)
-    lines: list[str] = []
-    if portuguese:
-        lines.append(
-            "- O plano detalhado foi compactado por orçamento de contexto; os resultados anexados abaixo "
-            "confirmam que houve enriquecimento especializado."
-        )
-    else:
-        lines.append(
-            "- The detailed plan was compacted for context budget; the attached results below confirm "
-            "that specialist enrichment ran or was reused."
-        )
-    for (provider, capability), paths in sorted(groups.items()):
-        title = f"{provider}.{capability}"
-        if portuguese:
-            lines.append(f"- `{title}` associado a {len(paths) or 1} ficheiro(s) nesta página compacta.")
-        else:
-            lines.append(f"- `{title}` associated with {len(paths) or 1} file(s) on this compact page.")
-        for path in sorted(paths)[:4]:
-            lines.append(f"  - `{path}`")
-    return "\n".join(lines)
-
-
-def _documentation_enrichment_result_lines(results: list[dict[str, Any]], *, portuguese: bool = False) -> str:
-    if not results:
-        if portuguese:
-            return "- Não foi anexado resultado de enriquecimento especializado para esta pasta."
-        return "- No specialist enrichment result was attached for this folder."
-    lines: list[str] = []
-    for result in results:
-        provider = str(result.get("provider") or "").strip()
-        capability = str(result.get("capability") or "").strip()
-        status = str(result.get("status") or "unknown").strip() or "unknown"
-        action = str(result.get("action") or "").strip()
-        title = ".".join(part for part in (provider, capability) if part)
-        title = title or ("leitura especializada" if portuguese else "specialist reading")
-        success = "success" if result.get("success") else "failed"
-        if portuguese:
-            success = "sucesso" if result.get("success") else "falhou"
-            lines.append(
-                f"- Leitura especializada `{title}` registada com estado `{status}` "
-                f"({success}{f', action={action}' if action else ''})."
-            )
-        else:
-            lines.append(
-                f"- Specialist reading `{title}` recorded status `{status}` "
-                f"({success}{f', action={action}' if action else ''})."
-            )
-        content = str(result.get("content_excerpt") or "").strip()
-        if content:
-            label = "Excerto de evidência" if portuguese else "Evidence excerpt"
-            lines.append(f"  - {label}: {_inline_excerpt(content, limit=420)}")
-        storage_refs = [str(item).strip() for item in result.get("storage_refs", []) if str(item).strip()]
-        if storage_refs:
-            label = "Referências técnicas registadas" if portuguese else "Technical references recorded"
-            lines.append(f"  - {label}: {len(storage_refs)}")
-        output_refs = result.get("output_refs")
-        if isinstance(output_refs, dict) and output_refs:
-            label = "Saídas técnicas registadas" if portuguese else "Technical outputs recorded"
-            lines.append(f"  - {label}: {len(output_refs)}")
-        quality = result.get("quality")
-        if isinstance(quality, dict) and quality:
-            shown = [f"{key}={value}" for key, value in list(quality.items())[:6]]
-            label = "Sinais de qualidade" if portuguese else "Quality signals"
-            lines.append(f"  - {label}: {', '.join(f'`{item}`' for item in shown)}")
-        error = str(result.get("error") or "").strip()
-        if error:
-            label = "Erro" if portuguese else "Error"
-            lines.append(f"  - {label}: {_inline_excerpt(error, limit=240)}")
-    return "\n".join(lines)
-
-
-def _documentation_enrichment_limitation(
-    tasks: list[dict[str, Any]],
-    results: list[dict[str, Any]],
-    *,
-    portuguese: bool = False,
-) -> str:
-    if not tasks and results:
-        successful = [result for result in results if result.get("success")]
-        if successful and any(_enrichment_result_has_semantic_excerpt(result) for result in successful):
-            if portuguese:
-                return "- Foram anexados excertos de conteúdo pelos serviços especializados; a incerteza restante depende dos sinais de qualidade de cada serviço."
-            return "- Specialist content excerpts were attached; remaining uncertainty depends on each service quality signal."
-        if successful:
-            if portuguese:
-                return "- Existem resultados técnicos disponíveis, mas esta página compacta ainda não inclui excertos de conteúdo suficientes."
-            return "- Technical results are available, but this compact page does not yet include enough content excerpts."
-    if not tasks:
-        if portuguese:
-            return "- Documentos binários, folhas de cálculo, notebooks e áudio só foram identificados quando presentes; o plano observado não exigiu leitura especializada adicional."
-        return "- Binary documents, spreadsheets, notebooks and audio were only identified when present; no additional specialist reading was required by the observed plan."
-    successful = [result for result in results if result.get("success")]
-    if successful and len(successful) >= len(tasks):
-        if not any(_enrichment_result_has_semantic_excerpt(result) for result in successful):
-            if portuguese:
-                return "- Existem resultados técnicos, mas esta página ainda não recebeu excertos de conteúdo suficientes para documentação de domínio completa."
-            return "- Technical results are available, but this page still lacks enough content excerpts for complete domain documentation."
-        if portuguese:
-            return "- Foram anexados resultados de leitura especializada para as classes de evidência planeadas; a incerteza restante depende dos sinais de qualidade de cada serviço."
-        return "- Specialist reading results were attached for the planned evidence classes; remaining uncertainty depends on each service quality signal."
-    if portuguese:
-        return "- Documentos binários, folhas de cálculo, apresentações e áudio/vídeo foram identificados por path/tipo; o conteúdo só deve ser tratado como completo depois da leitura especializada listada."
-    return "- Binary documents, spreadsheets, presentations and audio/video files were identified by path/type; their content should only be treated as complete after the listed specialist reading tasks."
-
-
-def _documentation_enrichment_next_steps(
-    tasks: list[dict[str, Any]],
-    results: list[dict[str, Any]],
-    *,
-    portuguese: bool = False,
-) -> str:
-    if not tasks and results:
-        successful = [result for result in results if result.get("success")]
-        if successful and any(_enrichment_result_has_semantic_excerpt(result) for result in successful):
-            providers = sorted(
-                {
-                    ".".join(
-                        part
-                        for part in (
-                            str(result.get("provider") or "").strip(),
-                            str(result.get("capability") or "").strip(),
-                        )
-                        if part
-                    )
-                    for result in successful
-                }
-            )
-            provider_text = ", ".join(f"`{item}`" for item in providers if item) or "`specialist`"
-            if portuguese:
-                return f"- Usar a evidência anexada por {provider_text} para aprofundar a documentação sem reexecutar trabalhos por defeito.\n"
-            return f"- Use the evidence attached by {provider_text} to deepen the documentation without re-running jobs by default.\n"
-        if successful:
-            if portuguese:
-                return "- Obter ou materializar um resumo compacto dos resultados já existentes antes de repetir trabalhos.\n"
-            return "- Fetch or materialize a compact content digest from existing results before re-running jobs.\n"
-    if not tasks:
-        if portuguese:
-            return "- Manter a documentação alinhada com futuras actualizações de evidência se os ficheiros mudarem.\n"
-        return "- Keep the documentation aligned with future evidence refreshes if files change.\n"
-    completed = {
-        (str(result.get("provider") or ""), str(result.get("capability") or ""))
-        for result in results
-        if result.get("success")
-    }
-    lines: list[str] = []
-    for task in tasks:
-        provider = str(task.get("provider") or "specialist").strip() or "specialist"
-        capability = str(task.get("capability") or "enrichment").strip() or "enrichment"
-        count = len(task.get("input_paths") or [])
-        if (provider, capability) in completed:
-            matching_results = [
-                result
-                for result in results
-                if str(result.get("provider") or "").strip() == provider
-                and str(result.get("capability") or "").strip() == capability
-                and result.get("success")
-            ]
-            has_semantic = any(_enrichment_result_has_semantic_excerpt(result) for result in matching_results)
-            if portuguese:
-                if has_semantic:
-                    lines.append(
-                        f"- Usar a evidência anexada por `{provider}.{capability}` como base para aprofundar a documentação de {count} ficheiro(s)."
-                    )
-                else:
-                    lines.append(
-                        f"- Obter um resumo compacto via `{provider}.{capability}`/Storage Guardian para {count} ficheiro(s); não repetir o trabalho por defeito só porque já há referências."
-                    )
-            else:
-                if has_semantic:
-                    lines.append(
-                        f"- Use the evidence attached by `{provider}.{capability}` as source material for deeper documentation of {count} file(s)."
-                    )
-                else:
-                    lines.append(
-                        f"- Fetch a compact semantic digest through `{provider}.{capability}`/Storage Guardian for {count} file(s); do not re-run the job by default just because refs already exist."
-                    )
-        else:
-            if portuguese:
-                lines.append(
-                    f"- Executar `{provider}.{capability}` para {count} ficheiro(s) detectado(s) antes de declarar a leitura de conteúdo completa."
-                )
-            else:
-                lines.append(f"- Run `{provider}.{capability}` for {count} detected file(s) before claiming content completeness.")
-    return "\n".join(lines) + "\n"
+def _documentation_text_before_next_marker(text: str, *, markers: tuple[str, ...] | None = None) -> str:
+    next_markers = markers or (
+        "Observed files:",
+        "Inventory JSON:",
+        "Evidence observations JSON:",
+        "Content evidence tasks JSON:",
+        "Content evidence results JSON:",
+        "Specialist enrichment JSON:",
+        "Specialist enrichment results JSON:",
+    )
+    next_indexes = [text.find(next_marker) for next_marker in next_markers if text.find(next_marker) > 0]
+    if next_indexes:
+        return text[: min(next_indexes)].strip()
+    return text.strip()
 
 
 def _documentation_domain_limitation(
@@ -4762,15 +3754,15 @@ def _documentation_domain_limitation(
     missing_count = max(0, len(planned_paths - semantic_paths))
     if missing_count:
         if portuguese:
-            return f"- {missing_count} ficheiro(s) ainda só têm identificação, metadados ou excertos parciais; é necessária leitura/transcrição especializada para resumir o conteúdo em profundidade.\n"
-        return f"- {missing_count} file(s) still only have identification, metadata, or partial excerpts; specialist reading/transcription is needed for deeper content summaries.\n"
+            return f"- {missing_count} ficheiro(s) ainda só têm identificação, metadados ou excertos parciais; é necessária leitura/transcrição de conteúdo para resumir o conteúdo em profundidade.\n"
+        return f"- {missing_count} file(s) still only have identification, metadata, or partial excerpts; content reading/transcription is needed for deeper content summaries.\n"
     if planned_paths:
         if portuguese:
-            return "- Os ficheiros que exigiam leitura especializada têm conteúdo resumido quando havia excertos disponíveis.\n"
-        return "- Files requiring specialist reading are summarized when content excerpts were available.\n"
+            return "- Os ficheiros que exigiam leitura de conteúdo têm conteúdo resumido quando havia excertos disponíveis.\n"
+        return "- Files requiring content reading are summarized when content excerpts were available.\n"
     if portuguese:
-        return "- Não foram identificados ficheiros que exigissem leitura especializada adicional nesta página compacta.\n"
-    return "- No files requiring additional specialized reading were identified on this compact page.\n"
+        return "- Não foram identificados ficheiros que exigissem leitura adicional de conteúdo nesta página.\n"
+    return "- No files requiring additional content reading were identified on this page.\n"
 
 
 def _documentation_domain_next_steps(
@@ -4813,8 +3805,8 @@ def _documentation_domain_next_steps(
 def _documentation_file_evidence_lines(observations: list[dict[str, Any]], *, portuguese: bool = False) -> str:
     if not observations:
         if portuguese:
-            return "- Não havia excertos de ficheiros nem observações por ficheiro no evidence bundle."
-        return "- No file excerpts or per-file observations were available in the evidence bundle."
+            return "- Não estavam disponíveis excertos por ficheiro para esta página; ver a lista de ficheiros observados e os materiais principais."
+        return "- Per-file excerpts were not available for this page; see the observed files and main materials lists."
     lines: list[str] = []
     for item in observations[:12]:
         path = str(item.get("path") or "").strip()
@@ -4829,16 +3821,151 @@ def _documentation_file_evidence_lines(observations: list[dict[str, Any]], *, po
         if sha_short:
             facts.append(sha_short)
         lines.append(f"- `{path}` ({'; '.join(facts)})")
-        excerpt = str(item.get("excerpt") or "").strip()
-        if excerpt:
-            label = "Excerto" if portuguese else "Excerpt"
-            lines.append(f"  - {label}: {_inline_excerpt(excerpt)}")
+        lines.extend(_documentation_public_file_summary_lines(item, portuguese=portuguese))
     if len(observations) > 12:
         if portuguese:
-            lines.append(f"- Foram omitidas {len(observations) - 12} observações adicionais nesta página compacta.")
+            lines.append(f"- Foram omitidas {len(observations) - 12} observações adicionais nesta página.")
             return "\n".join(lines)
-        lines.append(f"- {len(observations) - 12} additional file observations were omitted from this compact page.")
+        lines.append(f"- {len(observations) - 12} additional file observations were omitted from this page.")
     return "\n".join(lines)
+
+
+def _documentation_public_file_summary_lines(item: dict[str, Any], *, portuguese: bool = False) -> list[str]:
+    path = str(item.get("path") or "").strip()
+    excerpt = str(item.get("excerpt") or "").strip()
+    if not excerpt:
+        return []
+    summary = _documentation_source_summary_phrase(path, excerpt)
+    headings = _documentation_markdown_heading_terms(excerpt, limit=6)
+    symbols = _documentation_code_or_reference_terms(path, excerpt, limit=8)
+    lines: list[str] = []
+    if summary:
+        label = "Resumo" if portuguese else "Summary"
+        lines.append(f"  - {label}: {summary}")
+    if headings:
+        label = "Estrutura/temas" if portuguese else "Structure/themes"
+        lines.append(f"  - {label}: {', '.join(f'`{term}`' for term in headings)}")
+    if symbols:
+        label = "Termos/símbolos úteis" if portuguese else "Useful terms/symbols"
+        lines.append(f"  - {label}: {', '.join(f'`{term}`' for term in symbols)}")
+    if not lines and _content_has_documentation_value(excerpt):
+        label = "Conteúdo legível" if portuguese else "Readable content"
+        lines.append(f"  - {label}: {_inline_excerpt(excerpt)}")
+    return lines
+
+
+def _documentation_source_summary_phrase(path: str, excerpt: str) -> str:
+    cleaned = _clean_documentation_excerpt(excerpt, limit=520)
+    category = _documentation_material_category(path)
+    if category in {"data", "sql"} and cleaned:
+        return _inline_excerpt(cleaned, limit=360)
+    if not _content_has_documentation_value(cleaned):
+        return ""
+    heading_terms = _documentation_markdown_heading_terms(excerpt, limit=3)
+    suffix = Path(path).suffix.casefold()
+    if heading_terms and suffix in {".md", ".markdown", ".rst", ".txt"}:
+        body = _documentation_body_excerpt(excerpt, limit=320)
+        detail = f" {body}" if body else ""
+        return _inline_excerpt(
+            f"Documento centrado em {', '.join(heading_terms)}.{detail}",
+            limit=360,
+        )
+    python_terms = _documentation_python_symbol_terms(excerpt, limit=5)
+    if suffix == ".py" and python_terms:
+        return _inline_excerpt(
+            f"Ficheiro Python com símbolos observados: {', '.join(python_terms)}. {cleaned}",
+            limit=360,
+        )
+    return _inline_excerpt(cleaned, limit=360)
+
+
+def _documentation_markdown_heading_terms(text: str, *, limit: int) -> list[str]:
+    terms: list[str] = []
+    for match in re.finditer(r"(?m)^\s{0,3}#{1,6}\s+(?P<title>.+?)\s*$", str(text or "")):
+        title = _documentation_clean_heading_text(match.group("title"))
+        if title:
+            terms.append(title)
+        if len(terms) >= limit:
+            break
+    if terms:
+        return _dedupe_strings(terms)[:limit]
+    for match in re.finditer(r"(?m)^\s*(?:[-*]|\d+[.)])\s+\*\*(?P<title>[^*]{3,80})\*\*", str(text or "")):
+        title = _documentation_clean_heading_text(match.group("title"))
+        if title:
+            terms.append(title)
+        if len(terms) >= limit:
+            break
+    return _dedupe_strings(terms)[:limit]
+
+
+def _documentation_body_excerpt(text: str, *, limit: int) -> str:
+    lines: list[str] = []
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if re.match(r"^#{1,6}\s+", line):
+            continue
+        if re.match(r"^[-*_]{3,}$", line):
+            continue
+        if line.startswith("|") and line.endswith("|"):
+            continue
+        if line.startswith("```"):
+            continue
+        lines.append(line)
+        if len(" ".join(lines)) >= limit:
+            break
+    return _clean_documentation_excerpt(" ".join(lines), limit=limit)
+
+
+def _documentation_clean_heading_text(text: str) -> str:
+    cleaned = re.sub(r"`([^`]+)`", r"\1", str(text or ""))
+    cleaned = re.sub(r"\*\*([^*]+)\*\*", r"\1", cleaned)
+    cleaned = re.sub(r"\[[^\]]*\]\([^)]*\)", " ", cleaned)
+    cleaned = re.sub(r"[^\wÀ-ÖØ-öø-ÿ .:/+-]+", " ", cleaned, flags=re.UNICODE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -:;.")
+    return cleaned[:90]
+
+
+def _documentation_code_or_reference_terms(path: str, excerpt: str, *, limit: int) -> list[str]:
+    suffix = Path(path).suffix.casefold()
+    terms: list[str] = []
+    if suffix == ".py":
+        terms.extend(_documentation_python_symbol_terms(excerpt, limit=limit))
+    for match in re.finditer(r"`([^`\n]{2,80})`", str(excerpt or "")):
+        term = match.group(1).strip()
+        if _documentation_public_term(term):
+            terms.append(term)
+        if len(_dedupe_strings(terms)) >= limit:
+            break
+    return _dedupe_strings(terms)[:limit]
+
+
+def _documentation_python_symbol_terms(text: str, *, limit: int) -> list[str]:
+    terms: list[str] = []
+    patterns = (
+        r"(?m)^\s*class\s+([A-Za-z_][A-Za-z0-9_]*)",
+        r"(?m)^\s*def\s+([A-Za-z_][A-Za-z0-9_]*)",
+        r"(?m)^\s*async\s+def\s+([A-Za-z_][A-Za-z0-9_]*)",
+        r"(?m)^\s*from\s+([A-Za-z_][A-Za-z0-9_.]*)\s+import\b",
+        r"(?m)^\s*import\s+([A-Za-z_][A-Za-z0-9_.]*)",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, str(text or "")):
+            terms.append(match.group(1))
+            if len(_dedupe_strings(terms)) >= limit:
+                return _dedupe_strings(terms)[:limit]
+    return _dedupe_strings(terms)[:limit]
+
+
+def _documentation_public_term(term: str) -> bool:
+    value = str(term or "").strip()
+    if len(value) < 2 or len(value) > 80:
+        return False
+    lowered = value.casefold()
+    if any(marker in lowered for marker in ("storage_guardian://", "job_id", "created_job", "reused_result")):
+        return False
+    return bool(re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9]", value))
 
 
 _DOCUMENTATION_PUBLIC_PAGE_FORBIDDEN_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -4854,7 +3981,202 @@ _DOCUMENTATION_PUBLIC_PAGE_FORBIDDEN_PATTERNS: tuple[tuple[str, re.Pattern[str]]
     ("raw_extraction_wording", re.compile(r"\b(?:Conteúdo extraído/transcrito|Extracted/transcribed content)\b", re.IGNORECASE)),
     ("raw_file_warning", re.compile(r"\b(?:file_too_large|binary_or_unsupported_text_type_not_read|sha256_skipped_due_to_size)\b", re.IGNORECASE)),
     ("metadata_only_status", re.compile(r"\b(?:só metadados|metadata only)\b", re.IGNORECASE)),
+    ("owner_status_wording", re.compile(r"\b(?:reused_result|created_job)\b", re.IGNORECASE)),
+    ("reused_result_wording", re.compile(r"\b(?:reused transcript|reused extraction|transcri[cç][aã]o reutilizada|extra[cç][aã]o reutilizada)\b", re.IGNORECASE)),
+    ("raw_excerpt_label", re.compile(r"\b(?:Excerpt|Excerto):\s*`", re.IGNORECASE)),
+    (
+        "internal_evidence_wording",
+        re.compile(
+            r"\b(?:evidence bundle|Não havia excertos de ficheiros|No file excerpts or per-file observations|"
+            r"Não há excertos de conteúdo suficientes|not enough content excerpts|digests sem[aâ]nticos|"
+            r"semantic digests|contexto compacto|compact context|deve pedir/usar|should ask/use|"
+            r"Research evidence answerability|no usable evidence|insufficient_evidence|degraded_sources|"
+            r"retrieval_modes|rag_notes|rag_code|cag_pack)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    ("internal_context_marker", re.compile(r"\b(?:Inventory JSON|Evidence observations JSON|Content evidence tasks JSON|Content evidence results JSON|Specialist enrichment JSON|Specialist enrichment results JSON)\b", re.IGNORECASE)),
+    ("connector_artifact", re.compile(r"\b(?:It also indicates|Também indica)\b", re.IGNORECASE)),
+    (
+        "placeholder_contact",
+        re.compile(
+            r"\[(?:Seu Nome|Seu Email|Your Name|Your Email|Data|Date|Nome(?: do Usu[aá]rio)?|Name|Email|not provided)\]"
+            r"|\b(?:TBD|TODO|John Doe|Jane Doe|john\.doe@example\.com|jane\.doe@example\.com|"
+            r"author@example\.com|your\.email@example\.com)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    ("auto_generated_boilerplate", re.compile(r"\b(?:gerad[ao]\s+em\s+\d{4}-\d{2}-\d{2}|generated\s+(?:on|in)\s+\d{4}-\d{2}-\d{2}|automatically generated)\b", re.IGNORECASE)),
 )
+
+
+def _documentation_contractual_evidence_augmentation(
+    content: str,
+    *,
+    file_spec: MaterialFileSpec,
+    plan: MaterialPlan,
+    contract_issues: list[dict[str, Any]],
+) -> str | None:
+    if not _plan_is_documentation_bundle(plan):
+        return None
+    issue_types = {str(issue.get("issue_type") or "") for issue in contract_issues}
+    augmentable = {
+        "documentation_insufficient_structure",
+        "documentation_too_short",
+        "documentation_missing_observed_file_anchors",
+        "documentation_missing_evidence_terms",
+        "documentation_narrative_missing_key_evidence_terms",
+    }
+    if not issue_types & augmentable:
+        return None
+    if any(
+        issue_type not in augmentable
+        and (issue_type.startswith("documentation_") or issue_type in {name for name, _ in _DOCUMENTATION_PUBLIC_PAGE_FORBIDDEN_PATTERNS})
+        for issue_type in issue_types
+    ):
+        return None
+
+    portuguese = _documentation_is_portuguese(plan)
+    sections: list[str] = []
+    source_paths = _documentation_source_paths_from_file_spec(file_spec)
+    if source_paths and (
+        "documentation_missing_observed_file_anchors" in issue_types
+        or "documentation_insufficient_structure" in issue_types
+        or "documentation_too_short" in issue_types
+    ):
+        source_lines = "\n".join(f"- `{path}`" for path in source_paths[:16])
+        heading = "Índice de Materiais Fonte" if portuguese else "Source Material Index"
+        sections.append(f"## {heading}\n\n{source_lines}")
+
+    evidence_terms = _dedupe_strings(
+        [
+            *_documentation_issue_sample_terms(
+                contract_issues,
+                issue_types={"documentation_missing_evidence_terms"},
+            ),
+            *_documentation_salient_evidence_terms(file_spec, limit=16),
+        ]
+    )
+    narrative_terms = _dedupe_strings(
+        [
+            *_documentation_issue_sample_terms(
+                contract_issues,
+                issue_types={"documentation_narrative_missing_key_evidence_terms"},
+            ),
+            *_documentation_key_evidence_terms(file_spec, limit=12),
+        ]
+    )
+    combined_terms = _dedupe_strings([*evidence_terms[:12], *narrative_terms[:8]])
+    narrative_signal_terms = _documentation_public_signal_terms(narrative_terms[:8] or combined_terms[:8])
+    if narrative_signal_terms and "documentation_narrative_missing_key_evidence_terms" in issue_types:
+        terms_text = ", ".join(narrative_signal_terms[:8])
+        if portuguese:
+            sections.append(
+                "## Leitura do Conteúdo\n\n"
+                "A leitura dos materiais fonte deve destacar os conceitos e marcadores concretos "
+                f"{terms_text}, porque estes aparecem na evidência recolhida e ajudam a orientar o estudo da pasta."
+            )
+        else:
+            sections.append(
+                "## Content Reading\n\n"
+                "The source materials should be read around the concrete concepts and markers "
+                f"{terms_text}, because these appear in the collected evidence and help guide study of this folder."
+            )
+    public_signal_terms = _documentation_public_signal_terms(combined_terms)
+    if public_signal_terms:
+        terms_text = ", ".join(public_signal_terms[:16])
+        if portuguese:
+            sections.append(
+                "## Sinais de Conteúdo\n\n"
+                f"O material observado contém estes sinais concretos de conteúdo: {terms_text}."
+            )
+        else:
+            sections.append(
+                "## Content Signals\n\n"
+                f"The observed material contains the following concrete content signals: {terms_text}."
+            )
+
+    inventory = _inventory_from_documentation_purpose(file_spec.purpose)
+    categories = inventory.get("categories") if isinstance(inventory, dict) else {}
+    inventory_lines: list[str] = []
+    if isinstance(categories, dict):
+        for label, details in sorted(categories.items()):
+            if not isinstance(details, dict):
+                continue
+            count = int(details.get("count") or 0)
+            sample = details.get("sample")
+            samples = [str(item) for item in sample[:4] if str(item)] if isinstance(sample, list) else []
+            if count or samples:
+                display_label = _documentation_inventory_label(label, portuguese=portuguese)
+                suffix_label = "exemplos" if portuguese else "examples"
+                suffix = f"; {suffix_label}: {', '.join(samples)}" if samples else ""
+                inventory_lines.append(f"- {display_label}: {count}{suffix}")
+    if inventory_lines:
+        heading = "Classes de Materiais" if portuguese else "Material Classes"
+        sections.append(f"## {heading}\n\n" + "\n".join(inventory_lines))
+
+    warning_count = sum(
+        1
+        for observation in _file_observations_from_documentation_purpose(file_spec.purpose)
+        if isinstance(observation, dict) and observation.get("warnings")
+    )
+    if warning_count:
+        if portuguese:
+            sections.append(
+                "## Limitações de Leitura\n\n"
+                f"{warning_count} item(ns) fonte observado(s) só estavam disponíveis como amostra, binário, "
+                "ficheiro grande ou evidência limitada por metadados."
+            )
+        else:
+            sections.append(
+                "## Reading Limitations\n\n"
+                f"{warning_count} observed source item(s) were only available as sampled, binary, large, or metadata-limited evidence."
+            )
+
+    if portuguese:
+        supplemental_sections = [
+            (
+                "## Uso da Evidência\n\n"
+                "O texto da documentação está ancorado nos caminhos fonte inspecionados, excertos legíveis "
+                "e termos de evidência estruturados listados acima."
+            ),
+            (
+                "## Notas de Revisão\n\n"
+                "Esta página deve ser lida como documentação baseada na evidência local disponível e nos "
+                "materiais fonte identificados."
+            ),
+        ]
+    else:
+        supplemental_sections = [
+            (
+                "## Evidence Use\n\n"
+                "The documentation text is grounded in the inspected source paths, readable excerpts, and structured evidence terms listed above."
+            ),
+            (
+                "## Review Notes\n\n"
+                "This page should be read as documentation grounded in the available local evidence and the listed source anchors."
+            ),
+        ]
+    for supplemental in supplemental_sections:
+        if _markdown_heading_count("\n\n".join([content, *sections])) >= 5:
+            break
+        sections.append(supplemental)
+    if not sections:
+        return None
+    return f"{str(content or '').rstrip()}\n\n" + "\n\n".join(sections) + "\n"
+
+
+def _documentation_inventory_label(label: str, *, portuguese: bool) -> str:
+    value = str(label or "").strip()
+    if not portuguese:
+        return value
+    return {
+        "documents": "documentos",
+        "data": "dados",
+        "sql": "SQL/config",
+        "media": "media",
+        "other": "outros",
+    }.get(value.casefold(), value)
 
 
 def _documentation_file_quality_issues(
@@ -4885,6 +4207,9 @@ def _documentation_file_quality_issues(
                 "excerpt": _compact_text(match.group(0), 120),
             }
         )
+    language_issue = _documentation_language_contract_issue(text, file_spec=file_spec, plan=plan)
+    if language_issue:
+        issues.append(language_issue)
 
     if not include_depth_checks:
         return issues
@@ -4892,13 +4217,16 @@ def _documentation_file_quality_issues(
     if "not documented yet" in lowered or "não documentado ainda" in lowered:
         issues.append({"issue_type": "documentation_placeholder_status", "path": file_spec.path})
 
-    portuguese = _documentation_is_portuguese(plan)
-    if portuguese and re.search(
-        r"^#\s*(?:Document Overview|README\.md)\b|^##\s*(?:Inspected Path|Evidence Summary|Generated Documentation Map|Validation Status|Limitations|Next Steps)\b",
-        text,
-        flags=re.IGNORECASE | re.MULTILINE,
-    ):
-        issues.append({"issue_type": "documentation_language_mismatch", "path": file_spec.path})
+    if rel_path == "README.md":
+        expected_workspace = _documentation_readme_expected_workspace(file_spec.purpose)
+        if expected_workspace and not expected_workspace.startswith("/host_home") and expected_workspace.casefold() not in lowered:
+            issues.append(
+                {
+                    "issue_type": "documentation_missing_workspace_anchor",
+                    "path": file_spec.path,
+                    "expected_workspace": expected_workspace,
+                }
+            )
 
     is_subfolder_page = rel_path.startswith("subfolders/") and rel_path.endswith(".md")
     if is_subfolder_page:
@@ -4917,6 +4245,22 @@ def _documentation_file_quality_issues(
                     "path": file_spec.path,
                     "min_chars": min_chars,
                     "actual_chars": len(text),
+                }
+            )
+        source_paths = _documentation_source_paths_from_file_spec(file_spec)
+        missing_source_paths = [
+            path
+            for path in source_paths[:16]
+            if path.casefold() not in lowered and f"`{path}`".casefold() not in lowered
+        ]
+        if missing_source_paths:
+            issues.append(
+                {
+                    "issue_type": "documentation_missing_observed_file_anchors",
+                    "path": file_spec.path,
+                    "observed_file_count": len(source_paths),
+                    "matched_file_count": len(source_paths[:16]) - len(missing_source_paths),
+                    "missing_source_paths": missing_source_paths[:8],
                 }
             )
         observed = [
@@ -4938,7 +4282,34 @@ def _documentation_file_quality_issues(
                         "matched_file_count": matches,
                     }
                 )
+        issues.extend(_documentation_required_evidence_term_issues(text, file_spec=file_spec))
+        issues.extend(_documentation_required_narrative_key_evidence_term_issues(text, file_spec=file_spec))
     return issues
+
+
+def _documentation_language_contract_issue(
+    content: str,
+    *,
+    file_spec: MaterialFileSpec,
+    plan: MaterialPlan,
+) -> dict[str, Any] | None:
+    if not _documentation_is_portuguese(plan):
+        return None
+    match = re.search(
+        r"(?im)^\s*#{1,6}\s+"
+        r"(?:Overview|Objectives?|Tasks?|Deliverables?|Timeline|Resources|Contact Information|Conclusion|"
+        r"Note|Analysis|Limitations|Next Steps|Source Material Index|Content Signals|Material Classes|"
+        r"Reading Limitations|Evidence Use|Review Notes)\s*$",
+        content,
+    )
+    if match is None:
+        return None
+    return {
+        "issue_type": "documentation_language_mismatch",
+        "path": file_spec.path,
+        "excerpt": _compact_text(match.group(0), 120),
+        "expected_language": "pt-PT",
+    }
 
 
 def _documentation_required_subfolder_section_issues(
@@ -4957,43 +4328,317 @@ def _documentation_required_subfolder_section_issues(
     if not evidence_available:
         return []
 
-    portuguese = _documentation_is_portuguese(plan)
-    if portuguese:
-        required_sections = (
-            "Ficheiros Observados",
-            "Tipos de Material Detectados",
-            "Materiais Principais",
-            "Leitura Consolidada",
-            "Conteúdo por Ficheiro",
-            "Limitações",
-        )
-    else:
-        required_sections = (
-            "Observed Files",
-            "Detected Material Types",
-            "Main Materials",
-            "Consolidated Reading",
-            "Content By File",
-            "Limitations",
-        )
-
     issues: list[dict[str, Any]] = []
-    for heading in required_sections:
-        if _markdown_heading_present(content, heading):
-            continue
+    heading_count = _markdown_heading_count(content)
+    min_headings = 5
+    if heading_count < min_headings:
         issues.append(
             {
-                "issue_type": "documentation_missing_required_section",
+                "issue_type": "documentation_insufficient_structure",
                 "path": file_spec.path,
-                "section": heading,
+                "min_headings": min_headings,
+                "heading_count": heading_count,
             }
         )
     return issues
 
 
-def _markdown_heading_present(content: str, heading: str) -> bool:
-    pattern = rf"^\s*#{{1,6}}\s+{re.escape(heading)}\s*$"
-    return bool(re.search(pattern, content, flags=re.IGNORECASE | re.MULTILINE))
+def _documentation_readme_expected_workspace(purpose: str) -> str:
+    match = re.search(r"Inspected workspace display path:\s*(.+?)(?:\.\s|$)", purpose)
+    if not match:
+        return ""
+    value = match.group(1).strip().strip("`")
+    if not value or value.casefold() == "unknown":
+        return ""
+    return value
+
+
+def _markdown_heading_count(content: str) -> int:
+    return len(re.findall(r"(?m)^\s*#{1,6}\s+\S", content))
+
+
+def _markdown_section_bodies(content: str) -> list[str]:
+    matches = list(re.finditer(r"(?m)^(?P<marks>#{1,6})\s+\S.*$", content))
+    bodies: list[str] = []
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(content)
+        body = content[match.end() : end].strip()
+        if body:
+            bodies.append(body)
+    return bodies
+
+
+def _documentation_required_evidence_term_issues(
+    content: str,
+    *,
+    file_spec: MaterialFileSpec,
+) -> list[dict[str, Any]]:
+    terms = _documentation_salient_evidence_terms(file_spec, limit=24)
+    if len(terms) < 6:
+        return []
+    normalized = _documentation_normalize_term_text(content)
+    matched = [term for term in terms if _documentation_normalize_term_text(term) in normalized]
+    required = min(5, max(2, len(terms) // 5))
+    if len(matched) >= required:
+        return []
+    return [
+        {
+            "issue_type": "documentation_missing_evidence_terms",
+            "path": file_spec.path,
+            "required_match_count": required,
+            "matched_term_count": len(matched),
+            "sample_terms": terms[:12],
+        }
+    ]
+
+
+def _documentation_required_narrative_key_evidence_term_issues(
+    content: str,
+    *,
+    file_spec: MaterialFileSpec,
+) -> list[dict[str, Any]]:
+    key_terms = _documentation_key_evidence_terms(file_spec, limit=18)
+    if len(key_terms) < 3:
+        return []
+    narrative = _documentation_public_narrative_text(content, file_spec=file_spec)
+    normalized = _documentation_normalize_term_text(narrative)
+    matched = [
+        term
+        for term in key_terms
+        if _documentation_normalize_term_text(term) and _documentation_normalize_term_text(term) in normalized
+    ]
+    required = min(3, max(2, len(key_terms) // 6))
+    if len(matched) >= required:
+        return []
+    return [
+        {
+            "issue_type": "documentation_narrative_missing_key_evidence_terms",
+            "path": file_spec.path,
+            "required_match_count": required,
+            "matched_term_count": len(matched),
+            "sample_terms": key_terms[:10],
+        }
+    ]
+
+
+def _documentation_public_narrative_text(content: str, *, file_spec: MaterialFileSpec) -> str:
+    narrative_sections: list[str] = []
+    for section in _markdown_section_bodies(content):
+        without_file_anchors = re.sub(r"`[^`\n]*(?:/|\.[A-Za-z0-9]{1,8})[^`\n]*`", " ", section)
+        without_list_markers = re.sub(r"(?m)^\s*[-*]\s+", " ", without_file_anchors)
+        if _content_has_documentation_value(without_list_markers):
+            narrative_sections.append(without_list_markers)
+    return "\n".join(narrative_sections)
+
+
+def _documentation_source_paths_from_file_spec(file_spec: MaterialFileSpec) -> list[str]:
+    return _documentation_source_paths_from_purpose(file_spec.purpose)
+
+
+def _documentation_public_signal_terms(terms: list[str]) -> list[str]:
+    public_terms: list[str] = []
+    for term in terms:
+        value = str(term or "").strip()
+        if not value:
+            continue
+        if "/" in value or "\\" in value:
+            continue
+        if re.search(r"\.[A-Za-z0-9]{1,8}$", value):
+            continue
+        public_terms.append(value)
+    return _dedupe_strings(public_terms)
+
+
+def _documentation_source_paths_from_purpose(purpose: str, *, limit: int = 120) -> list[str]:
+    paths: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: Any) -> None:
+        path = str(value or "").strip()
+        if not path or _observed_omission_match(path):
+            return
+        key = path.casefold()
+        if key in seen:
+            return
+        seen.add(key)
+        paths.append(path)
+
+    for path in _required_source_anchor_paths_from_documentation_purpose(purpose):
+        add(path)
+    for path in _observed_files_from_documentation_purpose(purpose):
+        add(path)
+    for observation in _file_observations_from_documentation_purpose(purpose):
+        add(observation.get("path") if isinstance(observation, dict) else "")
+    for result in _enrichment_results_from_documentation_purpose(purpose):
+        input_paths = result.get("input_paths") if isinstance(result, dict) else None
+        if isinstance(input_paths, list):
+            for path in input_paths:
+                add(path)
+    inventory = _inventory_from_documentation_purpose(purpose)
+    categories = inventory.get("categories") if isinstance(inventory, dict) else None
+    if isinstance(categories, dict):
+        for details in categories.values():
+            sample = details.get("sample") if isinstance(details, dict) else None
+            if isinstance(sample, list):
+                for path in sample:
+                    add(path)
+    return paths[:limit]
+
+
+_DOCUMENTATION_EVIDENCE_TERM_STOPWORDS = {
+    "about",
+    "analysis",
+    "analise",
+    "análise",
+    "available",
+    "based",
+    "column",
+    "columns",
+    "contains",
+    "content",
+    "dados",
+    "data",
+    "document",
+    "documento",
+    "documents",
+    "evidence",
+    "ficheiro",
+    "ficheiros",
+    "file",
+    "files",
+    "folder",
+    "fonte",
+    "information",
+    "material",
+    "materials",
+    "observed",
+    "observado",
+    "observados",
+    "page",
+    "pasta",
+    "project",
+    "projeto",
+    "result",
+    "results",
+    "source",
+    "summary",
+    "table",
+    "text",
+    "value",
+    "values",
+}
+
+
+def _documentation_salient_evidence_terms(file_spec: MaterialFileSpec, *, limit: int) -> list[str]:
+    snippets: list[str] = []
+    for result in _enrichment_results_from_documentation_purpose(file_spec.purpose):
+        content_excerpt = str(result.get("content_excerpt") or "").strip()
+        if _content_has_documentation_value(content_excerpt):
+            snippets.append(_clean_documentation_excerpt(content_excerpt, limit=1400))
+        snippets.extend(_semantic_digest_excerpts(result))
+        digest = result.get("semantic_digest")
+        summary = digest.get("summary") if isinstance(digest, dict) else {}
+        if isinstance(summary, dict):
+            snippets.extend(
+                _clean_documentation_excerpt(value, limit=900)
+                for value in summary.values()
+                if isinstance(value, str) and _content_has_documentation_value(value)
+            )
+    for item in _file_observations_from_documentation_purpose(file_spec.purpose):
+        snippets.append(str(item.get("excerpt") or ""))
+        profile = item.get("profile")
+        if isinstance(profile, dict):
+            snippets.append(_documentation_profile_text_for_terms(profile))
+    return _documentation_salient_terms_from_snippets(snippets, limit=limit)
+
+
+def _documentation_key_evidence_terms(file_spec: MaterialFileSpec, *, limit: int) -> list[str]:
+    terms = _documentation_salient_evidence_terms(file_spec, limit=limit * 3)
+    key_terms: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        if not _documentation_term_has_key_signal(term):
+            continue
+        normalized = _documentation_normalize_term_text(term)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        key_terms.append(term)
+        if len(key_terms) >= limit:
+            break
+    return key_terms
+
+
+def _documentation_profile_text_for_terms(profile: dict[str, Any]) -> str:
+    kind = str(profile.get("kind") or "").strip()
+    if kind == "delimited_table":
+        columns = [str(item) for item in profile.get("columns", []) if str(item)] if isinstance(profile.get("columns"), list) else []
+        return " ".join(columns[:24])
+    if kind == "notebook":
+        cells = profile.get("sample_cells")
+        return " ".join(str(item) for item in cells[:4]) if isinstance(cells, list) else ""
+    if kind in {"json", "jsonl"}:
+        keys = profile.get("keys")
+        return " ".join(str(item) for item in keys[:24]) if isinstance(keys, list) else ""
+    if kind == "text":
+        sql = profile.get("sql_statements")
+        return " ".join(str(item) for item in sql[:8]) if isinstance(sql, list) else ""
+    return ""
+
+
+def _documentation_salient_terms_from_snippets(snippets: list[str], *, limit: int) -> list[str]:
+    terms: list[str] = []
+    seen: set[str] = set()
+    text = "\n".join(snippet for snippet in snippets if snippet)
+    for match in re.finditer(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9][A-Za-zÀ-ÖØ-öø-ÿ0-9_.:+-]{1,}", text):
+        raw = match.group(0).strip("._:+-")
+        if not raw:
+            continue
+        normalized = _documentation_normalize_term_text(raw)
+        if not _documentation_term_has_signal(raw, normalized):
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        terms.append(raw)
+        if len(terms) >= limit:
+            break
+    return terms
+
+
+def _documentation_term_has_signal(raw: str, normalized: str) -> bool:
+    if not normalized:
+        return False
+    if normalized in _DOCUMENTATION_EVIDENCE_TERM_STOPWORDS:
+        return False
+    if normalized in {"pdf", "docx", "pptx", "xlsx", "csv", "txt", "md", "json", "sql", "m4a", "mp3", "wav"}:
+        return False
+    if normalized.isdigit():
+        return False
+    if len(normalized) >= 4:
+        return True
+    return len(normalized) >= 2 and raw.isupper()
+
+
+def _documentation_term_has_key_signal(term: str) -> bool:
+    raw = str(term or "").strip()
+    if not raw:
+        return False
+    normalized = _documentation_normalize_term_text(raw)
+    if not normalized or normalized in _DOCUMENTATION_EVIDENCE_TERM_STOPWORDS:
+        return False
+    if any(char.isdigit() for char in raw):
+        return True
+    if any(char in raw for char in ("_", ".", "-", "/", ":")):
+        return True
+    return raw.isupper() and len(raw) >= 2
+
+
+def _documentation_normalize_term_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", str(value or "").casefold())
+    normalized = "".join(char for char in normalized if not unicodedata.combining(char))
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    return " ".join(normalized.split())
 
 
 def _documentation_publication_lint(
@@ -5037,6 +4682,20 @@ def _clean_documentation_excerpt(text: str, *, limit: int = 900) -> str:
     cleaned = " ".join(str(text or "").split())
     if not cleaned:
         return ""
+    cleaned = re.sub(r"\b(?:It also indicates|Também indica)\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:created_job|reused_result)\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\breused\s+transcript\b", "transcript", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\breused\s+extraction\b", "extraction", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\btranscri[cç][aã]o\s+reutilizada\b", "transcrição", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bextra[cç][aã]o\s+reutilizada\b", "extração", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"\b(?:Research evidence answerability|no usable evidence|insufficient_evidence|degraded_sources|"
+        r"retrieval_modes|rag_notes|rag_code|cag_pack)\b\s*[:=]?\s*[\w, -]*",
+        " ",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\bPlan:\s*intent=[^.;]+[.;]?", " ", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s*\[truncated\]\s*", " ", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s*\.\.\.\s*", " ", cleaned)
     cleaned = re.sub(r"^(#+\s*)?Page\s+\d+\s*", "", cleaned, flags=re.IGNORECASE)
@@ -5045,6 +4704,96 @@ def _clean_documentation_excerpt(text: str, *, limit: int = 900) -> str:
     if len(cleaned) > limit:
         cleaned = cleaned[:limit].rsplit(" ", 1)[0].rstrip(" ,;:.") + "..."
     return cleaned
+
+
+def _sanitize_documentation_public_content(content: str, *, portuguese: bool = False) -> str:
+    """Remove runtime-only wording from user-facing documentation pages."""
+    sanitized = str(content or "")
+    sanitized = re.sub(
+        r"(?im)^.*\b(?:retrieval_modes|rag_notes|rag_code|cag_pack|"
+        r"Research evidence answerability|insufficient_evidence|degraded_sources)\b.*$",
+        "",
+        sanitized,
+    )
+    replacements: tuple[tuple[str, str], ...] = (
+        (r"\bstorage_guardian://[^\s`)>\]]+", ""),
+        (r"/host_home\b/?", "/"),
+        (r"\bextrator\.document_extraction\b", "document content"),
+        (r"\baudio_transcribe\.audio_transcription\b", "audio content"),
+        (r"\baudio_transcribe\b", "audio content"),
+        (r"\bmaterial_builder\b", "documentation workflow"),
+        (r"\bmaterial_execution_kernel\b", "documentation workflow"),
+        (r"\bStorage Guardian\b", "local evidence store"),
+        (r"\bDocument Extraction\b", "Document Content"),
+        (r"\bdocument extraction\b", "document content"),
+        (r"\bAudio Transcription\b", "Audio Content"),
+        (r"\baudio transcription\b", "audio content"),
+        (r"\bExtracted/transcribed content\b", "Observed content"),
+        (r"\bConte[úu]do extra[ií]do/transcrito\b", "Conteúdo observado"),
+        (r"\bExcerpt:\s*`", "Content note: `"),
+        (r"\bExcerto:\s*`", "Nota de conteúdo: `"),
+        (r"\breused\s+transcript\b", "transcript"),
+        (r"\breused\s+extraction\b", "extraction"),
+        (r"\btranscri[cç][aã]o\s+reutilizada\b", "transcrição"),
+        (r"\bextra[cç][aã]o\s+reutilizada\b", "extração"),
+        (r"\breturned\b", "contains"),
+        (r"\bdevolveu\b", "contém"),
+        (r"\b(?:created_job|reused_result)\b", ""),
+        (r"\b(?:It also indicates|Também indica)\b", ""),
+        (r"\bPlan:\s*intent=[^.;]+[.;]?", ""),
+        (
+            r"\b(?:Research evidence answerability|no usable evidence|insufficient_evidence|degraded_sources|"
+            r"retrieval_modes|rag_notes|rag_code|cag_pack)\b\s*[:=]?\s*[\w, -]*",
+            "",
+        ),
+        (r"\bInventory JSON\b", "Inventory"),
+        (r"\bEvidence observations JSON\b", "Evidence observations"),
+        (r"\bContent evidence tasks JSON\b", "Content evidence tasks"),
+        (r"\bContent evidence results JSON\b", "Content evidence results"),
+        (r"\bSpecialist enrichment results JSON\b", "Content evidence results"),
+        (r"\bSpecialist Enrichment\b", "Material Analysis"),
+        (r"\bEnriquecimento Especializado\b", "Análise dos Materiais"),
+        (r"\bTasks Performed\b", "Material Summary"),
+        (r"\bEvidência Importante\b", "Evidência de Conteúdo"),
+        (r"\bImportant Evidence\b", "Content Evidence"),
+    )
+    for pattern, replacement in replacements:
+        sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+    if portuguese:
+        heading_replacements = {
+            "Overview": "Âmbito",
+            "Scope": "Âmbito",
+            "Objectives": "Objectivos",
+            "Objective": "Objectivo",
+            "Tasks": "Tarefas",
+            "Deliverables": "Entregáveis",
+            "Timeline": "Cronologia",
+            "Resources": "Recursos",
+            "Contact Information": "Informação de Contacto",
+            "Conclusion": "Conclusão",
+            "Note": "Nota",
+            "Analysis": "Análise",
+            "Limitations": "Limitações",
+            "Next Steps": "Próximos Passos",
+            "Source Material Index": "Índice de Materiais Fonte",
+            "Content Signals": "Sinais de Conteúdo",
+            "Material Classes": "Classes de Materiais",
+            "Reading Limitations": "Limitações de Leitura",
+            "Evidence Use": "Uso da Evidência",
+            "Review Notes": "Notas de Revisão",
+            "Main Materials": "Materiais Principais",
+            "Content Summary By Source": "Resumo de Conteúdo por Fonte",
+            "Consolidated Reading": "Leitura Consolidada",
+        }
+        for heading, localized in heading_replacements.items():
+            sanitized = re.sub(
+                rf"(?im)^(\s*#{{1,6}}\s+){re.escape(heading)}\s*$",
+                rf"\1{localized}",
+                sanitized,
+            )
+    sanitized = re.sub(r"[ \t]+\n", "\n", sanitized)
+    sanitized = re.sub(r"\n{4,}", "\n\n\n", sanitized)
+    return sanitized.strip() + ("\n" if sanitized.endswith("\n") else "")
 
 
 def _documentation_content_summary_lines(
@@ -5060,17 +4809,20 @@ def _documentation_content_summary_lines(
         if len(lines) >= 16:
             return
         clean_text = " ".join(str(text or "").split())
-        if not _content_has_documentation_value(clean_text):
-            return
-        clean_text = _clean_documentation_excerpt(clean_text, limit=1200)
-        if not clean_text:
-            return
         clean_path = str(path or "").strip() or "<unknown>"
-        key = f"{clean_path}\n{clean_text[:160]}"
+        if not _content_has_documentation_value(clean_text) and _documentation_material_category(clean_path) not in {
+            "data",
+            "sql",
+        }:
+            return
+        summary = _documentation_source_summary_phrase(clean_path, clean_text)
+        if not summary:
+            return
+        key = f"{clean_path}\n{summary[:160]}"
         if key in seen:
             return
         seen.add(key)
-        lines.append(f"- `{clean_path}`: {_inline_excerpt(clean_text, limit=900)}")
+        lines.append(f"- `{clean_path}`: {summary}")
 
     for item in observations[:12]:
         add_line(
@@ -5095,12 +4847,12 @@ def _documentation_content_summary_lines(
         return "\n".join(lines)
     if portuguese:
         return (
-            "- Não há excertos de conteúdo suficientes nesta página compacta para resumir fontes específicas. "
-            "A documentação deve pedir/usar digests semânticos dos owners antes de declarar conteúdo analisado."
+            "- A página só contém conteúdo legível limitado; o resumo fica ancorado nos ficheiros observados "
+            "e nos metadados disponíveis."
         )
     return (
-        "- This compact page does not include enough content excerpts to summarize specific sources. "
-        "Documentation should request/use owner semantic digests before claiming content analysis."
+        "- This page only contains limited readable content; the summary remains anchored in the observed files "
+        "and available metadata."
     )
 
 
@@ -5175,10 +4927,10 @@ def _documentation_consolidated_summary_lines(
     if len(lines) == 1:
         if portuguese:
             lines.append(
-                "- Não há excertos semânticos suficientes nesta página compacta para uma leitura de domínio mais profunda."
+                "- A evidência legível disponível nesta página ainda é limitada para uma leitura de domínio mais profunda."
             )
         else:
-            lines.append("- There are not enough semantic excerpts on this compact page for deeper domain reading.")
+            lines.append("- The readable evidence available on this page is still limited for deeper domain reading.")
     return "\n".join(lines)
 
 
@@ -5197,7 +4949,10 @@ def _documentation_semantic_snippets(
             if len(snippets) >= limit:
                 return snippets
     for observation in observations:
-        snippet = _documentation_clean_content_phrase(str(observation.get("excerpt") or ""))
+        snippet = _documentation_source_summary_phrase(
+            str(observation.get("path") or ""),
+            str(observation.get("excerpt") or ""),
+        )
         if snippet:
             snippets.append(snippet)
         if len(snippets) >= limit:
@@ -5250,7 +5005,7 @@ def _documentation_media_profile_snippets(results: list[dict[str, Any]], *, limi
         paths = [str(path).strip() for path in result.get("input_paths", []) if str(path).strip()]
         status = str(result.get("status") or "unknown").strip() or "unknown"
         label = ", ".join(f"`{path}`" for path in paths[:2]) or "`<audio>`"
-        if status in {"reused", "completed", "ok"}:
+        if status in {"reused", "reused_result", "completed", "ok"}:
             snippets.append(f"{label} tem transcrição disponível")
         else:
             snippets.append(f"{label} tem estado de transcrição `{status}`")
@@ -5319,14 +5074,6 @@ def _markdown_list(items: list[str], *, empty: str) -> str:
     return "\n".join(lines) or f"- {empty}"
 
 
-def _summarize_category(label: str, items: list[str], *, limit: int = 6) -> list[str]:
-    if not items:
-        return []
-    sample = ", ".join(f"`{item}`" for item in items[:limit])
-    suffix = f" and {len(items) - limit} more" if len(items) > limit else ""
-    return [f"{label}: {sample}{suffix}"]
-
-
 def _summarize_inventory_category(
     label: str,
     count: int,
@@ -5354,6 +5101,7 @@ def _summarize_inventory_category(
 def _documentation_semantic_evidence_lines(
     results: list[dict[str, Any]],
     *,
+    observations: list[dict[str, Any]] | None = None,
     portuguese: bool = False,
 ) -> str:
     semantic_results = [result for result in results if _enrichment_result_has_semantic_excerpt(result)]
@@ -5383,9 +5131,43 @@ def _documentation_semantic_evidence_lines(
         return (
             "- Some files were processed without useful content excerpts on this page, so their content was not interpreted in depth."
         )
+    observation_lines = _documentation_observation_theme_lines(observations or [], portuguese=portuguese)
+    if observation_lines:
+        return observation_lines
     if portuguese:
-        return "- Não foi anexado conteúdo analisado por serviços especializados para esta subpasta."
-    return "- No specialist-analyzed content was attached for this folder."
+        return "- Não foi identificado conteúdo temático suficiente para além dos ficheiros observados nesta área."
+    return "- No thematic content beyond the observed files was identified for this area."
+
+
+def _documentation_observation_theme_lines(
+    observations: list[dict[str, Any]],
+    *,
+    portuguese: bool = False,
+) -> str:
+    terms: list[str] = []
+    paths: list[str] = []
+    for item in observations:
+        path = str(item.get("path") or "").strip()
+        excerpt = str(item.get("excerpt") or "")
+        if path:
+            paths.append(path)
+        terms.extend(_documentation_markdown_heading_terms(excerpt, limit=4))
+        terms.extend(_documentation_code_or_reference_terms(path, excerpt, limit=4))
+        if len(_dedupe_strings(terms)) >= 12:
+            break
+    terms = _dedupe_strings([term for term in terms if _documentation_public_term(term)])[:12]
+    if not terms:
+        return ""
+    path_sample = ", ".join(f"`{path}`" for path in _dedupe_strings(paths)[:4])
+    if portuguese:
+        line = f"- Temas extraídos dos ficheiros legíveis: {', '.join(f'`{term}`' for term in terms)}."
+        if path_sample:
+            line += f" Fontes principais: {path_sample}."
+        return line
+    line = f"- Themes extracted from readable files: {', '.join(f'`{term}`' for term in terms)}."
+    if path_sample:
+        line += f" Main sources: {path_sample}."
+    return line
 
 
 def _enrichment_result_has_semantic_excerpt(result: dict[str, Any]) -> bool:
@@ -5410,6 +5192,16 @@ def _enrichment_result_has_semantic_excerpt(result: dict[str, Any]) -> bool:
         "storage_guardian://",
         "em curso/fila",
         "doc_id:",
+        "retrieval_modes",
+        "rag_notes",
+        "rag_code",
+        "cag_pack",
+        "[r1] cag",
+        "cached context",
+        "knowledge graph summary",
+        "pending tasks",
+        "vault summary",
+        "sources/host_home/.cache",
     )
     if any(marker in lowered for marker in lifecycle_markers):
         return False
@@ -5455,6 +5247,16 @@ def _content_has_documentation_value(text: str) -> bool:
         "storage_guardian://",
         "em curso/fila",
         "doc_id:",
+        "retrieval_modes",
+        "rag_notes",
+        "rag_code",
+        "cag_pack",
+        "[r1] cag",
+        "cached context",
+        "knowledge graph summary",
+        "pending tasks",
+        "vault summary",
+        "sources/host_home/.cache",
     )
     return not any(marker in lowered for marker in lifecycle_markers)
 
@@ -5464,228 +5266,6 @@ def _plan_relative_path(path: str, plan: MaterialPlan) -> str:
     if root and path.startswith(f"{root}/"):
         return path[len(root) + 1 :]
     return path
-
-
-def _plan_requests_text_processing(plan: MaterialPlan) -> bool:
-    text = " ".join(
-        [
-            plan.project_root,
-            *(requirement.description for requirement in plan.requirements),
-            *(file_spec.purpose for file_spec in plan.files),
-            *plan.architecture_notes,
-        ]
-    ).casefold()
-    has_text = any(marker in text for marker in ("text", "texto", "string", "stdin"))
-    has_normalization = any(marker in text for marker in ("normaliz", "normalize", "spaces", "espaços", "espacos"))
-    has_stats = any(marker in text for marker in ("statistic", "statistics", "estat", "count", "contagem"))
-    has_json = "json" in text
-    return has_text and has_normalization and (has_stats or has_json)
-
-
-def _deterministic_text_processing_init_content() -> str:
-    return (
-        '"""Reusable text processing helpers."""\n'
-        "\n"
-        "from .core import normalize_spaces, process_text, text_statistics\n"
-        "\n"
-        '__all__ = ["normalize_spaces", "process_text", "text_statistics"]\n'
-    )
-
-
-def _deterministic_text_processing_core_content() -> str:
-    return (
-        '"""Small reusable text processing helpers."""\n'
-        "\n"
-        "from __future__ import annotations\n"
-        "\n"
-        "from typing import Any\n"
-        "\n"
-        "\n"
-        "def normalize_spaces(text: str) -> str:\n"
-        "    \"\"\"Collapse consecutive whitespace and trim surrounding space.\"\"\"\n"
-        "    return \" \".join(str(text).split())\n"
-        "\n"
-        "\n"
-        "def text_statistics(text: str) -> dict[str, int]:\n"
-        "    \"\"\"Return simple statistics for the provided text.\"\"\"\n"
-        "    raw_text = str(text)\n"
-        "    normalized = normalize_spaces(raw_text)\n"
-        "    return {\n"
-        "        \"characters\": len(normalized),\n"
-        "        \"words\": len(normalized.split()) if normalized else 0,\n"
-        "        \"lines\": raw_text.count(\"\\n\") + 1 if raw_text else 0,\n"
-        "    }\n"
-        "\n"
-        "\n"
-        "def process_text(text: str) -> dict[str, Any]:\n"
-        "    \"\"\"Normalize text and return the normalized value with statistics.\"\"\"\n"
-        "    normalized = normalize_spaces(text)\n"
-        "    return {\"normalized\": normalized, \"statistics\": text_statistics(text)}\n"
-    )
-
-
-def _deterministic_text_processing_cli_content(package_name: str) -> str:
-    return (
-        '"""Command-line interface for the text processing helpers."""\n'
-        "\n"
-        "from __future__ import annotations\n"
-        "\n"
-        "import argparse\n"
-        "import json\n"
-        "import sys\n"
-        "\n"
-        "from .core import process_text\n"
-        "\n"
-        "\n"
-        "def build_parser() -> argparse.ArgumentParser:\n"
-        "    \"\"\"Build the CLI argument parser.\"\"\"\n"
-        f"    parser = argparse.ArgumentParser(prog={package_name!r}, description=\"Normalize text and emit JSON statistics.\")\n"
-        "    parser.add_argument(\"text\", nargs=\"?\", help=\"Text to process. Reads stdin when omitted.\")\n"
-        "    return parser\n"
-        "\n"
-        "\n"
-        "def main(argv: list[str] | None = None) -> int:\n"
-        "    \"\"\"Run the CLI and write JSON to stdout.\"\"\"\n"
-        "    args = build_parser().parse_args(argv)\n"
-        "    text = args.text if args.text is not None else sys.stdin.read()\n"
-        "    print(json.dumps(process_text(text), sort_keys=True))\n"
-        "    return 0\n"
-        "\n"
-        "\n"
-        "if __name__ == \"__main__\":\n"
-        "    raise SystemExit(main())\n"
-    )
-
-
-def _deterministic_src_layout_conftest_content() -> str:
-    return (
-        "import sys\n"
-        "from pathlib import Path\n"
-        "\n"
-        "ROOT = Path(__file__).resolve().parents[1]\n"
-        "SRC = ROOT / \"src\"\n"
-        "if str(SRC) not in sys.path:\n"
-        "    sys.path.insert(0, str(SRC))\n"
-    )
-
-
-def _deterministic_text_processing_test_content(package_name: str) -> str:
-    return (
-        "import json\n"
-        "import os\n"
-        "import subprocess\n"
-        "import sys\n"
-        "from pathlib import Path\n"
-        "\n"
-        f"from {package_name} import normalize_spaces, process_text, text_statistics\n"
-        "\n"
-        "\n"
-        "def test_reusable_api_normalizes_and_counts_text():\n"
-        "    result = process_text(\"  Hello   local   AI  \")\n"
-        "    assert normalize_spaces(\"  Hello   local   AI  \") == \"Hello local AI\"\n"
-        "    assert result[\"normalized\"] == \"Hello local AI\"\n"
-        "    assert result[\"statistics\"] == {\"characters\": 14, \"words\": 3, \"lines\": 1}\n"
-        "    assert text_statistics(\"one\\ntwo\")[\"lines\"] == 2\n"
-        "\n"
-        "\n"
-        "def test_cli_outputs_json_for_argument_text():\n"
-        "    root = Path(__file__).resolve().parents[1]\n"
-        "    env = {**os.environ, \"PYTHONPATH\": str(root / \"src\")}\n"
-        "    completed = subprocess.run(\n"
-        f"        [sys.executable, \"-m\", {package_name!r}, \"  Hello   CLI  \"],\n"
-        "        cwd=root,\n"
-        "        env=env,\n"
-        "        text=True,\n"
-        "        capture_output=True,\n"
-        "        check=True,\n"
-        "    )\n"
-        "    payload = json.loads(completed.stdout)\n"
-        "    assert payload[\"normalized\"] == \"Hello CLI\"\n"
-        "    assert payload[\"statistics\"][\"words\"] == 2\n"
-    )
-
-
-def _deterministic_text_processing_readme_content_for_plan(plan: MaterialPlan) -> str:
-    project_name = _pyproject_project_name_from_plan(plan)
-    package_name = _primary_src_package_from_material_plan(plan)
-    commands = _validation_command_lines_for_plan(plan)
-    validation = "\n".join(f"- `{command}`" for command in commands) or "- `python -m pytest -q`"
-    return (
-        f"# {project_name}\n\n"
-        "Small standard-library Python project for normalizing text and emitting JSON statistics.\n\n"
-        "## Installation\n\n"
-        "```sh\n"
-        "python -m pip install .\n"
-        "```\n\n"
-        "## CLI\n\n"
-        "```sh\n"
-        f"python -m {package_name} \"  Hello   local   AI  \"\n"
-        f"python -m {package_name} --help\n"
-        "```\n\n"
-        "## Validation\n\n"
-        f"{validation}\n"
-    )
-
-
-def _deterministic_readme_content_for_plan(plan: MaterialPlan) -> str:
-    project_name = _pyproject_project_name_from_plan(plan)
-    requirements = "\n".join(f"- {item.description}" for item in plan.requirements[:8])
-    commands = _validation_command_lines_for_plan(plan)
-    validation = "\n".join(f"- `{command}`" for command in commands) or "- `python -m pytest -q`"
-    return (
-        f"# {project_name}\n\n"
-        "Small generated Python material artifact.\n\n"
-        "## Requirements\n\n"
-        f"{requirements or '- See the user request and material plan.'}\n\n"
-        "## Installation\n\n"
-        "```sh\n"
-        "python -m pip install .\n"
-        "```\n\n"
-        "## CLI\n\n"
-        "```sh\n"
-        f"python -m {_primary_src_package_from_material_plan(plan)} --help\n"
-        "```\n\n"
-        "## Validation\n\n"
-        f"{validation}\n"
-    )
-
-
-def _deterministic_validation_evidence_content_for_plan(plan: MaterialPlan) -> str:
-    commands = _validation_command_lines_for_plan(plan)
-    lines = [
-        "Validation evidence",
-        "===================",
-        "",
-        "Planned validation commands:",
-    ]
-    if commands:
-        lines.extend(f"- {command}" for command in commands)
-    else:
-        lines.append("- python -m pytest -q")
-    lines.extend(
-        [
-            "",
-            "Observed result:",
-            "- Generated by material builder fallback before sandbox validation completed.",
-            "- Runtime validation results are recorded by the material execution kernel.",
-            "",
-        ]
-    )
-    return "\n".join(lines)
-
-
-def _validation_command_lines_for_plan(plan: MaterialPlan) -> list[str]:
-    commands: list[str] = []
-    for command in plan.validation_commands.values():
-        argv = [str(item) for item in command.argv]
-        if not argv:
-            continue
-        prefix = f"cd {command.cwd} && " if command.cwd and command.cwd != "." else ""
-        env = " ".join(f"{key}={value}" for key, value in sorted(command.env.items()))
-        commands.append(f"{prefix}{env + ' ' if env else ''}{' '.join(argv)}")
-    if "python-pytest" in plan.required_validation_profiles:
-        commands.append("python -m pytest -q")
-    return _dedupe_strings(commands)
 
 
 def _undefined_test_name_issues(content: str, *, path: str) -> list[dict[str, Any]]:
@@ -6158,7 +5738,7 @@ def generate_patch_with_llm(
                     "issue_id": request.issue_id,
                     "issue": request.issue.model_dump(mode="json"),
                     "target_path": request.target_path,
-                    "expected_old_sha256": request.expected_old_sha256,
+                    "expected_current_sha256": request.expected_current_sha256,
                     "current_content": request.current_content,
                     "current_context": request.current_context,
                     "target_resolution": request.target_resolution.model_dump(mode="json")
@@ -6169,8 +5749,8 @@ def generate_patch_with_llm(
                     "expected_symbols": _expected_symbols_from_repair_request(request),
                     "validation_profile": request.validation_profile,
                     "command_evidence": request.command_evidence,
-                    "previous_patch_rejections": [
-                        rejection.model_dump(mode="json") for rejection in request.previous_patch_rejections
+                    "prior_patch_rejections": [
+                        rejection.model_dump(mode="json") for rejection in request.prior_patch_rejections
                     ],
                     "allowed_repair_proposals": _allowed_repair_proposals(request),
                     "target_bundle": _target_bundle(request),
@@ -6231,7 +5811,7 @@ def generate_patch_with_llm(
             {
                 "issue_id": request.issue_id,
                 "target_path": request.target_path,
-                "expected_old_sha256": request.expected_old_sha256,
+                "expected_current_sha256": request.expected_current_sha256,
                 "unified_diff": patch_payload.get("unified_diff"),
                 "requirement_refs": request.issue.requirement_refs,
                 "contract_refs": request.issue.contract_refs,
@@ -6282,7 +5862,7 @@ def generate_patch_with_llm(
                 {
                     "issue_id": request.issue_id,
                     "target_path": request.target_path,
-                    "expected_old_sha256": request.expected_old_sha256,
+                    "expected_current_sha256": request.expected_current_sha256,
                     "unified_diff": repaired_patch_payload.get("unified_diff"),
                     "requirement_refs": request.issue.requirement_refs,
                     "contract_refs": request.issue.contract_refs,
@@ -6330,8 +5910,8 @@ def critique_repair_with_llm(
                     "current_content_excerpt": _compact_text(request.current_content, 12000),
                     "current_context": request.current_context,
                     "command_evidence": request.command_evidence,
-                    "previous_patch_rejections": [
-                        rejection.model_dump(mode="json") for rejection in request.previous_patch_rejections
+                    "prior_patch_rejections": [
+                        rejection.model_dump(mode="json") for rejection in request.prior_patch_rejections
                     ],
                     "repair_arbiter": request.repair_arbiter,
                 },
@@ -6443,7 +6023,7 @@ def _target_bundle(request: MaterialPatchGenerationRequest) -> list[dict[str, An
         if not isinstance(item, dict):
             continue
         path = str(item.get("path") or "").strip()
-        expected_hash = str(item.get("expected_old_sha256") or "").strip()
+        expected_hash = str(item.get("expected_current_sha256") or "").strip()
         if (
             path not in allowed
             or bool(item.get("content_truncated"))
@@ -6455,7 +6035,7 @@ def _target_bundle(request: MaterialPatchGenerationRequest) -> list[dict[str, An
                 "path": path,
                 "role": item.get("role") if item.get("role") in {"primary", "related", "candidate"} else "related",
                 "kind": str(item.get("kind") or "other"),
-                "expected_old_sha256": expected_hash,
+                "expected_current_sha256": expected_hash,
                 "content": str(item.get("content") or ""),
                 "content_truncated": bool(item.get("content_truncated")),
             }
@@ -6498,7 +6078,7 @@ def _patch_set_proposal_from_payload(
                 {
                     "issue_id": request.issue_id,
                     "target_path": target_path,
-                    "expected_old_sha256": bundle_by_path[target_path]["expected_old_sha256"],
+                    "expected_current_sha256": bundle_by_path[target_path]["expected_current_sha256"],
                     "unified_diff": _canonical_single_target_diff(str(diff or ""), target_path=target_path),
                     "requirement_refs": request.issue.requirement_refs,
                     "contract_refs": request.issue.contract_refs,
@@ -6596,7 +6176,7 @@ def _target_prefers_replacement(request: MaterialPatchGenerationRequest) -> bool
 def _replacement_required_by_rejections(request: MaterialPatchGenerationRequest) -> bool:
     return any(
         _rejection_evidence_requires_replacement(rejection.model_dump(mode="json"))
-        for rejection in request.previous_patch_rejections
+        for rejection in request.prior_patch_rejections
     )
 
 
@@ -6608,7 +6188,7 @@ def _rejection_evidence_requires_replacement(rejection: dict[str, Any]) -> bool:
         "context_mismatch",
         "removal_mismatch",
         "checksum_mismatch",
-        "expected_old_sha256",
+        "expected_current_sha256",
         "empty_diff_line",
         "invalid_diff",
         "invalid_diff_line_prefix",
@@ -6671,7 +6251,7 @@ def _repair_evidence_text(request: MaterialPatchGenerationRequest) -> str:
     values.extend(_nested_evidence_strings(request.current_context))
     values.extend(request.issue.repair_intent)
     values.extend(request.issue.acceptance)
-    for rejection in request.previous_patch_rejections:
+    for rejection in request.prior_patch_rejections:
         payload = rejection.model_dump(mode="json")
         values.extend(_nested_evidence_strings(payload))
         values.extend(_nested_symbol_values(payload))
@@ -6767,7 +6347,7 @@ def _generate_replacement_payload(
                     "issue_id": request.issue_id,
                     "issue": request.issue.model_dump(mode="json"),
                     "target_path": request.target_path,
-                    "expected_old_sha256": request.expected_old_sha256,
+                    "expected_current_sha256": request.expected_current_sha256,
                     "current_content": request.current_content,
                     "current_context": request.current_context,
                     "allowed_local_import_roots": _allowed_local_import_roots(request.plan),
@@ -6775,8 +6355,8 @@ def _generate_replacement_payload(
                     "expected_symbols": _expected_symbols_from_repair_request(request),
                     "validation_profile": request.validation_profile,
                     "command_evidence": request.command_evidence,
-                    "previous_patch_rejections": [
-                        rejection.model_dump(mode="json") for rejection in request.previous_patch_rejections
+                    "prior_patch_rejections": [
+                        rejection.model_dump(mode="json") for rejection in request.prior_patch_rejections
                     ],
                     "invalid_payload": invalid_payload,
                     "contract_retry_constraints": _replacement_contract_retry_constraints(
@@ -6803,16 +6383,6 @@ def _generate_validated_replacement(
     llm: LLMSettings,
     invalid_payload: dict[str, Any],
 ) -> tuple[ReplacementProposal, dict[str, Any]]:
-    deterministic = _deterministic_replacement_before_llm(request)
-    if deterministic is not None:
-        return deterministic, {
-            "replacement_retries": 0,
-            "replacement_contract_retries": 0,
-            "schema_retries": 0,
-            "static_fallback_used": True,
-            "static_fallback_reason": "prevalidated_deterministic_contract",
-        }
-
     metrics: list[dict[str, Any]] = []
     current_invalid_payload = invalid_payload
     contract_retries = 0
@@ -6858,24 +6428,9 @@ def _generate_validated_replacement(
         )
         contract_retries += 1
 
-    fallback = _deterministic_replacement_for_contract_failure(
-        request=request,
-        contract_issues=last_contract_issues,
-    )
-    if fallback is not None:
-        lane_metrics = _merge_lane_metrics(*metrics)
-        return fallback, {
-            **lane_metrics,
-            "replacement_retries": len(metrics),
-            "replacement_contract_retries": contract_retries,
-            "schema_retries": int(lane_metrics.get("schema_retries") or 0),
-            "static_fallback_used": True,
-            "static_fallback_reason": _deterministic_replacement_fallback_reason(last_contract_issues),
-        }
-
     raise MaterialLLMError(
         "llm_contract_violation",
-        "LLM replacement proposal did not satisfy the target Python contract",
+        "LLM replacement proposal did not satisfy the target replacement contract",
         details={
             "target_path": request.target_path,
             "expected_symbols": _expected_symbols_from_repair_request(request),
@@ -6890,399 +6445,12 @@ def _generate_validated_replacement(
     )
 
 
-def _deterministic_replacement_before_llm(request: MaterialPatchGenerationRequest) -> ReplacementProposal | None:
-    manifest_replacement = _deterministic_manifest_replacement(request)
-    if manifest_replacement is not None:
-        return manifest_replacement
-    if not request.target_path.replace("\\", "/").endswith(".py"):
-        return None
-    if _request_has_literal_return_value_obligation(request) and _expected_symbols_from_repair_request(request):
-        replacement_content = _deterministic_expected_symbol_replacement(request)
-        if replacement_content is not None and replacement_content != request.current_content:
-            proposal = _replacement_proposal_from_payload(
-                {
-                    "replacement_content": replacement_content,
-                    "rationale": "deterministic replacement for observed literal return-value contract before LLM retry",
-                },
-                request=request,
-            )
-            if not _replacement_contract_issues(proposal, request=request):
-                return proposal
-    if not _request_has_cli_help_expectation(request) and not _command_evidence_mentions_cli_help(request):
-        return None
-    if not (
-        _content_has_argparse_manual_help_conflict(request.current_content)
-        or request.previous_patch_rejections
-        or _expected_symbols_from_repair_request(request)
-    ):
-        return None
-    replacement_content = _deterministic_cli_help_replacement(request)
-    if replacement_content is None or replacement_content == request.current_content:
-        return None
-    proposal = _replacement_proposal_from_payload(
-        {
-            "replacement_content": replacement_content,
-            "rationale": "deterministic replacement for observed CLI help contract before LLM retry",
-        },
-        request=request,
-    )
-    if _replacement_contract_issues(proposal, request=request):
-        return None
-    return proposal
-
-
-def _deterministic_manifest_replacement(request: MaterialPatchGenerationRequest) -> ReplacementProposal | None:
-    normalized_path = request.target_path.replace("\\", "/")
-    if not normalized_path.endswith("/pyproject.toml") and normalized_path != "pyproject.toml":
-        return None
-    if not request.current_content.strip() or _toml_parse_error(request.current_content) is None:
-        return None
-    replacement_content = _deterministic_pyproject_content(request)
-    if replacement_content == request.current_content:
-        return None
-    proposal = _replacement_proposal_from_payload(
-        {
-            "replacement_content": replacement_content,
-            "rationale": "deterministic replacement for invalid pyproject.toml syntax",
-        },
-        request=request,
-    )
-    if _replacement_contract_issues(proposal, request=request):
-        return None
-    return proposal
-
-
-def _deterministic_pyproject_content(request: MaterialPatchGenerationRequest) -> str:
-    return _deterministic_pyproject_content_for_plan(request.plan, target_path=request.target_path)
-
-
-def _deterministic_pyproject_content_for_plan(plan: MaterialPlan, *, target_path: str = "") -> str:
-    project_name = _pyproject_project_name_from_plan(plan, target_path=target_path)
-    package_name = _primary_src_package_from_material_plan(plan)
-    script_name = _console_script_name(project_name)
-    lines = [
-        "[build-system]",
-        'requires = ["setuptools>=61"]',
-        'build-backend = "setuptools.build_meta"',
-        "",
-        "[project]",
-        f"name = {_toml_string(project_name)}",
-        'version = "0.1.0"',
-        f"description = {_toml_string(_pyproject_description_from_plan(plan))}",
-        f"readme = {_toml_string(_pyproject_readme_from_material_plan(plan))}",
-        'requires-python = ">=3.11"',
-        "dependencies = []",
-        "",
-    ]
-    if package_name:
-        lines.extend(
-            [
-                "[project.scripts]",
-                f"{_toml_bare_or_quoted_key(script_name)} = {_toml_string(f'{package_name}.__main__:main')}",
-                "",
-                "[tool.setuptools.packages.find]",
-                'where = ["src"]',
-                "",
-            ]
-        )
-    return "\n".join(lines)
-
-
-def _pyproject_project_name_from_request(request: MaterialPatchGenerationRequest) -> str:
-    return _pyproject_project_name_from_plan(request.plan, target_path=request.target_path)
-
-
-def _pyproject_project_name_from_plan(plan: MaterialPlan, *, target_path: str = "") -> str:
-    root = plan.project_root.strip().strip("/").replace("\\", "/")
-    name = root.rsplit("/", 1)[-1] if root else ""
-    if not name and target_path:
-        target = target_path.strip().strip("/").replace("\\", "/")
-        name = target.split("/", 1)[0] if "/" in target else "generated-project"
-    return _normalize_distribution_name(name) or "generated-project"
-
-
-def _pyproject_description_from_request(request: MaterialPatchGenerationRequest) -> str:
-    return _pyproject_description_from_plan(request.plan)
-
-
-def _pyproject_description_from_plan(plan: MaterialPlan) -> str:
-    root = plan.project_root.strip().strip("/").rsplit("/", 1)[-1] or "Generated project"
-    return f"Generated material artifact for {root}"
-
-
-def _pyproject_readme_from_plan(request: MaterialPatchGenerationRequest) -> str:
-    return _pyproject_readme_from_material_plan(request.plan)
-
-
-def _pyproject_readme_from_material_plan(plan: MaterialPlan) -> str:
-    for file_spec in plan.files:
-        path = file_spec.path.replace("\\", "/")
-        if path.endswith("/README.md") or path == "README.md":
-            root = plan.project_root.strip().strip("/").replace("\\", "/")
-            if root and path.startswith(f"{root}/"):
-                return path[len(root) + 1 :]
-            return path.rsplit("/", 1)[-1]
-    return "README.md"
-
-
-def _primary_src_package_from_plan(request: MaterialPatchGenerationRequest) -> str:
-    return _primary_src_package_from_material_plan(request.plan)
-
-
-def _primary_src_package_from_material_plan(plan: MaterialPlan) -> str:
-    root = plan.project_root.strip().strip("/").replace("\\", "/")
-    candidates: list[str] = []
-    for file_spec in plan.files:
-        path = file_spec.path.strip().strip("/").replace("\\", "/")
-        if root and path.startswith(f"{root}/"):
-            path = path[len(root) + 1 :]
-        parts = [part for part in path.split("/") if part]
-        if len(parts) >= 3 and parts[0] == "src" and parts[-1] in {"__init__.py", "__main__.py"}:
-            package_name = parts[1]
-            if _is_importable_python_stem(package_name):
-                candidates.append(package_name)
-    if candidates:
-        return _dedupe_strings(candidates)[0]
-    root_name = _stable_python_stem_from_project_root(root)
-    return root_name if _is_importable_python_stem(root_name) else ""
-
-
-def _console_script_name(project_name: str) -> str:
-    script = re.sub(r"[^A-Za-z0-9_.-]+", "-", project_name.strip()).strip(".-")
-    return script or "generated-project"
-
-
-def _normalize_distribution_name(value: str) -> str:
-    normalized = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip()).strip(".-")
-    return normalized or "generated-project"
-
-
-def _toml_string(value: str) -> str:
-    return json.dumps(value, ensure_ascii=False)
-
-
-def _toml_bare_or_quoted_key(value: str) -> str:
-    if re.fullmatch(r"[A-Za-z0-9_-]+", value):
-        return value
-    return _toml_string(value)
-
-
 def _toml_parse_error(content: str) -> str | None:
     try:
         tomllib.loads(content)
     except tomllib.TOMLDecodeError as exc:
         return str(exc)
     return None
-
-
-def _deterministic_replacement_for_contract_failure(
-    *,
-    request: MaterialPatchGenerationRequest,
-    contract_issues: list[dict[str, Any]],
-) -> ReplacementProposal | None:
-    if not contract_issues or not request.target_path.replace("\\", "/").endswith(".py"):
-        return None
-    if _contract_issues_require_cli_help_replacement(contract_issues, request=request):
-        replacement_content = _deterministic_cli_help_replacement(request)
-        if replacement_content is not None and replacement_content != request.current_content:
-            proposal = _replacement_proposal_from_payload(
-                {
-                    "replacement_content": replacement_content,
-                    "rationale": "deterministic replacement for observed CLI help call contract",
-                },
-                request=request,
-            )
-            if not _replacement_contract_issues(proposal, request=request):
-                return proposal
-    if any(issue.get("issue_type") == "call_return_value_mismatch" for issue in contract_issues):
-        replacement_content = _deterministic_expected_symbol_replacement(request)
-        if replacement_content is not None and replacement_content != request.current_content:
-            proposal = _replacement_proposal_from_payload(
-                {
-                    "replacement_content": replacement_content,
-                    "rationale": "deterministic replacement for observed literal return-value contract",
-                },
-                request=request,
-            )
-            if not _replacement_contract_issues(proposal, request=request):
-                return proposal
-    if (
-        _request_has_literal_return_value_obligation(request)
-        and any(issue.get("issue_type") == "missing_expected_symbol" for issue in contract_issues)
-    ):
-        replacement_content = _deterministic_expected_symbol_replacement(request)
-        if replacement_content is not None and replacement_content != request.current_content:
-            proposal = _replacement_proposal_from_payload(
-                {
-                    "replacement_content": replacement_content,
-                    "rationale": "deterministic replacement for missing symbol with observed literal return-value contract",
-                },
-                request=request,
-            )
-            if not _replacement_contract_issues(proposal, request=request):
-                return proposal
-    if any(issue.get("issue_type") == "placeholder_expected_symbol" for issue in contract_issues):
-        replacement_content = _deterministic_expected_symbol_replacement(request)
-        if replacement_content is not None and replacement_content != request.current_content:
-            proposal = _replacement_proposal_from_payload(
-                {
-                    "replacement_content": replacement_content,
-                    "rationale": "deterministic replacement for expected symbols that were placeholder-only",
-                },
-                request=request,
-            )
-            if not _replacement_contract_issues(proposal, request=request):
-                return proposal
-    if any(issue.get("issue_type") == "missing_expected_symbol" for issue in contract_issues):
-        replacement_content = _deterministic_missing_symbol_replacement(
-            request,
-            contract_issues=contract_issues,
-        )
-        if replacement_content is not None and replacement_content != request.current_content:
-            proposal = _replacement_proposal_from_payload(
-                {
-                    "replacement_content": replacement_content,
-                    "rationale": "deterministic replacement for missing top-level interface symbols",
-                },
-                request=request,
-            )
-            if not _replacement_contract_issues(proposal, request=request):
-                return proposal
-    forbidden_modules = sorted(
-        {
-            str(issue.get("module") or "").strip(".")
-            for issue in contract_issues
-            if issue.get("issue_type") in {"local_import_cycle_import", "child_package_root_import"}
-            and str(issue.get("module") or "").strip(".")
-        }
-    )
-    if not forbidden_modules:
-        return None
-    expected_symbols = _expected_symbols_from_repair_request(request)
-    if not expected_symbols:
-        return None
-    replacement_content = _self_contained_python_replacement(
-        request.current_content,
-        forbidden_modules=forbidden_modules,
-        expected_symbols=expected_symbols,
-    )
-    if replacement_content is None or replacement_content == request.current_content:
-        return None
-    proposal = _replacement_proposal_from_payload(
-        {
-            "replacement_content": replacement_content,
-            "rationale": "deterministic self-contained replacement after repeated local import contract failures",
-        },
-        request=request,
-    )
-    if _replacement_contract_issues(proposal, request=request):
-        return None
-    return proposal
-
-
-def _deterministic_replacement_fallback_reason(contract_issues: list[dict[str, Any]]) -> str:
-    issue_types = {str(issue.get("issue_type") or "") for issue in contract_issues}
-    if "placeholder_expected_symbol" in issue_types:
-        return "placeholder_expected_symbol_contract_failure"
-    if "missing_expected_symbol" in issue_types:
-        return "missing_expected_symbol_contract_failure"
-    if issue_types & {"local_import_cycle_import", "child_package_root_import"}:
-        return "local_import_cycle_contract_failure"
-    if issue_types & {
-        "call_signature_mismatch",
-        "call_behavior_mismatch",
-        "call_exception_mismatch",
-        "call_return_value_mismatch",
-    }:
-        return "call_expectation_contract_failure"
-    return "python_replacement_contract_failure"
-
-
-def _deterministic_expected_symbol_replacement(request: MaterialPatchGenerationRequest) -> str | None:
-    expected_symbols = [
-        symbol
-        for symbol in _expected_symbols_from_repair_request(request)
-        if symbol and symbol.isidentifier()
-    ]
-    if not expected_symbols:
-        return None
-    return "\n\n".join(
-        _definition_for_expected_symbol(symbol, request=request) for symbol in expected_symbols
-    ).rstrip() + "\n"
-
-
-def _deterministic_missing_symbol_replacement(
-    request: MaterialPatchGenerationRequest,
-    *,
-    contract_issues: list[dict[str, Any]],
-) -> str | None:
-    missing_symbols = _dedupe_strings(
-        [
-            str(issue.get("symbol") or "").strip()
-            for issue in contract_issues
-            if issue.get("issue_type") == "missing_expected_symbol" and str(issue.get("symbol") or "").strip()
-        ]
-    )
-    missing_symbols = [symbol for symbol in missing_symbols if symbol.isidentifier()]
-    if not missing_symbols:
-        return None
-    current_exports = _top_level_export_names(request.current_content)
-    additions: list[str] = []
-    for symbol in missing_symbols:
-        if symbol in current_exports:
-            continue
-        module_reexport = _planned_local_module_reexport(symbol, request=request)
-        additions.append(module_reexport or _definition_for_expected_symbol(symbol, request=request))
-    if not additions:
-        return None
-    lines = request.current_content.splitlines()
-    insert_at = _definition_insert_index(lines)
-    updated = [*lines[:insert_at], *additions, "", *lines[insert_at:]]
-    return "\n".join(updated).rstrip() + "\n"
-
-
-def _planned_local_module_reexport(symbol: str, *, request: MaterialPatchGenerationRequest) -> str:
-    target_path = request.target_path.strip().strip("/").replace("\\", "/")
-    if not target_path.endswith("/__init__.py"):
-        return ""
-    package_dir = target_path.rsplit("/", 1)[0]
-    expected_module_path = f"{package_dir}/{symbol}.py"
-    planned_paths = {file_spec.path.strip().strip("/").replace("\\", "/") for file_spec in request.plan.files}
-    if expected_module_path not in planned_paths:
-        return ""
-    return f"from . import {symbol} as {symbol}"
-
-
-def _request_has_literal_return_value_obligation(request: MaterialPatchGenerationRequest) -> bool:
-    return any("expected_return_value" in expectation for expectation in _call_expectations(request)) or any(
-        obligation.get("kind") == "call_return_value"
-        and isinstance(obligation.get("expected"), dict)
-        and "value" in obligation.get("expected", {})
-        for obligation in _repair_obligations(request)
-    )
-
-
-def _contract_issues_require_cli_help_replacement(
-    contract_issues: list[dict[str, Any]],
-    *,
-    request: MaterialPatchGenerationRequest,
-) -> bool:
-    if not _request_has_cli_help_expectation(request) and not _command_evidence_mentions_cli_help(request):
-        return False
-    return any(
-        issue.get("issue_type")
-        in {
-            "argparse_manual_help_conflict",
-            "call_behavior_mismatch",
-            "call_exception_mismatch",
-            "call_signature_mismatch",
-            "missing_expected_symbol",
-            "python_syntax_error",
-            "local_import_cycle_import",
-            "child_package_root_import",
-        }
-        for issue in contract_issues
-    )
 
 
 def _request_has_cli_help_expectation(request: MaterialPatchGenerationRequest) -> bool:
@@ -7293,120 +6461,6 @@ def _request_has_cli_help_expectation(request: MaterialPatchGenerationRequest) -
         isinstance(expectation, dict) and expectation.get("expected_behavior") == "cli_help"
         for expectation in call_expectations
     )
-
-
-def _command_evidence_mentions_cli_help(request: MaterialPatchGenerationRequest) -> bool:
-    evidence = " ".join(_nested_evidence_strings(request.command_evidence)).casefold()
-    return "--help" in evidence or "'-h'" in evidence or '"-h"' in evidence
-
-
-def _deterministic_cli_help_replacement(request: MaterialPatchGenerationRequest) -> str | None:
-    symbols = _expected_symbols_from_repair_request(request)
-    function_name = "main" if "main" in symbols else (symbols[0] if symbols else "")
-    if not function_name:
-        function_name = _cli_help_function_name_from_request(request)
-    if not function_name or not function_name.isidentifier():
-        return None
-    helper_names = [
-        symbol
-        for symbol in symbols
-        if symbol != function_name and symbol.isidentifier() and _looks_like_cli_runner_symbol(symbol)
-    ]
-    prog = _cli_program_name_from_request(request) or _cli_program_name_from_path(request.target_path)
-    helper_defs = "".join(
-        "\n\n"
-        f"def {helper_name}(argv=None):\n"
-        f"    return {function_name}(argv)\n"
-        for helper_name in helper_names
-    )
-    if _request_cli_help_expects_system_exit(request):
-        return (
-            "import argparse\n"
-            "\n"
-            "\n"
-            f"def {function_name}(argv=None):\n"
-            f"    parser = argparse.ArgumentParser(prog={prog!r}, description={prog!r})\n"
-            "    return parser.parse_args(argv)\n"
-            f"{helper_defs}"
-            "\n"
-            "\n"
-            "if __name__ == '__main__':\n"
-            f"    {function_name}()\n"
-        )
-    return (
-        "import argparse\n"
-        "\n"
-        "\n"
-        "class HelpResult(str):\n"
-        "    @property\n"
-        "    def output(self):\n"
-        "        return str(self)\n"
-        "\n"
-        "\n"
-        f"def {function_name}(argv=None):\n"
-        f"    parser = argparse.ArgumentParser(prog={prog!r}, description={prog!r})\n"
-        "    help_text = parser.format_help()\n"
-        "    if argv is None:\n"
-        "        return HelpResult(help_text)\n"
-        "    if any(str(arg) in {'-h', '--help'} for arg in argv):\n"
-        "        return HelpResult(help_text)\n"
-        "    return HelpResult(help_text)\n"
-        f"{helper_defs}"
-        "\n"
-        "\n"
-        "if __name__ == '__main__':\n"
-        f"    print({function_name}())\n"
-    )
-
-
-def _looks_like_cli_runner_symbol(symbol: str) -> bool:
-    normalized = symbol.strip("_").casefold()
-    return "run" in normalized or "main" in normalized or "cli" in normalized
-
-
-def _request_cli_help_expects_system_exit(request: MaterialPatchGenerationRequest) -> bool:
-    call_expectations = request.current_context.get("call_expectations")
-    explicit = isinstance(call_expectations, list) and any(
-        isinstance(expectation, dict)
-        and expectation.get("expected_behavior") == "cli_help"
-        and str(expectation.get("expected_exception") or "") == "SystemExit"
-        for expectation in call_expectations
-    )
-    if explicit:
-        return True
-    evidence = " ".join(_nested_evidence_strings(request.command_evidence)).casefold()
-    return "pytest.raises(systemexit)" in evidence or "raises(systemexit" in evidence
-
-
-def _cli_help_function_name_from_request(request: MaterialPatchGenerationRequest) -> str:
-    call_expectations = request.current_context.get("call_expectations")
-    if not isinstance(call_expectations, list):
-        return ""
-    for expectation in call_expectations:
-        if not isinstance(expectation, dict):
-            continue
-        if expectation.get("expected_behavior") != "cli_help":
-            continue
-        function_name = str(expectation.get("function_name") or expectation.get("callable") or "").rsplit(".", 1)[-1]
-        if function_name and function_name.isidentifier():
-            return function_name
-    return ""
-
-
-def _cli_program_name_from_request(request: MaterialPatchGenerationRequest) -> str:
-    call_expectations = request.current_context.get("call_expectations")
-    if isinstance(call_expectations, list):
-        for expectation in call_expectations:
-            if not isinstance(expectation, dict):
-                continue
-            if expectation.get("expected_behavior") != "cli_help":
-                continue
-            for value in _cli_help_expectation_strings(expectation):
-                program = _usage_program_name_from_text(value)
-                if program:
-                    return program
-    evidence = "\n".join(_nested_evidence_strings(request.command_evidence))
-    return _usage_program_name_from_text(evidence)
 
 
 def _cli_help_expectation_strings(expectation: dict[str, Any]) -> list[str]:
@@ -7425,202 +6479,7 @@ def _usage_program_name_from_text(text: str) -> str:
     return match.group(1).strip() if match else ""
 
 
-def _cli_program_name_from_path(path: str) -> str:
-    parts = [part for part in path.replace("\\", "/").split("/") if part]
-    if len(parts) >= 2 and parts[-1] == "cli.py":
-        return parts[-2].replace("_", "-")
-    stem = parts[-1].rsplit(".", 1)[0] if parts else "generated-cli"
-    return stem.replace("_", "-") or "generated-cli"
-
-
-def _self_contained_python_replacement(
-    content: str,
-    *,
-    forbidden_modules: list[str],
-    expected_symbols: list[str],
-) -> str | None:
-    try:
-        tree = ast.parse(content)
-    except SyntaxError:
-        return None
-    lines = content.splitlines()
-    remove_lines: set[int] = set()
-    for node in ast.walk(tree):
-        if _node_imports_forbidden_module(node, forbidden_modules):
-            end_line = getattr(node, "end_lineno", None) or node.lineno
-            for line_number in range(getattr(node, "lineno", 0), end_line + 1):
-                if line_number > 0:
-                    remove_lines.add(line_number)
-    if not remove_lines:
-        return None
-    kept = [line for index, line in enumerate(lines, start=1) if index not in remove_lines]
-    existing_exports = _top_level_export_names("\n".join(kept))
-    definitions = [
-        _definition_for_expected_symbol(symbol, request=None)
-        for symbol in expected_symbols
-        if symbol and symbol not in existing_exports
-    ]
-    if not definitions:
-        return "\n".join(kept).rstrip() + "\n"
-    insert_at = _definition_insert_index(kept)
-    updated = [*kept[:insert_at], *definitions, "", *kept[insert_at:]]
-    return "\n".join(updated).rstrip() + "\n"
-
-
-def _node_imports_forbidden_module(node: ast.AST, forbidden_modules: list[str]) -> bool:
-    if isinstance(node, ast.Import):
-        return any(_module_forbidden(alias.name, forbidden_modules) for alias in node.names)
-    if isinstance(node, ast.ImportFrom) and node.module:
-        return _module_forbidden(node.module, forbidden_modules)
-    return False
-
-
-def _module_forbidden(module: str, forbidden_modules: list[str]) -> bool:
-    normalized = module.strip(".")
-    return any(normalized == forbidden or normalized.startswith(f"{forbidden}.") for forbidden in forbidden_modules)
-
-
-def _top_level_export_names(content: str) -> set[str]:
-    try:
-        tree = ast.parse(content)
-    except SyntaxError:
-        return set()
-    exports: set[str] = set()
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
-            exports.add(node.name)
-        elif isinstance(node, ast.Assign):
-            for target in node.targets:
-                exports.update(_assigned_target_names(target))
-        elif isinstance(node, ast.AnnAssign):
-            exports.update(_assigned_target_names(node.target))
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                exports.add(alias.asname or alias.name.split(".", 1)[0])
-        elif isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                if alias.name != "*":
-                    exports.add(alias.asname or alias.name)
-    return exports
-
-
-def _definition_for_expected_symbol(symbol: str, *, request: MaterialPatchGenerationRequest | None = None) -> str:
-    if symbol == "__version__" or symbol.casefold().endswith("version"):
-        return f'{symbol} = "0.1.0"'
-    if symbol.isupper():
-        return f'{symbol} = "{symbol.casefold()}"'
-    expected_cases = _expected_return_cases_for_symbol(symbol, request=request) if request is not None else []
-    if expected_cases:
-        return _definition_for_expected_return_cases(symbol, expected_cases)
-    expected_return = _expected_return_value_for_symbol(symbol, request=request) if request is not None else _NO_RETURN_VALUE
-    if expected_return is not _NO_RETURN_VALUE:
-        return (
-            f"def {symbol}(*args, **kwargs):\n"
-            f"    \"\"\"Runtime provider generated from observed return-value obligations.\"\"\"\n"
-            f"    return {expected_return!r}"
-        )
-    if request is not None and _plan_requests_text_processing(request.plan):
-        default_text = "Example text" if any(marker in symbol.casefold() for marker in ("run", "example", "demo")) else ""
-        return (
-            f"def {symbol}(text={default_text!r}, *args, **kwargs):\n"
-            f"    \"\"\"Runtime provider generated from observed text-processing obligations.\"\"\"\n"
-            f"    raw_text = str(text if text is not None else \"\")\n"
-            f"    if args:\n"
-            f"        raw_text = \" \".join([raw_text, *(str(item) for item in args)]).strip()\n"
-            f"    normalized = \" \".join(raw_text.split())\n"
-            f"    return {{\n"
-            f"        \"normalized\": normalized,\n"
-            f"        \"statistics\": {{\n"
-            f"            \"characters\": len(normalized),\n"
-            f"            \"words\": len(normalized.split()) if normalized else 0,\n"
-            f"            \"lines\": raw_text.count(\"\\n\") + 1 if raw_text else 0,\n"
-            f"        }},\n"
-            f"    }}"
-        )
-    return (
-        f"def {symbol}(*args, **kwargs):\n"
-        f"    \"\"\"Runtime provider generated from observed interface obligations.\"\"\"\n"
-        f"    return args[0] if args else kwargs"
-    )
-
-
 _NO_RETURN_VALUE = object()
-
-
-def _definition_for_expected_return_cases(symbol: str, cases: list[dict[str, Any]]) -> str:
-    case_literals: list[tuple[tuple[object, ...], dict[str, object], object]] = []
-    for case in cases:
-        arguments = case.get("arguments")
-        keyword_arguments = case.get("keyword_arguments")
-        if not isinstance(arguments, list):
-            arguments = []
-        if not isinstance(keyword_arguments, dict):
-            keyword_arguments = {}
-        case_literals.append((tuple(arguments), dict(keyword_arguments), case.get("expected_return_value")))
-    return (
-        f"def {symbol}(*args, **kwargs):\n"
-        f"    \"\"\"Runtime provider generated from observed call/return validation evidence.\"\"\"\n"
-        f"    cases = {case_literals!r}\n"
-        f"    for expected_args, expected_kwargs, expected_return in cases:\n"
-        f"        if args == expected_args and kwargs == expected_kwargs:\n"
-        f"            return expected_return\n"
-        f"    return args[0] if args else kwargs\n"
-    ).rstrip()
-
-
-def _expected_return_cases_for_symbol(
-    symbol: str,
-    *,
-    request: MaterialPatchGenerationRequest | None,
-) -> list[dict[str, Any]]:
-    if request is None:
-        return []
-    cases: list[dict[str, Any]] = []
-    for expectation in _call_expectations(request):
-        function_name = str(expectation.get("function_name") or expectation.get("callable") or "").rsplit(".", 1)[-1]
-        if function_name != symbol or "expected_return_value" not in expectation:
-            continue
-        if "arguments" not in expectation and "keyword_arguments" not in expectation:
-            continue
-        cases.append(
-            {
-                "arguments": expectation.get("arguments") if isinstance(expectation.get("arguments"), list) else [],
-                "keyword_arguments": expectation.get("keyword_arguments")
-                if isinstance(expectation.get("keyword_arguments"), dict)
-                else {},
-                "expected_return_value": expectation.get("expected_return_value"),
-            }
-        )
-    seen: set[str] = set()
-    deduped: list[dict[str, Any]] = []
-    for case in cases:
-        key = json.dumps(case, sort_keys=True, default=str)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(case)
-    return deduped
-
-
-def _expected_return_value_for_symbol(
-    symbol: str,
-    *,
-    request: MaterialPatchGenerationRequest,
-) -> object:
-    for expectation in _call_expectations(request):
-        function_name = str(expectation.get("function_name") or expectation.get("callable") or "").rsplit(".", 1)[-1]
-        if function_name == symbol and "expected_return_value" in expectation:
-            return expectation.get("expected_return_value")
-    for obligation in _repair_obligations(request):
-        if obligation.get("kind") != "call_return_value":
-            continue
-        expected = obligation.get("expected")
-        if not isinstance(expected, dict):
-            continue
-        callable_name = str(expected.get("callable") or "").rsplit(".", 1)[-1]
-        if callable_name == symbol and "value" in expected:
-            return expected.get("value")
-    return _NO_RETURN_VALUE
 
 
 def _call_expectations(request: MaterialPatchGenerationRequest) -> list[dict[str, Any]]:
@@ -7725,39 +6584,6 @@ def _balanced_python_literal(text: str, start: int) -> tuple[str, int]:
 
 def _is_simple_name(value: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z_]\w*", value))
-
-
-def _repair_obligations(request: MaterialPatchGenerationRequest) -> list[dict[str, Any]]:
-    obligations: list[dict[str, Any]] = []
-    for raw in (request.current_context.get("repair_obligations"), request.command_evidence.get("obligations")):
-        if isinstance(raw, list):
-            obligations.extend(item for item in raw if isinstance(item, dict))
-    seen: set[str] = set()
-    deduped: list[dict[str, Any]] = []
-    for obligation in obligations:
-        key = json.dumps(obligation, sort_keys=True, default=str)
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(obligation)
-    return deduped
-
-
-def _definition_insert_index(lines: list[str]) -> int:
-    index = 0
-    if lines and (lines[0].startswith('"""') or lines[0].startswith("'''")):
-        quote = lines[0][:3]
-        index = 1
-        while index < len(lines):
-            if lines[index].rstrip().endswith(quote):
-                index += 1
-                break
-            index += 1
-    while index < len(lines) and lines[index].startswith("from __future__ import "):
-        index += 1
-    while index < len(lines) and not lines[index].strip():
-        index += 1
-    return index
 
 
 def _replacement_contract_invalid_payload(
@@ -8442,7 +7268,7 @@ def _replacement_proposal_from_payload(
             {
                 "issue_id": request.issue_id,
                 "target_path": request.target_path,
-                "expected_old_sha256": request.expected_old_sha256,
+                "expected_current_sha256": request.expected_current_sha256,
                 "replacement_content": replacement_content,
                 "replacement_sha256": replacement_sha256,
                 "requirement_refs": request.issue.requirement_refs,
@@ -8473,14 +7299,14 @@ def _validate_repair_identity(
             "LLM repair proposal returned a path that does not match the repair target",
             details={"expected_path": request.target_path, "actual_path": proposal.target_path},
         )
-    if proposal.expected_old_sha256 != request.expected_old_sha256:
+    if proposal.expected_current_sha256 != request.expected_current_sha256:
         raise MaterialLLMError(
             "llm_contract_violation",
             "LLM repair proposal returned a hash that does not match the current target file",
             details={
                 "target_path": request.target_path,
-                "expected_old_sha256": request.expected_old_sha256,
-                "actual_old_sha256": proposal.expected_old_sha256,
+                "expected_current_sha256": request.expected_current_sha256,
+                "actual_current_sha256": proposal.expected_current_sha256,
             },
         )
 

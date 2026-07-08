@@ -1,6 +1,7 @@
 # Graphify
 
-Graphify gera knowledge graphs estruturais dos repos configurados.
+Graphify gera knowledge graphs estruturais dos repos configurados em
+`[repos].paths`.
 
 O RAG usa estes grafos para:
 
@@ -34,7 +35,7 @@ Export Obsidian:
 flowchart TD
     admin["/admin/reprocess target=graph"] --> sync_graphify[sync_graphify]
     sync_graphify --> build_graphs[build_graphs]
-    build_graphs --> each[por repo configurado]
+    build_graphs --> each[por path configurado]
     each --> detect{manifest + graph existem?}
     detect -- sem alteracoes --> skip[skip]
     detect -- so codigo mudou --> update["graphify update (AST-only)"]
@@ -60,6 +61,44 @@ flowchart TD
 Se apenas codigo mudou, usa `graphify update`, que evita chamadas LLM.
 
 Se docs mudaram, usa `graphify extract`, porque Markdown/texto precisa extracao semantica.
+
+## Checkpointing e cooperacao com Resource Governor
+
+O owner Graphify/RAG grava `checkpoint.json` por repo em
+`data/graphify/<repo>/graphify-out/checkpoint.json`.
+
+O checkpoint inclui:
+
+- fingerprint filtrado dos ficheiros graphable;
+- `dry_run_estimate` com batches AST/LLM, batches GPU, VRAM estimada, risco,
+  recomendacao e plano de estagios CPU/GPU/IO;
+- estado `running`, `completed` ou `failed`;
+- stage `update` quando e AST-only e `extract` quando usa backend LLM.
+
+`force=false` reutiliza checkpoint completo com fingerprint igual e nao reprocessa
+o repo. `force=true` escreve estimate antes de executar, para o operador ver o
+custo provavel do rebuild.
+
+Antes de cada repo Graphify pedir subprocesso LLM/GPU, `build_graphs()` pede lease
+renovavel ao Resource Governor com:
+
+```text
+owner=obsidian-rag
+lane=background
+component=graphify
+resource_class=model_runtime
+capability=graph_llm
+preemptible=true
+```
+
+Se o lease for negado ou diferido por `gpu_saturated`, `vram_low`,
+`thermal_high` ou interacao ativa, o repo e adiado e o checkpoint existente
+permanece como ponto de retomada. Cancelamentos via `/admin/jobs/{id}/cancel`
+terminam o subprocesso Graphify registado pelo proprio processo RAG e preservam
+o checkpoint.
+
+Fontes pedidas em runtime por `target=sources` nao entram no Graphify global. O
+rebuild de `target=graph` e `target=all` segue apenas `[repos].paths`.
 
 ## Config Relevante
 

@@ -90,7 +90,7 @@ Detailed manifest fields include `policy_action`, `risk_level`,
 | --- | --- | --- | --- | --- |
 | `reasoning_and_response` | `agents/reasoning_and_response/reasoning_and_response/prompt/*.md`, `config.toml` | direct response, decomposition, synthesis, critique, classification and polish | `gpu_llm`, interactive, `model_profile=default` | scenario-specific dispatch rules or hidden feature parsers |
 | `execution_policy_operator` | `agents/execution_policy_operator/README.md`, `bash_safety/types.py` | static command safety review and destructive-pattern reporting | CPU interactive | command execution or shell side effects |
-| `material_builder` | `agents/material_builder/material_builder/prompt/*.md` | material plan/file/patch/schema repair proposals | `gpu_llm`, background, `model_profile=material_plan` | static fallback projects or workspace writes |
+| `material_builder` | `agents/material_builder/material_builder/prompt/*.md` | material plan/file/patch/schema repair proposals | `gpu_llm`, background, `model_profile=material_plan` | static generation shortcuts or workspace writes |
 | `audio_transcribe` | `agents/audio_transcribe/config.toml`, `streaming/prompt/*.md` | transcription, streaming correction and summaries | `gpu_audio`, background | durable output writes or storage policy |
 | `local_evidence_operator` | `agents/local_evidence_operator/*/types.py`, README | bounded local evidence analysis for code, data, ops and security | CPU interactive | unredacted secret output or host mutation |
 
@@ -166,7 +166,7 @@ Expected response shape:
 | --- | --- | --- | --- | --- |
 | `reasoning_and_response` | `gpu_llm`, interactive, `default` | `config/` | chat, planning, synthesis, critique, classification | no hidden fallback; report degraded backend |
 | `execution_policy_operator` | CPU interactive | `config/` and owner defaults | fast static shell safety review | no shell execution fallback |
-| `material_builder` | `gpu_llm`, background, `material_plan` | `config/` | proposal-only material generation | no static fallback project |
+| `material_builder` | `gpu_llm`, background, `material_plan` | `config/` | proposal-only material generation | no static generation shortcut |
 | `audio_transcribe` | `gpu_audio`, background | `config/` | media transcription | report unsupported media/backend failure |
 | `local_evidence_operator` | CPU interactive | `config/` | bounded repo/data/ops/security evidence | no workspace write fallback |
 

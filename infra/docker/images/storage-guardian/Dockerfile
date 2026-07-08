@@ -12,6 +12,7 @@ ARG AI_LOCAL_GIT_URL_INSTEAD_OF=
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends git openssh-client openssl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -23,7 +24,7 @@ COPY pyproject.toml /app/ai-local/pyproject.toml
 COPY config /app/ai-local/config
 COPY orchestrator /app/ai-local/orchestrator
 COPY storage_guardian/pyproject.toml /app/storage_guardian/pyproject.toml
-COPY storage_guardian/src /app/storage_guardian/src
+COPY storage_guardian /app/storage_guardian
 COPY infra/docker/images/symbiont/base/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY infra/docker/images/symbiont/base/tls-cert.sh /usr/local/bin/ai-local-tls-cert.sh
 RUN --mount=type=ssh \
@@ -40,6 +41,7 @@ RUN --mount=type=ssh \
         git config --global url."$git_rewrite_url".insteadOf "ssh://git@github.com/"; \
     fi; \
     pip install --no-cache-dir /app/ai-local /app/storage_guardian; \
+    pip install --no-cache-dir --upgrade "setuptools>=83.0.0" "wheel>=0.46.2" "jaraco.context>=6.1.0"; \
     if [ -n "$git_rewrite_url" ]; then \
         git config --global --remove-section url."$git_rewrite_url" || true; \
     fi

@@ -5,21 +5,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
-from sharedai.llm.backend_url import validated_base_url
-
-
-def _require_llm_url(value: str, env_name: str) -> str:
-    try:
-        safe, _host, _port, _path = validated_base_url(value)
-        return safe
-    except ValueError as exc:
-        raise ValueError(f"{env_name}: {exc}") from exc
-
-
-def _default_ollama_url() -> str:
-    default = "https://host.docker.internal:11434" if os.path.exists("/.dockerenv") else "https://localhost:11434"
-    return _require_llm_url(os.environ.get("OLLAMA_BASE_URL", default), "OLLAMA_BASE_URL")
-
 
 @dataclass
 class ServerConfig:
@@ -32,7 +17,6 @@ class ServerConfig:
 class RedisConfig:
     url: str = os.environ.get("REDIS_URL", "redis://redis:6379/0")
     stream_prefix: str = "audio"
-    dedup_db: int = 1
     max_stream_len: int = 10000  # Max events per stream
 
 
@@ -52,7 +36,6 @@ class RealtimeConfig:
     min_speech_ms: int = 250  # Min speech to trigger ASR
     max_speech_ms: int = int(os.environ.get("MAX_SPEECH_MS", "6000"))  # Max before forced cut (6s)
     silence_threshold_ms: int = int(os.environ.get("SILENCE_THRESHOLD_MS", "400"))  # Silence to finalize
-    vad_threshold: float = 0.5  # Silero VAD threshold
     vad_energy_threshold_db: float = float(os.environ.get("VAD_ENERGY_THRESHOLD_DB", "-35.0"))
     final_result_timeout_seconds: float = float(os.environ.get("FINAL_RESULT_TIMEOUT_SECONDS", "15.0"))
 
@@ -65,29 +48,12 @@ class BatchConfig:
 
 
 @dataclass
-class DedupConfig:
-    sha256_enabled: bool = True
-    fingerprint_enabled: bool = bool(os.environ.get("CHROMAPRINT_ENABLED", ""))
-    cache_ttl: int = 7 * 24 * 3600  # 7 days
-    redis_db: int = 1
-
-
-@dataclass
-class OllamaConfig:
-    url: str = _default_ollama_url()
-    model: str = os.environ.get("LLM_POST_MODEL", "qwen3:8b")
-    enabled: bool = bool(os.environ.get("LLM_POST_ENABLED", ""))
-
-
-@dataclass
 class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     redis: RedisConfig = field(default_factory=RedisConfig)
     gpu: GPUConfig = field(default_factory=GPUConfig)
     realtime: RealtimeConfig = field(default_factory=RealtimeConfig)
     batch: BatchConfig = field(default_factory=BatchConfig)
-    dedup: DedupConfig = field(default_factory=DedupConfig)
-    ollama: OllamaConfig = field(default_factory=OllamaConfig)
     output_dir: str = os.environ.get("AUDIO_OUTPUT_DIR", "/temp/audio-streaming/output")
 
 

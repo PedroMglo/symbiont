@@ -43,6 +43,15 @@ HEAVY_BACKGROUND_CAPABILITIES = {
     Capability.AUDIO_TRANSCRIBE_GPU,
 }
 
+INTERACTIVE_MODEL_CAPABILITIES = {
+    Capability.CHAT_STREAM,
+    Capability.MATERIAL_GENERATION,
+}
+
+
+def _enum_value(value: object) -> str:
+    return getattr(value, "value", str(value))
+
 
 def _swap_pressure_is_hard(snapshot: ResourceSnapshot, thresholds: dict) -> bool:
     swap_hard = int(thresholds.get("swap_used_mb_hard", 512))
@@ -51,13 +60,18 @@ def _swap_pressure_is_hard(snapshot: ResourceSnapshot, thresholds: dict) -> bool
     swap_growth_hard = int(thresholds.get("swap_growth_mb_hard", 128))
     swap_percent_hard = float(thresholds.get("swap_percent_hard", 70))
     ram_available_hard = int(thresholds.get("ram_available_mb_hard", 1024))
-    mem_hard = float(thresholds.get("memory_pressure_some_10s_hard", 0.35))
-    return bool(
+    mem_hard = float(thresholds.get("memory_pressure_some_10s_hard", 35.0))
+    active_pressure = bool(
         (snapshot.swap_growth_mb is not None and snapshot.swap_growth_mb >= swap_growth_hard)
-        or (snapshot.swap_percent is not None and snapshot.swap_percent >= swap_percent_hard)
         or (snapshot.ram_available_mb is not None and snapshot.ram_available_mb <= ram_available_hard)
         or (snapshot.psi_memory_some is not None and snapshot.psi_memory_some >= mem_hard)
     )
+    if active_pressure:
+        return True
+    requires_active = bool(thresholds.get("swap_requires_active_pressure", True))
+    if requires_active:
+        return False
+    return bool(snapshot.swap_percent is not None and snapshot.swap_percent >= swap_percent_hard)
 
 
 def _critical_pressure_is_hard(snapshot: ResourceSnapshot, thresholds: dict) -> bool:
@@ -176,6 +190,30 @@ class DecisionEngine:
                 return f"{requested} conflicts with active {cap}"
         return None
 
+    def _interactive_workers(self) -> int:
+        raw = (self.policy.lanes or {}).get("interactive", {})
+        try:
+            return max(1, int(raw.get("workers", 1)))
+        except (AttributeError, TypeError, ValueError):
+            return 1
+
+    def _active_interactive_model_runtime(
+        self,
+        request: LeaseRequest,
+        active_leases: list[LeaseRecord],
+        active_activities: list[ActivityRecord],  # noqa: ARG002
+    ) -> int:
+        active_model_leases = 0
+        for record in active_leases:
+            if record.request.idempotency_key == request.idempotency_key:
+                continue
+            if (
+                _enum_value(record.request.lane) == Lane.INTERACTIVE.value
+                and _enum_value(record.request.capability) in {cap.value for cap in INTERACTIVE_MODEL_CAPABILITIES}
+            ):
+                active_model_leases += 1
+        return active_model_leases
+
     def decide(
         self,
         request: LeaseRequest,
@@ -185,8 +223,21 @@ class DecisionEngine:
         active_activities: list[ActivityRecord],
     ) -> LeaseDecision:
         active_chat = any(_is_chat_activity(activity) for activity in active_activities)
+        pressure_reasons = {str(reason) for reason in snapshot.pressure_reasons}
+
+        if request.lane == Lane.SYSTEM_STATUS_FAST:
+            return self._normal_grant(request)
 
         if request.lane == Lane.INTERACTIVE:
+            if (
+                request.capability in INTERACTIVE_MODEL_CAPABILITIES
+                and self._active_interactive_model_runtime(request, active_leases, active_activities) >= self._interactive_workers()
+            ):
+                return self._hard(
+                    request,
+                    "interactive_model_runtime_busy",
+                    retry_after=5,
+                )
             return self._normal_grant(request)
 
         if active_chat and request.lane == Lane.STORAGE:
@@ -201,6 +252,18 @@ class DecisionEngine:
         if active_chat and request.lane == Lane.BACKGROUND and request.capability in HEAVY_BACKGROUND_CAPABILITIES:
             return self._hard(request, "heavy background work is blocked during active interaction", retry_after=15)
 
+        if "gpu_saturated" in pressure_reasons and request.lane in {Lane.BACKGROUND, Lane.HEAVY_GPU}:
+            return self._hard(request, "gpu_saturated", retry_after=15)
+
+        if "thermal_high" in pressure_reasons and request.lane in {Lane.BACKGROUND, Lane.HEAVY_GPU}:
+            return self._hard(request, "thermal_high", retry_after=30)
+
+        if (
+            "vram_low" in pressure_reasons
+            and request.capability in {Capability.MODEL_WARMUP, Capability.EMBEDDING_GPU_BATCH, Capability.RERANK}
+        ):
+            return self._hard(request, "vram_low", retry_after=20)
+
         conflict = self._conflicts_with_active(request, active_leases, active_activities)
         if conflict and request.lane in {Lane.HEAVY_GPU, Lane.BACKGROUND, Lane.INTERACTIVE_ENRICHMENT}:
             return self._hard(request, conflict, retry_after=10)
@@ -209,8 +272,13 @@ class DecisionEngine:
         if _swap_pressure_is_hard(snapshot, thresholds) and request.lane != Lane.INTERACTIVE:
             return self._hard(request, f"swap usage is high ({snapshot.swap_used_mb}MB)", retry_after=30)
 
-        mem_hard = float(thresholds.get("memory_pressure_some_10s_hard", 0.35))
-        io_hard = float(thresholds.get("io_pressure_some_10s_hard", 0.40))
+        mem_hard = float(thresholds.get("memory_pressure_some_10s_hard", 35.0))
+        io_hard = float(thresholds.get("io_pressure_some_10s_hard", 40.0))
+        thermal_soft = float(thresholds.get("thermal_celsius_soft", 85))
+        thermal_soft_active = (
+            snapshot.thermal_max_celsius is not None
+            and snapshot.thermal_max_celsius >= thermal_soft
+        )
         if request.lane in {Lane.BACKGROUND, Lane.STORAGE, Lane.HEAVY_GPU}:
             if snapshot.battery_power_plugged is False and snapshot.battery_percent is not None:
                 battery_hard = float(thresholds.get("battery_percent_hard", 15))
@@ -257,7 +325,21 @@ class DecisionEngine:
                 "checkpoint_required": True,
             }
             if request.capability == Capability.EMBEDDING_GPU_BATCH:
-                limits["batch_size"] = (self.policy.limits or {}).get("embedding_batch", 1)
+                try:
+                    embedding_batch = int((self.policy.limits or {}).get("embedding_batch", 1))
+                except (TypeError, ValueError):
+                    embedding_batch = 1
+                if thermal_soft_active:
+                    embedding_batch = max(1, embedding_batch // 2)
+                limits["batch_size"] = embedding_batch
+            if thermal_soft_active:
+                limits["thermal_backoff"] = True
+                limits["thermal_soft_celsius"] = thermal_soft
+                return self._soft(
+                    request,
+                    f"thermal soft pressure ({snapshot.thermal_max_celsius:.0f}C)",
+                    limits=limits,
+                )
             return self._soft(request, "preemptible lane granted with adaptive limits", limits=limits)
 
         return self._normal_grant(request)

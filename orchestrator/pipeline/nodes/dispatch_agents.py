@@ -102,23 +102,8 @@ def _sanitize_dispatch_agents(candidates: list[str]) -> tuple[list[str], list[st
             dropped.append(name)
     if selected:
         return selected, dropped
-    fallback = "reasoning_and_response" if "reasoning_and_response" in valid_agents else next(iter(valid_agents), "")
-    return ([fallback] if fallback else []), dropped
-
-
-def _has_validated_sql_context(context_blocks: list) -> bool:
-    for block in context_blocks:
-        if getattr(block, "source", "") != "sql":
-            continue
-        metadata = getattr(block, "metadata", {}) or {}
-        summary = metadata.get("summary") if isinstance(metadata, dict) else None
-        if isinstance(summary, dict):
-            try:
-                if int(summary.get("validated_metric_candidates") or 0) > 0:
-                    return True
-            except (TypeError, ValueError):
-                pass
-    return False
+    default_agent = "reasoning_and_response" if "reasoning_and_response" in valid_agents else next(iter(valid_agents), "")
+    return ([default_agent] if default_agent else []), dropped
 
 
 def create_dispatch_agents_node(agent_client: AgentClient):
@@ -284,10 +269,7 @@ def create_dispatch_agents_node(agent_client: AgentClient):
             b for b in context_blocks
             if getattr(b, "source", "") == "sql" and getattr(b, "content", "")
         ]
-        if sql_context and not has_evidence_context and (
-            _has_validated_sql_context(sql_context)
-            or not _should_invoke_agent_with_context(agent_client, agents, query)
-        ):
+        if sql_context and not has_evidence_context and not _should_invoke_agent_with_context(agent_client, agents, query):
             context_text = "\n\n".join(f"[{b.source}] {b.content}" for b in sql_context)
             from orchestrator.types import AgentResult
             return {

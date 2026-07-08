@@ -177,7 +177,7 @@ flowchart TD
 sed -n '1,260p' features/service_capabilities.toml
 find features -maxdepth 2 -name README.md -o -name SPEC.md -o -name config.toml
 AI_COMPOSE_PROFILES=core,storage,features make up
-python scripts/workspace_execution_smoke.py
+./.venv/bin/python scripts/workspace_execution_smoke.py
 ```
 
 Material runtime profile smoke:
@@ -194,7 +194,7 @@ make material-runtime-profiles-smoke
 | Manifest source review | `features/service_capabilities.toml` | active feature contracts documented | 2026-06-29 |
 | Feature source scan | `rg --files features \| rg -i '(README\\.md|SPEC\\.md|config\\.toml|types\\.py)'` | owner files identified | 2026-06-29 |
 | Feature tests | targeted `pytest` scope per feature | pass | not-run for docs-only update |
-| Runtime smoke | `python scripts/workspace_execution_smoke.py` where relevant | pass | not-run for docs-only update |
+| Runtime smoke | `./.venv/bin/python scripts/workspace_execution_smoke.py` where relevant | pass | not-run for docs-only update |
 | Owner Codex skills | `find features -path '*/.agents/skills/*/SKILL.md'` | one primary skill per feature | gap found 2026-06-29 |
 
 ## Open Questions

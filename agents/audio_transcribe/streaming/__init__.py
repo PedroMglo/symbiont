@@ -1,40 +1,7 @@
-"""Unified Audio Intelligence Platform — Streaming Sub-Agent.
+"""Audio Transcribe streaming sub-agent.
 
-Architecture:
-┌─────────────────────────────────────────────────────────┐
-│                   UNIFIED GATEWAY                         │
-│  WebSocket (real-time) │ REST (batch) │ SSE (output)     │
-└───────────────┬─────────────────────────┬───────────────┘
-                │                         │
-     ┌──────────▼──────────┐    ┌────────▼─────────┐
-     │  REAL-TIME ENGINE   │    │  BATCH PIPELINE  │
-     │  VAD + Sessions     │    │  Chunk + Queue   │
-     └──────────┬──────────┘    └────────┬─────────┘
-                │                         │
-        ┌───────▼─────────────────────────▼───────┐
-        │          REDIS STREAMS EVENT BUS        │
-        │  audio.stream.segment / audio.batch.chunk│
-        └───────────────────┬─────────────────────┘
-                            │
-              ┌─────────────▼──────────────┐
-              │   GPU WORKER POOL (8GB)    │
-              │   faster-whisper unified   │
-              └─────────────┬──────────────┘
-                            │
-              ┌─────────────▼──────────────┐
-              │      MERGE ENGINE          │
-              └─────────────┬──────────────┘
-                            │
-              ┌─────────────▼──────────────┐
-              │   LLM AGENTS (Ollama)      │
-              └────────────────────────────┘
-
-Supports:
-- Real-time microphone streaming (WebSocket, <300ms target)
-- Batch file processing (REST API)
-- SHA-256 + Chromaprint dedup (global)
-- Unified GPU scheduling (real-time priority)
-- SSE output streaming
+Owns authenticated realtime WebSocket sessions, Redis Streams dispatch,
+GPU-worker transcription, batch job SSE snapshots and active-session metrics.
 """
 
 from __future__ import annotations

@@ -62,8 +62,37 @@ include `DOCKER_BUILDKIT`, `COMPOSE_PARALLEL_LIMIT`,
 | `resolved.command_runtime` | `ai-local.command-runtime.v1` | agentic command sandbox/runtime tooling. |
 | `resolved.docker_resources` | `ai-local.docker-resources.v1` | Docker Compose resource env generation and governance checks. |
 | `.local/generated/resource_governor_policy.json` | `resource-governor.v1` | orchestrator Resource Governor and pressure gates. |
+| `resolved.runtime_hygiene` | `runtime-hygiene.v1` | diagnostics and owner-safe cleanup surfaces; config never performs cleanup directly. |
 | `.local/generated/autotuning.effective.json` | `ai-local.autotuning-effective.v1` | `config.resolver` Resource Governor overlay loader. |
 | `resolved.operational_self_model` | `ai-local.operational-self-model.v1` | Resource Governor, prewarming, routing, UI and diagnostics surfaces. |
+
+`resource_governor_policy.pressure_policy` emits the global active-pressure
+contract. High residual swap is observed by default, not treated as a reduce,
+pause or hard-block signal by itself. Swap becomes blocking only when active
+signals are present: swap growth, low available RAM, PSI memory/IO pressure or
+an explicit operator override that disables active-pressure gating. Owners may
+opt into static-swap reduction with `swap_static_action: reduce`.
+
+PSI threshold fields use the Linux `avg10` percentage units exposed by
+`/proc/pressure/*`. Values below `1.0` are sub-percent stalls and must not be
+treated as critical pressure for background work.
+
+`resource_governor_policy.rag` emits RAG runtime budgets for bounded
+resource-pressure handling: pause max seconds, total pause budget, finite retry
+attempts, embedding lane concurrency, source scan parallelism and the
+process-local job-end cleanup mirrors. These values are mirrored into
+`resolved.rag_runtime` generated env values for `obsidian-rag`.
+
+`resolved.runtime_hygiene` is a diagnostic owner map. It may mark config health
+as `degraded` or `blocked` when owner-declared orphan resources exceed policy
+limits, but mutable cleanup must go through the declared owner API/CLI such as
+RAG job cancellation, Storage Guardian reconciliation, Docker orphan policy, or
+orchestrator session cleanup.
+
+Owner job-end cleanup is process-local only. `config` may require owners to
+release their own caches and malloc arenas when jobs finish, but it must not run
+global actions such as `swapoff`, `drop_caches`, killing unknown processes or
+Docker prune.
 
 ## Controlled Autotuning Contracts
 
@@ -101,10 +130,10 @@ blocked and no effective overlay is written.
 This is a derived status/capacity surface. It must not contain service
 semantics, prompt policy, storage lifecycle behavior or routing implementation.
 
-## Compatibility Surfaces
+## Transition Surfaces
 
 The resolver reports current transition surfaces under
-`contracts.compatibility_surfaces`.
+`contracts.transition_surfaces`.
 
 | Surface | Status | Sunset |
 | --- | --- | --- |

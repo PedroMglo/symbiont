@@ -1,0 +1,10 @@
+name: AI Local - RAG
+values:
+  - key: rag_host_base_url
+    value: 'https://127.0.0.1:8486'
+  - key: rag_api_key
+    value: ''
+  - key: system_base_url
+    value: 'https://127.0.0.1:8586'
+  - key: system_api_key
+    value: ''

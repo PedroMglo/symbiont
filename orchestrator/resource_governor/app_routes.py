@@ -14,6 +14,7 @@ from orchestrator.resource_governor.schemas import ActivityRequest, LeaseHeartbe
 from orchestrator.resource_governor.service import get_resource_governor_service
 
 router = APIRouter(prefix="/resources", tags=["resources"])
+telemetry_router = APIRouter(prefix="/telemetry", tags=["telemetry"])
 
 
 def _configured_token() -> str:
@@ -53,11 +54,21 @@ def snapshot():
     return get_resource_governor_service().snapshot()
 
 
+@telemetry_router.get("/snapshot", dependencies=[Depends(require_internal_token)])
+def telemetry_snapshot():
+    return get_resource_governor_service().telemetry_snapshot()
+
+
 @router.post("/leases", dependencies=[Depends(require_internal_token)])
 def request_lease(payload: LeaseRequest, request: Request):
     decision = get_resource_governor_service().request_lease(payload)
     _record_agentic_lease(request, payload=payload, decision=decision)
     return decision
+
+
+@router.get("/leases", dependencies=[Depends(require_internal_token)])
+def active_leases(limit: int = 50):
+    return {"items": get_resource_governor_service().active_leases_summary(limit=limit)}
 
 
 @router.post("/leases/{lease_id}/heartbeat", dependencies=[Depends(require_internal_token)])

@@ -1,0 +1,82 @@
+$kind: http-request
+description: "Choose `target` and `force` in the Params tab. The pre-request script converts request params into the JSON body required by the API and adds a visible Postman origin. Valid target values: `all`, `local` (RAG index), `sources`, `cag`, `graph`."
+url: "{{rag_host_base_url}}/admin/reprocess?target=all&force=false"
+method: POST
+headers:
+  Authorization: Bearer {{rag_api_key}}
+  Content-Type: application/json
+  X-AI-Service: postman
+  X-AI-Feature: rag-admin
+  X-Request-ID: "{{$guid}}"
+queryParams:
+  - key: target
+    value: all
+    description: all | local | sources | cag | graph. Use local for RAG.
+  - key: force
+    value: "false"
+    description: true | false
+  - key: vault
+    value: ""
+    disabled: true
+    description: Optional vault name for local/RAG reindex.
+  - key: origin_kind
+    value: feature
+    disabled: true
+    description: Optional origin kind for job audit, for example agent, feature, service or user.
+  - key: origin_name
+    value: postman-rag-admin
+    disabled: true
+    description: Optional origin name shown in /admin/jobs.
+  - key: origin_reason
+    value: manual Postman RAG admin request
+    disabled: true
+    description: Optional audit reason stored with the job.
+body:
+  type: json
+  content: |-
+    {
+      "target": "all",
+      "force": false
+    }
+scripts:
+  - type: beforeRequest
+    code: |-
+      function queryValue(key, fallback) {
+        const query = pm.request.url.query && pm.request.url.query.all ? pm.request.url.query.all() : [];
+        for (let i = 0; i < query.length; i += 1) {
+          if (query[i].key === key && !query[i].disabled) {
+            return String(query[i].value || '');
+          }
+        }
+        return fallback;
+      }
+
+      const target = queryValue('target', 'all').trim();
+      const forceRaw = queryValue('force', 'false').trim().toLowerCase();
+      const vault = queryValue('vault', '').trim();
+      const originKind = queryValue('origin_kind', 'feature').trim();
+      const originName = queryValue('origin_name', 'postman-rag-admin').trim();
+      const originReason = queryValue('origin_reason', 'manual Postman RAG admin request').trim();
+      const payload = {
+        target: target,
+        force: ['true', '1', 'yes', 'sim'].includes(forceRaw),
+        origin: {
+          kind: originKind || 'feature',
+          name: originName || 'postman-rag-admin',
+          feature: originName || 'postman-rag-admin',
+          service: 'postman',
+          reason: originReason || 'manual Postman RAG admin request'
+        }
+      };
+      if (vault) {
+        payload.vault = vault;
+      }
+      pm.request.body.update(JSON.stringify(payload, null, 2));
+    language: text/javascript
+  - type: afterResponse
+    code: |-
+      pm.test('accepted', function () {
+        pm.expect(pm.response.code).to.be.oneOf([200, 202]);
+      });
+    language: text/javascript
+order: 1000

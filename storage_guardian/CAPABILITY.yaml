@@ -1,0 +1,26 @@
+schema_version: owner-capability.v1
+component: storage_guardian
+owner: storage_guardian
+description: Managed storage lifecycle, archive/restore policy, manifests, custody, and user-machine writes.
+routing:
+  terms:
+    - storage_guardian
+    - storage guardian
+    - archive
+    - restore
+    - managed storage
+    - storage lifecycle
+    - chain of custody
+    - custody
+    - storage write
+  context_sources:
+    - storage
+    - graph
+    - repo
+evidence_policy:
+  local_evidence_required: true
+  generic_answer_allowed: false
+public_surfaces:
+  specs:
+    - storage_guardian/SPEC.md
+    - storage_guardian/README.md

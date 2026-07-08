@@ -32,12 +32,28 @@ class ModelLoadError(AudioTranscribeError):
     """Failed to load the transcription model."""
 
 
+class DeviceUnavailableError(AudioTranscribeError):
+    """Requested transcription device is not available."""
+
+
+class InvalidTranscriptionConfigError(AudioTranscribeError):
+    """Transcription runtime configuration is invalid."""
+
+
 class TranscriptionError(AudioTranscribeError):
     """Error during transcription processing."""
 
 
 class DiarizationError(AudioTranscribeError):
     """Error during speaker diarization."""
+
+
+class NoiseReductionError(AudioTranscribeError):
+    """Error during requested noise reduction."""
+
+
+class VADUnavailableError(AudioTranscribeError):
+    """Requested VAD backend is not available."""
 
 
 class ExportError(AudioTranscribeError):

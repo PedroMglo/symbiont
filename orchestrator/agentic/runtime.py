@@ -92,6 +92,13 @@ _MATERIAL_SECTION_MARKERS = (
     "requisitos:",
     "requirements:",
 )
+_AUTHORITY_QUESTION_MARKERS = (
+    "quem pode",
+    "who can",
+    "who owns",
+    "qual owner",
+    "que owner",
+)
 
 
 def task_requires_material_output(goal: str, metadata: dict[str, Any] | None = None) -> bool:
@@ -105,6 +112,8 @@ def task_requires_material_output(goal: str, metadata: dict[str, Any] | None = N
         return True
     text = " ".join(str(goal or "").casefold().split())
     if not text:
+        return False
+    if any(marker in text for marker in _AUTHORITY_QUESTION_MARKERS):
         return False
     has_delivery = any(marker in text for marker in _MATERIAL_SECTION_MARKERS)
     has_verb = any(verb in text for verb in _MATERIAL_DELIVERY_VERBS)
@@ -122,14 +131,28 @@ def material_task_metadata(goal: str, *, client_cwd: str | None = None) -> dict[
         "durable_publish": True,
     }
     project = _first_backtick_identifier(goal)
+    named_artifact_root = _requested_named_artifact_root(goal)
     docs_root = _requested_docs_artifact_root(goal)
     if project:
         metadata["expected_artifact_root"] = project
         metadata["requested_project"] = project
+    elif named_artifact_root:
+        metadata["expected_artifact_root"] = named_artifact_root
+        metadata["requested_project"] = named_artifact_root
     elif docs_root:
         metadata["expected_artifact_root"] = docs_root
         metadata["requested_project"] = docs_root
-    requested_publish_root = _requested_publish_destination_root(goal)
+    remote_source = _git_remote_source(goal)
+    if remote_source:
+        metadata["material_source"] = remote_source
+        metadata["material_source_kind"] = "git_remote"
+        metadata["material_source_requires_sandbox_acquisition"] = True
+        metadata["material_network_policy"] = "vm-internal"
+        metadata["required_capabilities"] = ["repository_analysis", "documentation", "git_remote_source"]
+    requested_publish_root = _requested_publish_destination_root(
+        goal,
+        artifact_root=str(metadata.get("expected_artifact_root") or ""),
+    )
     if requested_publish_root:
         requested_publish_root = _publish_destination_root_for_artifact_root(
             requested_publish_root,
@@ -151,6 +174,24 @@ def _first_backtick_identifier(text: str) -> str:
     return ""
 
 
+def _requested_named_artifact_root(text: str) -> str:
+    raw = str(text or "")
+    patterns = (
+        r"\b(?:artifact\s+root|root\s+folder|output\s+folder|target\s+folder|folder|directory|project)\s+"
+        r"(?:called|named)\s+[`'\"]?([A-Za-z0-9][A-Za-z0-9_.:-]{1,127})[`'\"]?",
+        r"\b(?:called|named)\s+[`'\"]?([A-Za-z0-9][A-Za-z0-9_.:-]{1,127})[`'\"]?\s+"
+        r"(?:artifact\s+root|root\s+folder|output\s+folder|target\s+folder|folder|directory|project)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, raw, flags=re.IGNORECASE)
+        if not match:
+            continue
+        root = _normalize_relative_artifact_root(match.group(1).rstrip(".,;:"))
+        if root:
+            return root
+    return ""
+
+
 def _requested_docs_artifact_root(text: str) -> str:
     q = " ".join(str(text or "").casefold().split())
     if re.search(r"(?<!\w)docs(?!\w)", q):
@@ -160,15 +201,76 @@ def _requested_docs_artifact_root(text: str) -> str:
     return ""
 
 
-def _requested_publish_destination_root(text: str) -> str:
+def _git_remote_source(text: str) -> dict[str, Any] | None:
+    raw = str(text or "")
+    for match in re.finditer(
+        r"(?P<url>"
+        r"git@[A-Za-z0-9.-]+:[^\s`'\"<>]+?\.git"
+        r"|ssh://[^\s`'\"<>]+?\.git"
+        r"|https?://[A-Za-z0-9.-]+/[^\s`'\"<>]+/[^\s`'\"<>]+?(?:\.git)?"
+        r")",
+        raw,
+        flags=re.IGNORECASE,
+    ):
+        url = _clean_git_remote_url(match.group("url"))
+        if not url:
+            continue
+        repo_name = _repo_name_from_git_remote_url(url)
+        return {
+            "kind": "git_remote",
+            "url": url,
+            "repo_name": repo_name,
+            "requested_by_user": True,
+            "source_role": "documentation_source",
+        }
+    return None
+
+
+def _clean_git_remote_url(url: str) -> str:
+    value = str(url or "").strip().strip(".,;:)】]}>'\"`")
+    if not value or "\x00" in value or any(char.isspace() for char in value):
+        return ""
+    if value.startswith(("git@", "ssh://", "http://", "https://")):
+        return value
+    return ""
+
+
+def _repo_name_from_git_remote_url(url: str) -> str:
+    value = _clean_git_remote_url(url)
+    if not value:
+        return "repository"
+    if value.startswith("git@") and ":" in value:
+        path_part = value.rsplit(":", 1)[-1].rstrip("/").rsplit("/", 1)[-1]
+    else:
+        path_part = value.rstrip("/").rsplit("/", 1)[-1]
+    name = path_part.removesuffix(".git").strip("/") or "repository"
+    return _normalize_relative_artifact_root(name) or "repository"
+
+
+def _normalize_relative_artifact_root(value: str | None) -> str:
+    root = str(value or "").strip().strip("/").replace("\\", "/")
+    if not root or root == "." or root.startswith("/") or ".." in root.split("/"):
+        return ""
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", root):
+        return ""
+    return root
+
+
+def _requested_publish_destination_root(text: str, *, artifact_root: str = "") -> str:
     raw = str(text or "")
     if not raw:
         return ""
     candidates = _absolute_path_candidates(raw)
     if not candidates:
         return ""
+    candidate_paths = [path for path, _start, _end in candidates]
     scored = [
-        (_publish_destination_score(raw, start, end), start, path)
+        (
+            _publish_destination_score(raw, start, end)
+            + _artifact_root_destination_bonus(path, candidate_paths, artifact_root=artifact_root),
+            start,
+            path,
+        )
         for path, start, end in candidates
     ]
     scored = [item for item in scored if item[0] > 0]
@@ -176,6 +278,17 @@ def _requested_publish_destination_root(text: str) -> str:
         return ""
     _score, _start, path = max(scored, key=lambda item: (item[0], item[1]))
     return _map_host_path_to_container_root(path)
+
+
+def _artifact_root_destination_bonus(path: str, candidates: list[str], *, artifact_root: str) -> int:
+    root = str(artifact_root or "").strip().strip("/").replace("\\", "/")
+    normalized = _clean_posix_path(path)
+    if not root or "/" in root or posixpath.basename(normalized).casefold() != root.casefold():
+        return 0
+    parent = posixpath.dirname(normalized.rstrip("/"))
+    if parent and parent != "." and any(_clean_posix_path(item) == parent for item in candidates):
+        return 4
+    return 0
 
 
 def _absolute_path_candidates(text: str) -> list[tuple[str, int, int]]:

@@ -39,7 +39,7 @@ policy or benchmark-specific generation rules.
 
 ## Prohibited Behavior
 
-- No static fallback project.
+- No static generation shortcut.
 - No benchmark-specific runtime behavior.
 - No direct workspace writes.
 - No command execution.
@@ -74,7 +74,7 @@ The LLM lane is schema-first:
   enforcement belongs to `features/material_execution_kernel` and `config`;
 - plan repair accepts typed coverage issues from the Material Execution Kernel
   and returns a full repaired plan manifest; it does not patch files, execute
-  commands, invent static fallback content or encode benchmark-specific
+  commands, invent static canned content or encode benchmark-specific
   structures;
 - file generation is requested one file at a time;
 - patch generation returns one unified diff for one requested target path;
@@ -101,7 +101,7 @@ Runtime endpoints:
 
 If no LLM lane is configured and no explicit blueprint is supplied, the service
 returns `material_builder_backend_unavailable`. That blocked response is
-intentional. This agent must not use static fallback projects or benchmark
+intentional. This agent must not use static generation shortcuts or benchmark
 templates to appear capable.
 
 Runtime state validated in V3.2:
@@ -110,7 +110,7 @@ Runtime state validated in V3.2:
 - capabilities expose `lane_routes` and `prewarm_lanes` so lifecycle/prewarming
   owners can prepare material lanes without importing this agent's internals;
 - live LLM plan and file proposal smoke passed with
-  `static_fallback_used=false`;
+  `static_generation_shortcut_used=false`;
 - plan contracts preserve profile-specific `validation_commands` for runtime
   profiles while rejecting undeclared or unknown profile commands;
 - patch proposal contracts are implemented for explicit blueprints and the LLM

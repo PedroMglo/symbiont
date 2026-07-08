@@ -81,7 +81,7 @@ class WhisperTranscriber:
         cfg = get_config()
         candidates = [requested_model]
         if cfg.gpu_policy.allow_model_downgrade:
-            candidates.extend([cfg.gpu_policy.fallback_model, "small", "base", "tiny"])
+            candidates.extend([cfg.gpu_policy.degraded_model, "small", "base", "tiny"])
         result: list[str] = []
         for candidate in candidates:
             if candidate and candidate not in result:
@@ -155,7 +155,7 @@ class WhisperTranscriber:
                 info.vram_free_mb,
                 cfg.gpu_policy.min_free_vram_mb,
             )
-            if cfg.gpu_policy.cpu_fallback_enabled:
+            if cfg.gpu_policy.allow_cpu_degradation:
                 return requested_model, "cpu", select_compute_type(requested_compute, "cpu")
 
         return selected_model or requested_model, "cuda", select_compute_type(requested_compute, "cuda")
@@ -214,57 +214,57 @@ class WhisperTranscriber:
             if actual_device == "cuda" and _is_cuda_load_error(e):
                 clear_gpu_cache()
                 if cfg.gpu_policy.allow_model_downgrade:
-                    for fallback_model in self._candidate_gpu_models(model_name):
-                        if fallback_model == actual_model:
+                    for alternate_model in self._candidate_gpu_models(model_name):
+                        if alternate_model == actual_model:
                             continue
-                        fallback_required = max(
-                            _model_vram_floor_mb(fallback_model),
+                        alternate_required = max(
+                            _model_vram_floor_mb(alternate_model),
                             cfg.gpu_policy.min_free_vram_mb,
                         )
                         gpu_info = wait_for_gpu_memory(
-                            fallback_required,
+                            alternate_required,
                             timeout_seconds=cfg.gpu_policy.wait_timeout_seconds,
                             poll_seconds=cfg.gpu_policy.wait_poll_seconds,
                         )
-                        if gpu_info.vram_free_mb and gpu_info.vram_free_mb < fallback_required:
+                        if gpu_info.vram_free_mb and gpu_info.vram_free_mb < alternate_required:
                             continue
                         try:
-                            fallback_compute = select_compute_type(requested_compute, "cuda")
+                            alternate_compute = select_compute_type(requested_compute, "cuda")
                             logger.warning(
                                 "CUDA failed loading %s (%s); retrying %s on GPU",
                                 actual_model,
                                 e,
-                                fallback_model,
+                                alternate_model,
                             )
-                            self._load_whisper_model(fallback_model, "cuda", fallback_compute)
-                            logger.info("Model loaded (GPU fallback): %s", fallback_model)
+                            self._load_whisper_model(alternate_model, "cuda", alternate_compute)
+                            logger.info("Model loaded (GPU alternate): %s", alternate_model)
                             return
-                        except Exception as fallback_gpu_err:
+                        except Exception as alternate_gpu_err:
                             clear_gpu_cache()
-                            logger.warning("GPU fallback model %s failed: %s", fallback_model, fallback_gpu_err)
+                            logger.warning("GPU alternate model %s failed: %s", alternate_model, alternate_gpu_err)
 
-                if not cfg.gpu_policy.cpu_fallback_enabled:
+                if not cfg.gpu_policy.allow_cpu_degradation:
                     self._loaded = False
                     raise ModelLoadError(
                         message=f"Failed to load model '{actual_model}' on GPU",
                         detail=str(e),
                     )
 
-                logger.warning("CUDA failed (%s), falling back to CPU", e)
+                logger.warning("CUDA failed (%s), degrading to CPU", e)
                 cpu_compute = select_compute_type(requested_compute, "cpu")
                 try:
-                    cpu_model = actual_model if actual_model != model_name else cfg.gpu_policy.fallback_model
+                    cpu_model = actual_model if actual_model != model_name else cfg.gpu_policy.degraded_model
                     self._load_whisper_model(cpu_model, "cpu", cpu_compute)
                     logger.info(
-                        f"Model loaded (CPU fallback): {self._model_name} | "
+                        f"Model loaded (CPU degradation): {self._model_name} | "
                         f"compute_type={cpu_compute}"
                     )
                     return
-                except Exception as fallback_err:
+                except Exception as degradation_err:
                     self._loaded = False
                     raise ModelLoadError(
                         message=f"Failed to load model '{actual_model}' (GPU and CPU)",
-                        detail=str(fallback_err),
+                        detail=str(degradation_err),
                     )
             self._loaded = False
             raise ModelLoadError(

@@ -154,6 +154,21 @@ def create_dispatch_context_node(feature_client: FeatureClient):
             elif not resp.success:
                 log.debug("Context source %s failed: %s", resp.source, resp.error)
 
+        if state.get("local_evidence_required") and not sources_used:
+            missing = ", ".join(str(source) for source in sources) or "local"
+            blocks.append(make_context_block(
+                source="required_context_missing",
+                content=(
+                    "Evidencia local obrigatoria indisponivel para esta pergunta interna "
+                    f"(fontes pedidas: {missing}). Responde recusando inferencias genericas "
+                    "e pede/usa evidencia local antes de afirmar estado, owner ou causa."
+                ),
+                token_estimate=48,
+                metadata={"requested_sources": list(sources), "provider_status": "missing"},
+                provider_status="missing",
+            ))
+            sources_used.append("required_context_missing")
+
         log.info(
             "Context dispatch: requested=%d, gathered=%d sources=%s",
             len(sources), len(blocks), sources_used,

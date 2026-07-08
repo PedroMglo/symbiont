@@ -2,7 +2,7 @@
 
 Status: implemented
 Owner: `obsidian-rag/`
-Last verified: 2026-06-29
+Last verified: 2026-07-05
 Applies to: `obsidian-rag/`, RAG API, retrieval, graph, CAG, indexing, observability
 Audience: developer, operator, maintainer, user
 
@@ -38,13 +38,13 @@ Runtime metadata is in
 
 ## Ownership
 
-| Responsibility | Owner | Notes |
-| --- | --- | --- |
-| Primary behavior | `obsidian-rag/` | ingestion, retrieval, graph, CAG and RAG API behavior |
-| Configuration | `config/rag/`, `config/models/rag.config.json`, generated envs | runtime values generated centrally |
-| Durable storage | `storage_guardian/` for managed durable publication | RAG owns indexes/data behavior, not storage lifecycle policy |
-| Execution side effects | RAG API/admin endpoints | manual reprocess through API, not container CLI |
-| Observability | RAG owner | health components, retrieval/index status and owner telemetry |
+| Responsibility         | Owner                                                          | Notes                                                         |
+| ---------------------- | -------------------------------------------------------------- | ------------------------------------------------------------- |
+| Primary behavior       | `obsidian-rag/`                                                | ingestion, retrieval, graph, CAG and RAG API behavior         |
+| Configuration          | `config/rag/`, `config/models/rag.config.json`, generated envs | runtime values generated centrally                            |
+| Durable storage        | `storage_guardian/` for managed durable publication            | RAG owns indexes/data behavior, not storage lifecycle policy  |
+| Execution side effects | RAG API/admin endpoints                                        | manual reprocess through API, not container CLI               |
+| Observability          | RAG owner                                                      | health components, retrieval/index status and owner telemetry |
 
 This component owns:
 
@@ -54,6 +54,7 @@ This component owns:
 - RAG API schemas and auth behavior;
 - indexing/reprocess workflows;
 - RAG-specific observability.
+- process-local release of RAG jobs, leases, subprocesses and caches.
 
 This component does not own:
 
@@ -61,6 +62,8 @@ This component does not own:
 - feature-level research facade behavior;
 - storage lifecycle/archive/restore policy;
 - central config inference;
+- global resource cleanup such as host swap reset, drop caches, Docker prune or
+  unknown process termination;
 - agent prompt behavior.
 
 ## User-Facing Behavior
@@ -70,14 +73,15 @@ it through the `research` feature facade or a typed RAG dispatch/API boundary.
 
 ### Common Use Cases
 
-| Use case | Input | Output | Success evidence |
-| --- | --- | --- | --- |
-| Query notes | `POST /query` | semantic results | citations/results and elapsed time |
-| Query code | `POST /query/code` | code-context results | code refs and trace |
-| Chat with context | `POST /chat` | answer with retrieved context | chat response and citations |
-| Graph query | `POST /graph/{repo}/query` | local graph answer | graph result from `graph.json` |
-| CAG lookup | `GET /cag/packs` or `/cag/packs/{pack_type}` | pack metadata | pack response |
-| Manual reprocess | `POST /admin/reprocess` | queued job | job id and polling URL |
+| Use case          | Input                                        | Output                        | Success evidence                   |
+| ----------------- | -------------------------------------------- | ----------------------------- | ---------------------------------- |
+| Query notes       | `POST /query`                                | semantic results              | citations/results and elapsed time |
+| Query code        | `POST /query/code`                           | code-context results          | code refs and trace                |
+| Chat with context | `POST /chat`                                 | answer with retrieved context | chat response and citations        |
+| Graph query       | `POST /graph/{repo}/query`                   | local graph answer            | graph result from `graph.json`     |
+| CAG lookup        | `GET /cag/packs` or `/cag/packs/{pack_type}` | pack metadata                 | pack response                      |
+| Manual reprocess  | `POST /admin/reprocess`                      | queued job                    | job id and polling URL             |
+| Job management    | `GET /admin/jobs`, `POST /admin/jobs/{id}/cancel` | jobs and cancellation request | job status changes                 |
 
 ### Non-Goals
 
@@ -91,7 +95,7 @@ it through the `research` feature facade or a typed RAG dispatch/API boundary.
 ### Local Commands
 
 ```bash
-make dev
+make setup
 make infra
 make up
 ```
@@ -130,12 +134,12 @@ curl -sS https://127.0.0.1:8484/admin/reprocess \
 
 ### Configuration
 
-| Key | Owner | Default | Meaning | Safe values |
-| --- | --- | --- | --- | --- |
-| RAG config | `config/rag/` | project defaults | RAG runtime behavior | central config only |
-| Model registry | `config/models/rag.config.json` | project defaults | model names/prompts without runtime URLs | generated env supplies endpoints |
-| RAG API key | Docker secret/env file | required for protected endpoints | API auth | never commit raw key |
-| Compose runtime | `infra/docker/compose/rag.yml` | project Compose fragment | container service | managed by infra |
+| Key             | Owner                           | Default                          | Meaning                                  | Safe values                      |
+| --------------- | ------------------------------- | -------------------------------- | ---------------------------------------- | -------------------------------- |
+| RAG config      | `config/rag/`                   | project defaults                 | RAG runtime behavior                     | central config only              |
+| Model registry  | `config/models/rag.config.json` | project defaults                 | model names/prompts without runtime URLs | generated env supplies endpoints |
+| RAG API key     | Docker secret/env file          | required for protected endpoints | API auth                                 | never commit raw key             |
+| Compose runtime | `infra/docker/compose/rag.yml`  | project Compose fragment         | container service                        | managed by infra                 |
 
 ## Architecture
 
@@ -199,13 +203,13 @@ stateDiagram-v2
 
 ## Data And Contracts
 
-| Contract | Producer | Consumer | Schema/source | Compatibility rules |
-| --- | --- | --- | --- | --- |
-| RAG capability manifest | `obsidian-rag` | orchestrator | `service_capabilities.toml` | calls cross RAG API or research facade |
-| Query API | RAG API | users/orchestrator/research | `QueryRequest`, `QueryResponse` | bearer auth except public health/docs |
-| Health API | RAG API | infra/operators | `/health` | includes component status |
-| Admin reprocess | RAG API | operators | `/admin/reprocess`, `/admin/jobs/{job_id}` | API-only operation |
-| Graph endpoints | RAG API | callers | `/graph/*` endpoints | no local CLI dependency |
+| Contract                | Producer       | Consumer                    | Schema/source                              | Compatibility rules                    |
+| ----------------------- | -------------- | --------------------------- | ------------------------------------------ | -------------------------------------- |
+| RAG capability manifest | `obsidian-rag` | orchestrator                | `service_capabilities.toml`                | calls cross RAG API or research facade |
+| Query API               | RAG API        | users/orchestrator/research | `QueryRequest`, `QueryResponse`            | bearer auth except public health/docs  |
+| Health API              | RAG API        | infra/operators             | `/health`                                  | includes component status              |
+| Admin reprocess         | RAG API        | operators                   | `/admin/reprocess`, `/admin/jobs`, `/admin/jobs/{job_id}`, `/admin/jobs/{job_id}/cancel` | API-only operation                     |
+| Graph endpoints         | RAG API        | callers                     | `/graph/*` endpoints                       | no local CLI dependency                |
 
 ### Inputs
 
@@ -221,23 +225,24 @@ stateDiagram-v2
 
 ### Events And Evidence
 
-| Event/evidence | When emitted | Required fields | Used by |
-| --- | --- | --- | --- |
-| `rag.query.completed` | successful query | query, elapsed, trace/results | orchestrator/final answer |
-| `rag.miss` | low/empty retrieval | query and miss context | retrieval audit |
-| `service.degraded` | component degraded | component and reason | operators |
-| admin job status | reprocess | job id, target, status | operators |
+| Event/evidence        | When emitted        | Required fields               | Used by                   |
+| --------------------- | ------------------- | ----------------------------- | ------------------------- |
+| `rag.query.completed` | successful query    | query, elapsed, trace/results | orchestrator/final answer |
+| `rag.miss`            | low/empty retrieval | query and miss context        | retrieval audit           |
+| `service.degraded`    | component degraded  | component and reason          | operators                 |
+| admin job status      | reprocess           | job id, target, status        | operators                 |
 
 ## Failure Modes
 
-| Failure | Detection | User impact | Owner | Recovery |
-| --- | --- | --- | --- | --- |
-| Missing/invalid API key | auth middleware | protected endpoint denied | RAG/infra secrets | provide secret/env |
-| Qdrant unavailable | `/health.components.qdrant` | degraded retrieval | RAG/infra | start/repair Qdrant |
-| Graph unavailable | health/status graph component | graph endpoints degraded | RAG/Graphify | rebuild graph via API |
-| Reprocess job failure | `/admin/jobs/{job_id}` | stale index remains | RAG owner | inspect job and retry |
-| Config/model URL drift | startup/health | degraded model/RAG behavior | `config/` + RAG | regenerate env/config |
-| Orchestrator fallback duplicate | review/tests | split RAG behavior | orchestrator/RAG | remove fallback and call RAG API |
+| Failure                         | Detection                     | User impact                 | Owner             | Recovery                         |
+| ------------------------------- | ----------------------------- | --------------------------- | ----------------- | -------------------------------- |
+| Missing/invalid API key         | auth middleware               | protected endpoint denied   | RAG/infra secrets | provide secret/env               |
+| Qdrant unavailable              | `/health.components.qdrant`   | degraded retrieval          | RAG/infra         | start/repair Qdrant              |
+| Graph unavailable               | health/status graph component | graph endpoints degraded    | RAG/Graphify      | rebuild graph via API            |
+| Reprocess job failure           | `/admin/jobs/{job_id}`        | stale index remains         | RAG owner         | inspect job and retry            |
+| Resource-pressure defer/failure | `/admin/jobs/{job_id}`        | delayed or failed indexing  | RAG owner         | wait for retry, cancel, or free resources |
+| Config/model URL drift          | startup/health                | degraded model/RAG behavior | `config/` + RAG   | regenerate env/config            |
+| Orchestrator fallback duplicate | review/tests                  | split RAG behavior          | orchestrator/RAG  | remove fallback and call RAG API |
 
 ## Security And Safety
 
@@ -252,15 +257,15 @@ stateDiagram-v2
 
 ## Observability
 
-| Signal | Location | Meaning | Alert or action |
-| --- | --- | --- | --- |
-| `/health` | RAG API | service and component status | inspect degraded components |
-| `/status/indexing` | RAG API | index state | reprocess if stale |
-| `/status/retrieval` | RAG API | retrieval audit | tune or inspect source coverage |
-| `/status/bm25` | RAG API | BM25 state | rebuild/index if stale |
-| `components.qdrant` | `/health` | vector store readiness | repair Qdrant/volume/config |
-| `components.graph` | `/health` | graph context readiness | rebuild graph |
-| `components.cag` | `/health` | CAG pack readiness | regenerate packs |
+| Signal              | Location  | Meaning                      | Alert or action                 |
+| ------------------- | --------- | ---------------------------- | ------------------------------- |
+| `/health`           | RAG API   | service and component status | inspect degraded components     |
+| `/status/indexing`  | RAG API   | index state                  | reprocess if stale              |
+| `/status/retrieval` | RAG API   | retrieval audit              | tune or inspect source coverage |
+| `/status/bm25`      | RAG API   | BM25 state                   | rebuild/index if stale          |
+| `components.qdrant` | `/health` | vector store readiness       | repair Qdrant/volume/config     |
+| `components.graph`  | `/health` | graph context readiness      | rebuild graph                   |
+| `components.cag`    | `/health` | CAG pack readiness           | regenerate packs                |
 
 ## Operations
 
@@ -294,16 +299,16 @@ curl -sS https://127.0.0.1:8484/status/retrieval \
 
 ## Implementation Map
 
-| Area | Path | Notes |
-| --- | --- | --- |
-| README | `obsidian-rag/README.md` | API-only operations source |
-| Runtime package | `obsidian-rag/obsidian_rag/` | RAG implementation |
-| Retrieval spec | `obsidian-rag/obsidian_rag/retrieval/SPEC.md` | retrieval behavior |
-| Workflows spec | `obsidian-rag/obsidian_rag/workflows/SPEC.md` | workflow behavior |
-| Observability spec | `obsidian-rag/obsidian_rag/observability/SPEC.md` | RAG telemetry |
-| Capability manifest | `obsidian-rag/service_capabilities.toml` | orchestrator metadata |
-| Compose | `infra/docker/compose/rag.yml` | runtime container |
-| Codex skill | `obsidian-rag/.agents/skills/obsidian-rag/SKILL.md` | owner guidance |
+| Area                | Path                                                | Notes                      |
+| ------------------- | --------------------------------------------------- | -------------------------- |
+| README              | `obsidian-rag/README.md`                            | API-only operations source |
+| Runtime package     | `obsidian-rag/`                        | RAG implementation         |
+| Retrieval spec      | `obsidian-rag/retrieval/SPEC.md`       | retrieval behavior         |
+| Workflows spec      | `obsidian-rag/workflows/SPEC.md`       | workflow behavior          |
+| Observability spec  | `obsidian-rag/observability/SPEC.md`   | RAG telemetry              |
+| Capability manifest | `obsidian-rag/service_capabilities.toml`            | orchestrator metadata      |
+| Compose             | `infra/docker/compose/rag.yml`                      | runtime container          |
+| Codex skill         | `obsidian-rag/.agents/skills/obsidian-rag/SKILL.md` | owner guidance             |
 
 ## Change Rules
 
@@ -316,13 +321,13 @@ curl -sS https://127.0.0.1:8484/status/retrieval \
 
 ## Verification
 
-| Check | Command or source | Expected result | Last run |
-| --- | --- | --- | --- |
-| README source review | `obsidian-rag/README.md` | API surface documented | 2026-06-29 |
-| Manifest review | `obsidian-rag/service_capabilities.toml` | RAG capability metadata documented | 2026-06-29 |
-| RAG health smoke | `curl -sS https://127.0.0.1:8484/health` | ready/degraded status | not-run for docs-only update |
-| RAG tests | targeted `pytest obsidian-rag` | pass | not-run for docs-only update |
-| Skill presence | `obsidian-rag/.agents/skills/obsidian-rag/SKILL.md` | owner skill exists | 2026-06-29 |
+| Check                | Command or source                                   | Expected result                    | Last run                     |
+| -------------------- | --------------------------------------------------- | ---------------------------------- | ---------------------------- |
+| README source review | `obsidian-rag/README.md`                            | API surface documented             | 2026-06-29                   |
+| Manifest review      | `obsidian-rag/service_capabilities.toml`            | RAG capability metadata documented | 2026-06-29                   |
+| RAG health smoke     | `curl -sS https://127.0.0.1:8484/health`            | ready/degraded status              | not-run for docs-only update |
+| RAG tests            | targeted `pytest obsidian-rag`                      | pass                               | not-run for docs-only update |
+| Skill presence       | `obsidian-rag/.agents/skills/obsidian-rag/SKILL.md` | owner skill exists                 | 2026-06-29                   |
 
 ## Open Questions
 

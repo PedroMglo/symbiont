@@ -19,8 +19,21 @@ dependencies = [
 requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.setuptools]
+packages = [
+  "storage_guardian",
+  "storage_guardian.adapters",
+  "storage_guardian.api",
+  "storage_guardian.compressors",
+  "storage_guardian.integrations",
+]
+
+[tool.setuptools.package-dir]
+storage_guardian = "."
+"storage_guardian.adapters" = "adapters"
+"storage_guardian.api" = "api"
+"storage_guardian.compressors" = "compressors"
+"storage_guardian.integrations" = "integrations"
 
 [tool.setuptools.package-data]
 storage_guardian = ["sql/*.sql"]

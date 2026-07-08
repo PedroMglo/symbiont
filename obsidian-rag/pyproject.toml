@@ -36,7 +36,7 @@ temporal = [
     "temporalio>=1.9",
 ]
 qdrant = [
-    "qdrant-client>=1.9",
+    "qdrant-client>=1.18,<1.19",
     "openai>=1.0",   # litellm/graphify backend ollama requires openai package
 ]
 treesitter = [
@@ -65,17 +65,33 @@ profile = [
     "pytest-timeout>=2.3",
 ]
 
+[tool.setuptools]
+py-modules = ["rag_config", "metadata", "registry", "tuning"]
+
 [tool.setuptools.packages.find]
-include = ["obsidian_rag*"]
+include = [
+    "api*",
+    "cag*",
+    "chunking*",
+    "embeddings*",
+    "integrations*",
+    "llm*",
+    "observability*",
+    "pipeline*",
+    "prompts*",
+    "retrieval*",
+    "store*",
+    "workflows*",
+]
 
 [tool.setuptools.package-data]
-"obsidian_rag.api" = ["sql/*.sql"]
-"obsidian_rag.cag" = ["sql/*.sql"]
-"obsidian_rag.embeddings" = ["sql/*.sql"]
-"obsidian_rag.observability" = ["sql/*.sql"]
-"obsidian_rag.pipeline" = ["sql/*.sql"]
-"obsidian_rag.pipeline.graph" = ["cypher/*.cypher", "sql/*.sql"]
-"obsidian_rag.retrieval" = ["prompt/*.md"]
+"api" = ["sql/*.sql"]
+"cag" = ["sql/*.sql"]
+"embeddings" = ["sql/*.sql"]
+"observability" = ["sql/*.sql"]
+"pipeline" = ["sql/*.sql"]
+"pipeline.graph" = ["cypher/*.cypher", "prompt/*.md", "sql/*.sql"]
+"retrieval" = ["prompt/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -98,12 +114,12 @@ select = ["E", "F", "W", "I"]
 ignore = ["E501"]
 
 [tool.coverage.run]
-source = ["obsidian_rag"]
+source = ["."]
 omit = [
     "tests/*",
-    "obsidian_rag/graph/*",
-    "obsidian_rag/pipeline/sync.py",
-    "obsidian_rag/cli/*",
+    "graph/*",
+    "pipeline/sync.py",
+    "cli/*",
 ]
 
 [tool.bandit]

@@ -11,7 +11,8 @@ USER root
 
 COPY --chown=ailoc:ailoc features/personal_context/ /app/
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-build-isolation /app/
+    pip install --no-build-isolation /app/ \
+    && pip install --upgrade "setuptools>=83.0.0" "wheel>=0.46.2" "jaraco.context>=6.1.0"
 USER ailoc
 
 EXPOSE 8000

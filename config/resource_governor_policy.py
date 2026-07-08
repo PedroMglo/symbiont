@@ -43,6 +43,16 @@ def build_effective_policy_payload(
     limits.setdefault("storage_workers", 1)
     limits.setdefault("embedding_batch", min(8, max(1, batch)))
     limits.setdefault("heavy_gpu_concurrency", 1 if runtime.get("gpu_available") else 0)
+    pressure_policy = _pressure_policy(policy_root, resolved_config=resolved_config)
+    thresholds = dict(_mapping(policy_root.get("thresholds")))
+    _apply_pressure_policy_thresholds(thresholds, pressure_policy)
+    rag_policy = _rag_policy(
+        policy_root,
+        resolved_config=resolved_config,
+        limits=limits,
+        pressure_policy=pressure_policy,
+    )
+    runtime_hygiene = _runtime_hygiene_policy(policy_root, resolved_config=resolved_config)
 
     return {
         "contract_version": str(policy_root.get("contract_version") or "resource-governor.v1"),
@@ -57,12 +67,15 @@ def build_effective_policy_payload(
         "allow_silent_quality_loss": bool(_mapping(policy_root.get("experience_policy")).get("allow_silent_quality_loss", False)),
         "limits": limits,
         "lanes": _lanes(limits),
-        "thresholds": dict(_mapping(policy_root.get("thresholds"))),
+        "thresholds": thresholds,
+        "telemetry_authority": _telemetry_authority(policy_root),
+        "pressure_policy": pressure_policy,
         "gpu_conflict_matrix": dict(_mapping(policy_root.get("gpu_conflict_matrix"))),
         "storage_policy": _storage_policy(storage_paths),
         "runtime_layers": _runtime_layers(runtime=runtime, limits=limits),
+        "rag": rag_policy,
+        "runtime_hygiene": runtime_hygiene,
         "experience_slo": dict(_mapping(policy_root.get("experience_slo"))),
-        "fallback_policy": dict(_mapping(policy_root.get("fallback_policy"))),
         "service_lease_requirements": dict(_mapping(policy_root.get("service_lease_requirements"))),
         "operational_authority": dict(_mapping(policy_root.get("operational_authority")) or {"foreground_first": True}),
     }
@@ -70,6 +83,17 @@ def build_effective_policy_payload(
 
 def _mapping(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _telemetry_authority(policy_root: dict[str, Any]) -> dict[str, Any]:
+    telemetry = _mapping(policy_root.get("telemetry_authority"))
+    return {
+        "contract": str(telemetry.get("contract_version") or "resource-telemetry-authority.v1"),
+        "url": str(telemetry.get("url") or "").strip(),
+        "ca_bundle_file": str(telemetry.get("ca_bundle_file") or "").strip(),
+        "cache_ttl_seconds": _float_value(telemetry.get("cache_ttl_seconds"), 1.5),
+        "timeout_seconds": _float_value(telemetry.get("timeout_seconds"), 2.0),
+    }
 
 
 def _policy_root(*, config: dict[str, Any] | None, policy_path: str | Path | None) -> dict[str, Any]:
@@ -156,6 +180,160 @@ def _decision_value(decisions: list[Any], field: str, default: Any) -> Any:
         if getattr(item, "field", None) == field:
             return getattr(item, "value", default)
     return default
+
+
+def _rag_runtime_env(resolved_config: dict[str, Any] | None, env: str, default: Any) -> Any:
+    for item in (resolved_config or {}).get("rag_runtime") or []:
+        if isinstance(item, dict) and item.get("env") == env:
+            return item.get("value", default)
+        if getattr(item, "env", None) == env:
+            return getattr(item, "value", default)
+    return default
+
+
+def _int_value(value: Any, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _float_value(value: Any, default: float) -> float:
+    if isinstance(value, bool):
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _bool_value(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
+
+
+def _pressure_policy(policy_root: dict[str, Any], *, resolved_config: dict[str, Any] | None) -> dict[str, Any]:
+    raw = _mapping(policy_root.get("pressure_policy"))
+    cleanup_raw = _mapping(raw.get("owner_job_end_cleanup"))
+    config_limits = _mapping(_mapping((resolved_config or {}).get("config")).get("limits"))
+    memory_fraction = _float_value(config_limits.get("memory_budget_fraction"), 0.70)
+    auto_ram_percent = int(max(50, min(90, round(memory_fraction * 100))))
+    raw_ram_percent = raw.get("swap_pressure_ram_percent", "auto")
+    if str(raw_ram_percent).strip().lower() == "auto":
+        swap_pressure_ram_percent = auto_ram_percent
+    else:
+        swap_pressure_ram_percent = int(max(1, min(99, _int_value(raw_ram_percent, auto_ram_percent))))
+
+    active_growth_mb = max(1, _int_value(raw.get("swap_active_growth_mb"), 256))
+    cleanup_mode = str(cleanup_raw.get("mode") or "owner_process_local")
+    cleanup = {
+        "mode": cleanup_mode,
+        "gc_collect": _bool_value(cleanup_raw.get("gc_collect"), True),
+        "malloc_trim": _bool_value(cleanup_raw.get("malloc_trim"), True),
+        "clear_process_caches": _bool_value(cleanup_raw.get("clear_process_caches"), True),
+        "forbid_global_swapoff": _bool_value(cleanup_raw.get("forbid_global_swapoff"), True),
+        "forbid_drop_caches": _bool_value(cleanup_raw.get("forbid_drop_caches"), True),
+    }
+    forbidden = ["swapoff", "drop_caches", "kill_unknown_processes", "docker_prune"]
+    return {
+        "contract": str(raw.get("contract_version") or "resource-pressure-policy.v1"),
+        "swap_pause_requires_active_pressure": _bool_value(raw.get("swap_pause_requires_active_pressure"), True),
+        "swap_active_growth_mb": active_growth_mb,
+        "swap_active_growth_gb": round(active_growth_mb / 1024.0, 3),
+        "swap_static_action": str(raw.get("swap_static_action") or "observe"),
+        "swap_pressure_ram_percent": swap_pressure_ram_percent,
+        "owner_job_end_cleanup": cleanup,
+        "global_cleanup_forbidden": forbidden,
+        "authority": "config_policy_only_owner_process_cleanup_by_resource_owner",
+    }
+
+
+def _apply_pressure_policy_thresholds(thresholds: dict[str, Any], pressure_policy: dict[str, Any]) -> None:
+    thresholds.setdefault(
+        "swap_requires_active_pressure",
+        bool(pressure_policy.get("swap_pause_requires_active_pressure", True)),
+    )
+    thresholds.setdefault("swap_static_action", pressure_policy.get("swap_static_action", "observe"))
+    thresholds.setdefault("swap_active_growth_mb", int(pressure_policy.get("swap_active_growth_mb") or 256))
+
+
+def _rag_policy(
+    policy_root: dict[str, Any],
+    *,
+    resolved_config: dict[str, Any] | None,
+    limits: dict[str, Any],
+    pressure_policy: dict[str, Any],
+) -> dict[str, Any]:
+    raw = _mapping(policy_root.get("rag"))
+    inferred_parallel = _int_value(
+        _rag_runtime_env(resolved_config, "RAG_PERFORMANCE_MAX_PARALLEL_JOBS", limits.get("background_workers", 1)),
+        1,
+    )
+    raw_scan_parallel = raw.get("source_scan_parallel_jobs", "auto")
+    if str(raw_scan_parallel).strip().lower() == "auto":
+        source_scan_parallel_jobs = inferred_parallel
+    else:
+        source_scan_parallel_jobs = _int_value(raw_scan_parallel, inferred_parallel)
+
+    return {
+        "resource_pause_max_seconds": max(1, _int_value(raw.get("resource_pause_max_seconds"), 120)),
+        "resource_pause_total_budget_seconds": max(1, _int_value(raw.get("resource_pause_total_budget_seconds"), 600)),
+        "resource_retry_max_attempts": max(1, _int_value(raw.get("resource_retry_max_attempts"), 12)),
+        "embedding_lane_concurrency": max(1, _int_value(raw.get("embedding_lane_concurrency"), 1)),
+        "source_scan_parallel_jobs": max(1, source_scan_parallel_jobs),
+        "swap_pause_requires_active_pressure": bool(
+            pressure_policy.get("swap_pause_requires_active_pressure", True)
+        ),
+        "swap_active_growth_gb": float(pressure_policy.get("swap_active_growth_gb") or 0.25),
+        "swap_pressure_ram_percent": int(pressure_policy.get("swap_pressure_ram_percent") or 70),
+        "job_end_memory_cleanup": _mapping(pressure_policy.get("owner_job_end_cleanup")).get("mode")
+        == "owner_process_local",
+        "job_end_malloc_trim": bool(
+            _mapping(pressure_policy.get("owner_job_end_cleanup")).get("malloc_trim", True)
+        ),
+        "job_end_clear_embedder_cache": bool(
+            _mapping(pressure_policy.get("owner_job_end_cleanup")).get("clear_process_caches", True)
+        ),
+    }
+
+
+def _runtime_hygiene_policy(
+    policy_root: dict[str, Any],
+    *,
+    resolved_config: dict[str, Any] | None,
+) -> dict[str, Any]:
+    raw = _mapping(policy_root.get("runtime_hygiene"))
+    observed = _mapping((resolved_config or {}).get("runtime_hygiene_observed"))
+    orphan_count = _int_value(observed.get("orphan_count"), 0)
+    blocking_count = max(1, _int_value(raw.get("orphan_blocking_count"), 10))
+    warning_count = max(0, _int_value(raw.get("orphan_warning_count"), 1))
+    status = "ready"
+    if orphan_count >= blocking_count:
+        status = "blocked"
+    elif orphan_count >= warning_count and orphan_count > 0:
+        status = "degraded"
+    return {
+        "contract": str(raw.get("contract_version") or "runtime-hygiene.v1"),
+        "mode": str(raw.get("mode") or "owner_safe_cleanup"),
+        "status": status,
+        "orphan_count": orphan_count,
+        "orphan_warning_count": warning_count,
+        "orphan_blocking_count": blocking_count,
+        "owners": dict(_mapping(raw.get("owners"))),
+        "observed": observed,
+        "authority": "diagnostic_only_config_owner_cleanup_by_declared_resource_owner",
+    }
 
 
 def _machine_profile(runtime: dict[str, Any]) -> str:

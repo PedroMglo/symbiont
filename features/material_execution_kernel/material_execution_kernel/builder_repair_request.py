@@ -32,12 +32,12 @@ class BuilderRepairRequest(MaterialKernelModel):
     issue_id: Identifier
     repair_case_id: Identifier
     target_path: str = Field(min_length=1, max_length=4096)
-    expected_old_sha256: Sha256
+    expected_current_sha256: Sha256
     validation_profile: str | None = Field(default=None, max_length=128)
     issue_contract: dict[str, Any] = Field(default_factory=dict, max_length=64)
     current_context: dict[str, Any] = Field(default_factory=dict, max_length=64)
     command_evidence: dict[str, Any] = Field(default_factory=dict, max_length=64)
-    previous_patch_rejections: list[dict[str, Any]] = Field(default_factory=list, max_length=32)
+    prior_patch_rejections: list[dict[str, Any]] = Field(default_factory=list, max_length=32)
     target_resolution: dict[str, Any] | None = None
     allowed_actions: list[str] = Field(default_factory=list, max_length=16)
     forbidden_actions: list[str] = Field(default_factory=list, max_length=16)
@@ -56,11 +56,11 @@ def compile_builder_repair_request(
     issue: MaterialIssue,
     repair_case: RepairCase,
     target_path: str,
-    expected_old_sha256: str,
+    expected_current_sha256: str,
     current_context: dict[str, Any],
     validation_profile: str | None,
     issue_contract: dict[str, Any],
-    previous_patch_rejections: list[dict[str, Any]],
+    prior_patch_rejections: list[dict[str, Any]],
     target_resolution: dict[str, Any] | None,
     repair_arbiter: dict[str, Any],
 ) -> BuilderRepairRequest:
@@ -83,7 +83,7 @@ def compile_builder_repair_request(
         issue_id=issue.issue_id,
         repair_case_id=repair_case.case_id,
         target_path=target_path,
-        expected_old_sha256=expected_old_sha256,
+        expected_current_sha256=expected_current_sha256,
         validation_profile=validation_profile,
         issue_contract=dict(issue_contract),
         current_context=context,
@@ -93,7 +93,7 @@ def compile_builder_repair_request(
             validation_profile=validation_profile,
             repair_arbiter=repair_arbiter,
         ),
-        previous_patch_rejections=list(previous_patch_rejections),
+        prior_patch_rejections=list(prior_patch_rejections),
         target_resolution=target_resolution,
         allowed_actions=list(repair_case.allowed_actions),
         forbidden_actions=list(repair_case.forbidden_actions),

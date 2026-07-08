@@ -12,7 +12,14 @@ from pathlib import Path
 from typing import Any
 
 from workspace_execution.errors import WorkspaceExecutionError
-from workspace_execution.types import ArtifactDescriptor, DiffFile, HostPathSource, MaterializationSource, WorkspaceSource
+from workspace_execution.types import (
+    ArtifactDescriptor,
+    DiffFile,
+    EmptySource,
+    HostPathSource,
+    MaterializationSource,
+    WorkspaceSource,
+)
 
 
 DEFAULT_EXCLUDED_DIR_NAMES = frozenset(
@@ -275,6 +282,8 @@ def materialize_source(
     host_read_host_root: Path | None = None,
     host_read_container_root: Path | None = None,
 ) -> int:
+    if isinstance(source, EmptySource):
+        return 0
     if isinstance(source, WorkspaceSource):
         return _materialize_workspace_source(source, source_roots=source_roots, workspace_path=workspace_path)
     if isinstance(source, HostPathSource):

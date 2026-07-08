@@ -26,6 +26,16 @@ class SymbiontRuntimeValue:
     override: str
 
 
+PRODUCTION_LIFECYCLE_IDLE_TIMEOUT_FLOORS: dict[str, int] = {
+    "research": 1200,
+    "extrator": 1800,
+    "translation": 900,
+    "material_builder": 900,
+    "material_execution_kernel": 900,
+    "workspace_execution": 900,
+}
+
+
 def _decision(resolved: dict[str, Any], field: str, default: object) -> object:
     for decision in resolved.get("decisions", []):
         if decision.get("field") == field:
@@ -42,10 +52,65 @@ def _fmt_float(value: float) -> str:
     return f"{text}.0" if "." not in text else text
 
 
+def _lifecycle_env(mode: str) -> list[SymbiontRuntimeValue]:
+    prod = mode == "prod"
+    idle_timeout = 180 if prod else 600
+    idle_check_interval = 10 if prod else 15
+    pressure_reap_min_idle = 30 if prod else 60
+    pressure_reap_max_per_cycle = 4 if prod else 3
+    prewarm_ttl_unused = 45 if prod else 300
+    reason_suffix = "production" if prod else "local development"
+    values = [
+        ("ORC_LIFECYCLE_IDLE_TIMEOUT", idle_timeout, "Base lifecycle idle TTL follows the configured runtime mode."),
+        ("ORC_LIFECYCLE_IDLE_CHECK_INTERVAL", idle_check_interval, "Lifecycle reaper cadence follows the configured runtime mode."),
+        ("ORC_LIFECYCLE_PRESSURE_REAP_MIN_IDLE_SECONDS", pressure_reap_min_idle, "Pressure reaping can reclaim idle services sooner in production mode."),
+        ("ORC_LIFECYCLE_PRESSURE_REAP_MAX_PER_CYCLE", pressure_reap_max_per_cycle, "Pressure reaping batch size follows the configured runtime mode."),
+        ("ORC_PREWARMING_TTL_UNUSED_SECONDS", prewarm_ttl_unused, "Unused prewarmed services are cancelled quickly in production mode."),
+        ("ORC_PREWARMING_MAX_PREWARM_PER_REQUEST", 2, "Prewarming remains bounded per request."),
+        ("ORC_PREWARMING_MAX_GPU_PREWARM_PER_REQUEST", 0, "GPU prewarming stays disabled unless explicitly enabled."),
+    ]
+    overrides = {
+        "REASONING_AND_RESPONSE": 240 if prod else 900,
+        "RESEARCH": PRODUCTION_LIFECYCLE_IDLE_TIMEOUT_FLOORS["research"] if prod else 600,
+        "LOCAL_EVIDENCE_OPERATOR": 180 if prod else 600,
+        "EXECUTION_POLICY_OPERATOR": 120 if prod else idle_timeout,
+        "PERSONAL_CONTEXT": 180 if prod else 600,
+        "EXTRATOR": PRODUCTION_LIFECYCLE_IDLE_TIMEOUT_FLOORS["extrator"] if prod else 900,
+        "TRANSLATION": PRODUCTION_LIFECYCLE_IDLE_TIMEOUT_FLOORS["translation"] if prod else 900,
+        "AUDIO_TRANSCRIBE": 300 if prod else 900,
+        "AUDIO_STREAMING": 300 if prod else 900,
+        "MATERIAL_BUILDER": PRODUCTION_LIFECYCLE_IDLE_TIMEOUT_FLOORS["material_builder"] if prod else 1200,
+        "MATERIAL_EXECUTION_KERNEL": PRODUCTION_LIFECYCLE_IDLE_TIMEOUT_FLOORS["material_execution_kernel"]
+        if prod
+        else 1200,
+        "WORKSPACE_EXECUTION": PRODUCTION_LIFECYCLE_IDLE_TIMEOUT_FLOORS["workspace_execution"] if prod else 1200,
+    }
+    values.extend(
+        (
+            f"ORC_LIFECYCLE_OVERRIDES_{service}_IDLE_TIMEOUT",
+            timeout,
+            "Per-service lifecycle idle TTL follows the configured runtime mode.",
+        )
+        for service, timeout in overrides.items()
+    )
+    return [
+        SymbiontRuntimeValue(
+            env=env,
+            value=str(value),
+            origin="inferred",
+            reason=f"{reason} ({reason_suffix}).",
+            formula="prod: short idle TTLs and fast unused-prewarm cleanup; other modes: development-friendly TTLs",
+            override=env,
+        )
+        for env, value, reason in values
+    ]
+
+
 def resolve_symbiont_runtime(resolved: dict[str, Any]) -> list[SymbiontRuntimeValue]:
     """Return explainable, non-secret symbiont runtime env values."""
 
     config = resolved["config"]
+    mode = str(config.get("mode") or "dev")
     workers = int(_decision(resolved, "runtime.workers.final", 1))
     llm_timeout = int(_decision(resolved, "timeouts.llm_request_seconds", 120))
     quality_latency = config["llm"]["quality_latency"]
@@ -68,7 +133,7 @@ def resolve_symbiont_runtime(resolved: dict[str, Any]) -> list[SymbiontRuntimeVa
     collaboration_memory_entries = _clamp(workers * 5, 5, 10)
     collaboration_ttl = max(300, round(llm_timeout * 2.5))
 
-    return [
+    values = [
         SymbiontRuntimeValue(
             env="ORC_DISPATCH_CONTEXT_BUDGET_TOKENS",
             value=str(context_budget_tokens),
@@ -278,6 +343,8 @@ def resolve_symbiont_runtime(resolved: dict[str, Any]) -> list[SymbiontRuntimeVa
             override="ORC_AGENTS_COLLABORATION_MEMORY_TTL_SECONDS",
         ),
     ]
+    values.extend(_lifecycle_env(mode))
+    return values
 
 
 def resolve_symbiont_env(resolved: dict[str, Any]) -> dict[str, str]:

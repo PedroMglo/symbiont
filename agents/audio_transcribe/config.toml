@@ -41,14 +41,15 @@ vad_filter = false
 prefer_gpu = true
 wait_poll_seconds = 1.5
 allow_model_downgrade = true
-fallback_model = "small"
-# VRAM gate, wait timeout and CPU fallback are derived by audio_transcribe.config.
+degraded_model = "small"
+# VRAM gate, wait timeout and CPU degradation are derived by audio_transcribe.config.
 
 [preprocessing]
 sample_rate = 16000
 mono = true
 normalize_loudness = true
 noise_reduction = false
+noise_reduction_backend = "none"
 keep_processed_audio = true
 
 [audio_quality]
@@ -62,7 +63,7 @@ enabled = true
 min_speech_duration_ms = 250
 min_silence_duration_ms = 500
 speech_pad_ms = 200
-fallback_to_window_segmentation = true
+allow_window_segmentation = true
 
 [diarization]
 enabled = false
@@ -70,8 +71,6 @@ provider = "pyannote"
 hf_token_env = "HF_TOKEN"
 # min_speakers =
 # max_speakers =
-persist_speaker_profiles = false
-continue_without_diarization_on_error = true
 
 [postprocessing]
 remove_fillers = true

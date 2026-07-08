@@ -1,0 +1,9 @@
+$kind: http-request
+description: Lists recent admin jobs, newest first.
+url: "{{rag_host_base_url}}/admin/jobs?limit=20"
+method: GET
+headers:
+  Authorization: Bearer {{rag_api_key}}
+queryParams:
+  limit: "20"
+order: 3000

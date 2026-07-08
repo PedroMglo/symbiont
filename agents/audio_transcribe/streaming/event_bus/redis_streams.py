@@ -187,6 +187,37 @@ class EventBus:
             "timestamp": time.time(),
         }).encode("utf-8"))
 
+    async def publish_error(
+        self,
+        session_id: str,
+        segment_id: str,
+        *,
+        code: str,
+        message: str,
+    ) -> None:
+        """Publish a terminal typed error for a segment."""
+        r = await self._get_redis()
+        timestamp = time.time()
+        entry = {
+            b"session_id": session_id.encode(),
+            b"segment_id": segment_id.encode(),
+            b"type": b"stream_error",
+            b"code": code.encode(),
+            b"message": message.encode("utf-8"),
+            b"timestamp": str(timestamp).encode(),
+        }
+        await r.xadd(STREAM_FINAL, entry, maxlen=self._max_len)
+        channel = f"transcription:{session_id}"
+        await r.publish(channel, json.dumps({
+            "type": "stream_error",
+            "session_id": session_id,
+            "segment_id": segment_id,
+            "code": code,
+            "message": message,
+            "metadata": {"segment_id": segment_id, "code": code},
+            "timestamp": timestamp,
+        }).encode("utf-8"))
+
     # =========================================================================
     # CONSUMERS (for GPU workers)
     # =========================================================================
@@ -206,37 +237,29 @@ class EventBus:
         segments: list[dict[str, Any]] = []
 
         # Priority 1: real-time segments
-        try:
-            entries = await r.xreadgroup(
-                WORKER_GROUP, worker_id,
-                {STREAM_REALTIME: ">"},
-                count=batch_size,
-                block=block_ms,
-            )
-            for stream_name, messages in entries:
-                for msg_id, fields in messages:
-                    segments.append(self._decode_segment(msg_id, fields, "realtime"))
-                    await r.xack(STREAM_REALTIME, WORKER_GROUP, msg_id)
-        except Exception as e:
-            if "No such key" not in str(e):
-                logger.debug(f"Realtime read error: {e}")
+        entries = await r.xreadgroup(
+            WORKER_GROUP, worker_id,
+            {STREAM_REALTIME: ">"},
+            count=batch_size,
+            block=block_ms,
+        )
+        for _stream_name, messages in entries:
+            for msg_id, fields in messages:
+                segments.append(self._decode_segment(msg_id, fields, "realtime"))
+                await r.xack(STREAM_REALTIME, WORKER_GROUP, msg_id)
 
         # Priority 2: batch chunks (only if no realtime work)
         if not segments:
-            try:
-                entries = await r.xreadgroup(
-                    WORKER_GROUP, worker_id,
-                    {STREAM_BATCH: ">"},
-                    count=batch_size,
-                    block=block_ms,
-                )
-                for stream_name, messages in entries:
-                    for msg_id, fields in messages:
-                        segments.append(self._decode_segment(msg_id, fields, "batch"))
-                        await r.xack(STREAM_BATCH, WORKER_GROUP, msg_id)
-            except Exception as e:
-                if "No such key" not in str(e):
-                    logger.debug(f"Batch read error: {e}")
+            entries = await r.xreadgroup(
+                WORKER_GROUP, worker_id,
+                {STREAM_BATCH: ">"},
+                count=batch_size,
+                block=block_ms,
+            )
+            for _stream_name, messages in entries:
+                for msg_id, fields in messages:
+                    segments.append(self._decode_segment(msg_id, fields, "batch"))
+                    await r.xack(STREAM_BATCH, WORKER_GROUP, msg_id)
 
         return segments
 
@@ -261,9 +284,11 @@ class EventBus:
         pubsub = pubsub_client.pubsub()
         channel = f"transcription:{session_id}"
 
-        await pubsub.subscribe(channel)
-        logger.debug(f"Subscribed to {channel}")
+        subscribed = False
         try:
+            await pubsub.subscribe(channel)
+            subscribed = True
+            logger.debug(f"Subscribed to {channel}")
             while True:
                 # get_message with timeout avoids blocking the event loop
                 msg = await pubsub.get_message(
@@ -273,18 +298,17 @@ class EventBus:
                 if msg is not None and msg["type"] == "message":
                     try:
                         data = json.loads(msg["data"])
-                        yield data
-                    except Exception as e:
-                        logger.warning(f"subscribe_results decode error: {e}")
+                    except (json.JSONDecodeError, TypeError, UnicodeDecodeError) as e:
+                        raise ValueError(f"Invalid result payload for {session_id}") from e
+                    yield data
                 else:
                     # No message — yield control to event loop
                     await asyncio.sleep(0.05)
         except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.warning(f"subscribe_results error: {e}")
+            raise
         finally:
-            await pubsub.unsubscribe(channel)
+            if subscribed:
+                await pubsub.unsubscribe(channel)
             await pubsub.aclose()
             await pubsub_client.aclose()
 

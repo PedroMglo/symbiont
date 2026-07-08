@@ -1,0 +1,16 @@
+$kind: http-request
+description: Lightweight liveness check for the gateway.
+url: "{{system_base_url}}/live"
+method: GET
+headers:
+  Authorization: Bearer {{system_api_key}}
+  X-AI-Service: postman
+  X-AI-Feature: system-diagnostics
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('live', function () {
+        pm.expect(pm.response.code).to.eql(200);
+      });
+    language: text/javascript
+order: 4000

@@ -615,7 +615,7 @@ storage_guardian:
       - .agents
       - .codex
       - config
-      - storage_guardian/src
+      - storage_guardian
     recommended_paths:
       - .uv-cache
       - obsidian-rag/.mypy_cache

@@ -57,20 +57,20 @@ class LLMSettings(CommonLLMSettings):
         }
 
 
-def _lane_llm_settings(lane: str, *, fallback: LLMSettings) -> LLMSettings:
+def _lane_llm_settings(lane: str, *, base: LLMSettings) -> LLMSettings:
     prefix = f"MATERIAL_BUILDER_{lane.upper()}_LLM_"
     return LLMSettings(
-        base_url=os.environ.get(f"{prefix}BASE_URL", fallback.base_url),
-        model=os.environ.get(f"{prefix}MODEL", fallback.model),
-        temperature=float(os.environ.get(f"{prefix}TEMPERATURE", fallback.temperature)),
-        max_tokens=int(os.environ.get(f"{prefix}MAX_TOKENS", fallback.max_tokens)),
-        timeout_seconds=float(os.environ.get(f"{prefix}TIMEOUT_SECONDS", fallback.timeout_seconds)),
+        base_url=os.environ.get(f"{prefix}BASE_URL", base.base_url),
+        model=os.environ.get(f"{prefix}MODEL", base.model),
+        temperature=float(os.environ.get(f"{prefix}TEMPERATURE", base.temperature)),
+        max_tokens=int(os.environ.get(f"{prefix}MAX_TOKENS", base.max_tokens)),
+        timeout_seconds=float(os.environ.get(f"{prefix}TIMEOUT_SECONDS", base.timeout_seconds)),
         no_progress_timeout_seconds=float(
-            os.environ.get(f"{prefix}NO_PROGRESS_TIMEOUT_SECONDS", fallback.no_progress_timeout_seconds)
+            os.environ.get(f"{prefix}NO_PROGRESS_TIMEOUT_SECONDS", base.no_progress_timeout_seconds)
         ),
-        wall_budget_seconds=float(os.environ.get(f"{prefix}WALL_BUDGET_SECONDS", fallback.wall_budget_seconds)),
+        wall_budget_seconds=float(os.environ.get(f"{prefix}WALL_BUDGET_SECONDS", base.wall_budget_seconds)),
         contract_repair_attempts=int(
-            os.environ.get(f"{prefix}CONTRACT_REPAIR_ATTEMPTS", fallback.contract_repair_attempts)
+            os.environ.get(f"{prefix}CONTRACT_REPAIR_ATTEMPTS", base.contract_repair_attempts)
         ),
         lane=lane,
     )
@@ -88,11 +88,11 @@ class Settings:
             api_key = _read_secret_file(secret_file) if secret_file else ""
         self.security = SecuritySettings(api_key=api_key)
         self.llm = LLMSettings(**llm_settings_data({}, env_prefix="MATERIAL_BUILDER"))
-        self.llm_plan = _lane_llm_settings("plan", fallback=self.llm)
-        self.llm_file = _lane_llm_settings("file", fallback=self.llm)
-        self.llm_patch = _lane_llm_settings("patch", fallback=self.llm)
-        self.llm_repair = _lane_llm_settings("repair", fallback=self.llm)
-        self.llm_critic = _lane_llm_settings("critic", fallback=self.llm)
+        self.llm_plan = _lane_llm_settings("plan", base=self.llm)
+        self.llm_file = _lane_llm_settings("file", base=self.llm)
+        self.llm_patch = _lane_llm_settings("patch", base=self.llm)
+        self.llm_repair = _lane_llm_settings("repair", base=self.llm)
+        self.llm_critic = _lane_llm_settings("critic", base=self.llm)
 
     @property
     def llm_lanes(self) -> dict[str, LLMSettings]:

@@ -24,7 +24,11 @@ def _estimate_tokens(content: str) -> int:
     return max(1, len(content) // 4) if content else 0
 
 
-def get_packs(intent: str = "general", budget_tokens: int = 2000) -> tuple[list[SearchResult], SearchStatus]:
+def get_packs(
+    intent: str = "general",
+    budget_tokens: int = 2000,
+    scope: str = "",
+) -> tuple[list[SearchResult], SearchStatus]:
     """Fetch CAG packs from the RAG API."""
     cfg = get_settings()
     url = f"{cfg.rag.url}/cag/packs"
@@ -33,6 +37,9 @@ def get_packs(intent: str = "general", budget_tokens: int = 2000) -> tuple[list[
     intent_key = _INTENT_MAP.get(intent)
     if intent_key:
         params["intent"] = intent_key
+    scope = scope.strip()
+    if scope:
+        params["scope"] = scope
 
     headers: dict[str, str] = {}
     if cfg.rag.api_key:

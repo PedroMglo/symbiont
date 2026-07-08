@@ -27,6 +27,12 @@ from orchestrator.capabilities.context_routing import (
     required_context_sources_for_intent,
 )
 from orchestrator.capabilities.local_command_shortcuts import local_command_shortcuts
+from orchestrator.capabilities.owner_capabilities import (
+    OwnerCapabilityManifest,
+    owner_capability_manifests,
+    owner_context_sources_for_query,
+    owner_evidence_required_for_query,
+)
 from orchestrator.capabilities.service_manifest import ServiceCapabilityManifest
 from orchestrator.capabilities.source_selection import (
     SourceSelectionManifest,
@@ -44,6 +50,7 @@ __all__ = [
     "ActionCapabilityManifest",
     "CommandRegistryEntry",
     "ContextRoutingManifest",
+    "OwnerCapabilityManifest",
     "ServiceCatalogEntry",
     "ServiceCapabilityManifest",
     "SourceSelectionManifest",
@@ -62,6 +69,9 @@ __all__ = [
     "load_context_routing_manifests",
     "match_command_registry_query",
     "match_workspace_capability",
+    "owner_capability_manifests",
+    "owner_context_sources_for_query",
+    "owner_evidence_required_for_query",
     "required_context_sources_for_intent",
     "service_capability_manifest_map",
     "service_capability_manifests",

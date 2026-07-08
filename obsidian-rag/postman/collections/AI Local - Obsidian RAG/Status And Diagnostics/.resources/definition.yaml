@@ -1,0 +1,3 @@
+$kind: collection
+description: Read-only RAG diagnostics for deciding whether to reprocess.
+order: 2000

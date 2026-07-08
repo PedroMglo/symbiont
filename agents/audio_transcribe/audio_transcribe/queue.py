@@ -16,7 +16,7 @@ class JobQueue:
     - One queue for incoming jobs
     - Semaphore controls max concurrent GPU transcriptions (default: 1)
     - CPU preprocessing can run concurrently with GPU work
-    - Prepared for future Redis/Celery swap (interface-compatible)
+    - Shares the public queue interface used by the configured queue backend
     """
 
     def __init__(self, max_concurrent_jobs: int = 1, max_gpu_workers: int = 1):
@@ -118,31 +118,26 @@ def get_queue():
     """Get or create the global job queue.
 
     Uses Redis-backed queue if AUDIO_TRANSCRIBE_REDIS_URL is set,
-    otherwise falls back to in-memory asyncio queue.
+    otherwise uses the in-memory asyncio queue.
     """
     global _queue, _redis_queue
     import os
 
     redis_url = os.environ.get("AUDIO_TRANSCRIBE_REDIS_URL", "")
     if redis_url and _redis_queue is None:
-        try:
-            from audio_transcribe.config import get_config
-            from audio_transcribe.redis_queue import RedisJobQueue
+        from audio_transcribe.config import get_config
+        from audio_transcribe.redis_queue import RedisJobQueue
 
-            cfg = get_config()
-            _redis_queue = RedisJobQueue(
-                redis_url=redis_url,
-                max_concurrent_jobs=cfg.jobs.max_concurrent_jobs,
-                max_gpu_workers=cfg.performance.max_concurrent_gpu_transcriptions,
-                retry_attempts=cfg.jobs.redis_retry_attempts,
-                processing_timeout_seconds=cfg.jobs.redis_processing_timeout_seconds,
-            )
-            logger.info("Using Redis-backed job queue: %s", redis_url)
-            return _redis_queue
-        except ImportError:
-            logger.warning("redis.asyncio not available — falling back to in-memory queue")
-        except Exception as exc:
-            logger.warning("Redis queue init failed (%s) — falling back to in-memory queue", exc)
+        cfg = get_config()
+        _redis_queue = RedisJobQueue(
+            redis_url=redis_url,
+            max_concurrent_jobs=cfg.jobs.max_concurrent_jobs,
+            max_gpu_workers=cfg.performance.max_concurrent_gpu_transcriptions,
+            retry_attempts=cfg.jobs.redis_retry_attempts,
+            processing_timeout_seconds=cfg.jobs.redis_processing_timeout_seconds,
+        )
+        logger.info("Using Redis-backed job queue: %s", redis_url)
+        return _redis_queue
 
     if _redis_queue is not None:
         return _redis_queue

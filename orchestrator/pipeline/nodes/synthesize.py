@@ -124,6 +124,31 @@ def _degraded_context_response(state: SymbiontState) -> str | None:
     )
 
 
+def _required_local_evidence_missing_response(state: SymbiontState) -> str | None:
+    """Fail honestly when an internal/repo-local question has no local evidence."""
+    if not state.get("local_evidence_required"):
+        return None
+    missing_blocks = [
+        block for block in state.get("context_blocks", [])
+        if getattr(block, "source", "") == "required_context_missing"
+    ]
+    if not missing_blocks:
+        return None
+    requested: list[str] = []
+    for block in missing_blocks:
+        metadata = getattr(block, "metadata", {}) or {}
+        for source in metadata.get("requested_sources") or []:
+            value = str(source)
+            if value and value not in requested:
+                requested.append(value)
+    source_text = ", ".join(requested) or "fontes locais/repo"
+    return (
+        "Não encontrei evidência local suficiente para responder com segurança.\n\n"
+        f"Fontes locais exigidas pela rota: {source_text}.\n"
+        "Não vou substituir essa lacuna por resposta genérica, exemplos externos ou inferência sobre owners."
+    )
+
+
 def _resolve_agentic_deliberation(state: SymbiontState) -> dict[str, Any]:
     existing = state.get("agentic_deliberation")
     if isinstance(existing, dict) and existing.get("available"):
@@ -211,6 +236,13 @@ def create_synthesize_node(
             return _polish_synthesize(state, llm_adapter, model, query)
 
         successful = [r for r in agent_results if r.success and r.output.strip()]
+        missing_evidence_response = _required_local_evidence_missing_response(state)
+        if missing_evidence_response:
+            return {
+                "response": missing_evidence_response,
+                "tokens_used": 0,
+                "execution_trace": ["synthesize:required_local_evidence_missing"],
+            }
 
         if not successful:
             if agentic_consensus is not None:

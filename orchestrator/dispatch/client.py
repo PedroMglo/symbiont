@@ -108,6 +108,7 @@ class HTTPServiceClient:
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
         retries: int | None = None,
+        record_circuit_failures: bool = True,
     ) -> httpx.Response:
         """Make an HTTP request to a service endpoint with retries and circuit breaker.
 
@@ -119,6 +120,10 @@ class HTTPServiceClient:
             params: Query parameters
             headers: Extra request headers
             timeout: Override timeout (uses endpoint.timeout_seconds if None)
+            record_circuit_failures: Whether transport failures should count
+                toward the service circuit breaker. Optional best-effort
+                calls, such as critique passes, should not take down the
+                primary service route under pressure.
 
         Returns:
             httpx.Response on success
@@ -152,7 +157,8 @@ class HTTPServiceClient:
 
             except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
                 last_error = exc
-                self._record_failure(endpoint.name)
+                if record_circuit_failures:
+                    self._record_failure(endpoint.name)
                 if attempt < effective_retries:
                     backoff = 0.5 * (2 ** attempt)
                     log.debug(
@@ -166,14 +172,16 @@ class HTTPServiceClient:
                 # Don't retry client errors (4xx)
                 if 400 <= exc.response.status_code < 500:
                     raise
-                self._record_failure(endpoint.name)
+                if record_circuit_failures:
+                    self._record_failure(endpoint.name)
                 if attempt < effective_retries:
                     backoff = 0.5 * (2 ** attempt)
                     time.sleep(backoff)
 
             except httpx.TimeoutException as exc:
                 last_error = exc
-                self._record_failure(endpoint.name)
+                if record_circuit_failures:
+                    self._record_failure(endpoint.name)
                 if attempt < effective_retries:
                     backoff = 0.5 * (2 ** attempt)
                     time.sleep(backoff)
@@ -190,9 +198,19 @@ class HTTPServiceClient:
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
         retries: int | None = None,
+        record_circuit_failures: bool = True,
     ) -> httpx.Response:
         """GET request to a service."""
-        return self.request(endpoint, "GET", path, params=params, headers=headers, timeout=timeout, retries=retries)
+        return self.request(
+            endpoint,
+            "GET",
+            path,
+            params=params,
+            headers=headers,
+            timeout=timeout,
+            retries=retries,
+            record_circuit_failures=record_circuit_failures,
+        )
 
     def post(
         self,
@@ -203,9 +221,19 @@ class HTTPServiceClient:
         headers: dict[str, str] | None = None,
         timeout: float | None = None,
         retries: int | None = None,
+        record_circuit_failures: bool = True,
     ) -> httpx.Response:
         """POST request to a service."""
-        return self.request(endpoint, "POST", path, json=json, headers=headers, timeout=timeout, retries=retries)
+        return self.request(
+            endpoint,
+            "POST",
+            path,
+            json=json,
+            headers=headers,
+            timeout=timeout,
+            retries=retries,
+            record_circuit_failures=record_circuit_failures,
+        )
 
     # ------------------------------------------------------------------
     # Health probing

@@ -1,6 +1,5 @@
 """Real-time VAD (Voice Activity Detection) for streaming.
 
-Uses a lightweight energy-based VAD with optional Silero upgrade.
 Processes frames of PCM audio and detects speech/silence transitions.
 """
 
@@ -97,63 +96,3 @@ class RealtimeVAD:
         """Reset VAD state (for new session)."""
         self._silence_count = 0
         self._speech_count = 0
-
-
-class SileroVAD:
-    """Silero VAD wrapper for higher accuracy (optional).
-
-    Falls back to energy-based VAD if Silero model not available.
-    """
-
-    def __init__(self, threshold: float = 0.5, sample_rate: int = 16000):
-        self.threshold = threshold
-        self.sample_rate = sample_rate
-        self._model = None
-        self._fallback = RealtimeVAD(sample_rate=sample_rate)
-        self._load_model()
-
-    def _load_model(self) -> None:
-        """Try to load Silero VAD model."""
-        try:
-            import torch
-            model, _vad_utils = torch.hub.load(
-                repo_or_dir="snakers4/silero-vad",
-                model="silero_vad",
-                force_reload=False,
-                onnx=True,
-            )
-            self._model = model
-            logger.info("Silero VAD loaded (ONNX)")
-        except Exception as e:
-            logger.info(f"Silero VAD unavailable, using energy-based: {e}")
-            self._model = None
-
-    def process_frame(self, frame: bytes) -> VADResult:
-        """Process frame with Silero or fallback."""
-        if self._model is None:
-            return self._fallback.process_frame(frame)
-
-        try:
-            import torch
-
-            # Convert PCM bytes to float tensor
-            n_samples = len(frame) // 2
-            samples = struct.unpack(f"<{n_samples}h", frame[:n_samples * 2])
-            audio = torch.FloatTensor(samples) / 32768.0
-
-            # Run Silero VAD
-            confidence = self._model(audio, self.sample_rate).item()
-            is_speech = confidence > self.threshold
-
-            return VADResult(
-                is_speech=is_speech,
-                confidence=confidence,
-                energy_db=self._fallback._compute_energy_db(frame),
-            )
-        except Exception:
-            return self._fallback.process_frame(frame)
-
-    def reset(self) -> None:
-        if self._model is not None:
-            self._model.reset_states()
-        self._fallback.reset()

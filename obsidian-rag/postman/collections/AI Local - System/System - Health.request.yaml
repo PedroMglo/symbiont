@@ -1,0 +1,16 @@
+$kind: http-request
+description: Gateway health including backend and central config health.
+url: "{{system_base_url}}/health"
+method: GET
+headers:
+  Authorization: Bearer {{system_api_key}}
+  X-AI-Service: postman
+  X-AI-Feature: system-diagnostics
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('health responds', function () {
+        pm.expect(pm.response.code).to.eql(200);
+      });
+    language: text/javascript
+order: 5000

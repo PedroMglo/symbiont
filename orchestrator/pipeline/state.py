@@ -40,6 +40,7 @@ class SymbiontState(TypedDict, total=False):
     # --- Routing (set by route / llm_fallback node) ---
     selected_agents: list[str]
     context_sources: list[str]
+    local_evidence_required: bool
     model_used: str
     profile_key: str
 

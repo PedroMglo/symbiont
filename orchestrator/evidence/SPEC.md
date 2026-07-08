@@ -32,6 +32,11 @@ feature, agent, storage, RAG, or document-processing domain behavior.
   directory rules.
 - The helpers must not search the whole filesystem to infer a project.
 - Hidden benchmark/evaluation files must be skipped by default.
+- Previously generated material artifacts inside the requested source workspace
+  must be skipped unless the user explicitly requests those artifacts. This
+  includes the declared output root, material failure snapshots, packaged output
+  archives for that root, and directories that carry generated-documentation
+  evidence markers.
 - Large or unsupported files are represented by metadata and warnings instead of
   being fully read.
 

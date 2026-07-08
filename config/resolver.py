@@ -16,7 +16,6 @@ import yaml
 
 from .command_runtime import resolve_command_runtime
 from .docker_resources import resolve_docker_resources
-from .env_compat import read_env_file, sanitized_env
 from .intelligence import infer_all
 from .llm import resolve_llm_env
 from .ollama_host import format_ollama_apply_script, format_ollama_systemd_override, resolve_ollama_host_config
@@ -49,7 +48,7 @@ GENERATED_ENV_CONTRACTS: dict[str, dict[str, str]] = {
         "artifact": ".env.storage.generated",
         "command": "python -m config.resolver --write-storage-env",
         "consumer": "Docker Compose storage binds; storage_guardian",
-        "status": "compatibility env until storage consumers read typed resolver output",
+        "status": "transition env until storage consumers read typed resolver output",
         "contract_env": "AI_LOCAL_STORAGE_ENV_CONTRACT",
         "version_env": "AI_LOCAL_STORAGE_ENV_CONTRACT_VERSION",
     },
@@ -59,7 +58,7 @@ GENERATED_ENV_CONTRACTS: dict[str, dict[str, str]] = {
         "artifact": ".env.llm.generated",
         "command": "python -m config.resolver --write-llm-env",
         "consumer": "LLM serving Compose services; orchestrator and RAG model loaders",
-        "status": "compatibility env until LLM consumers read typed resolver output",
+        "status": "transition env until LLM consumers read typed resolver output",
         "contract_env": "AI_LOCAL_LLM_ENV_CONTRACT",
         "version_env": "AI_LOCAL_LLM_ENV_CONTRACT_VERSION",
     },
@@ -69,7 +68,7 @@ GENERATED_ENV_CONTRACTS: dict[str, dict[str, str]] = {
         "artifact": ".env.services.generated",
         "command": "python -m config.resolver --write-services-env",
         "consumer": "Docker Compose service wiring; orchestrator, agents, features and RAG service loaders",
-        "status": "compatibility env until service consumers read typed resolver output",
+        "status": "transition env until service consumers read typed resolver output",
         "contract_env": "AI_LOCAL_SERVICES_ENV_CONTRACT",
         "version_env": "AI_LOCAL_SERVICES_ENV_CONTRACT_VERSION",
     },
@@ -79,7 +78,7 @@ GENERATED_ENV_CONTRACTS: dict[str, dict[str, str]] = {
         "artifact": ".env.docker.resources.generated",
         "command": "python -m config.resolver --write-docker-resources-env",
         "consumer": "Docker Compose resource limits, lifecycle parallelism, and cache caps generated from central config",
-        "status": "compatibility env until Compose resource policy reads typed resolver output",
+        "status": "transition env until Compose resource policy reads typed resolver output",
         "contract_env": "AI_LOCAL_DOCKER_RESOURCES_ENV_CONTRACT",
         "version_env": "AI_LOCAL_DOCKER_RESOURCES_ENV_CONTRACT_VERSION",
     },
@@ -97,28 +96,28 @@ RUNTIME_OUTPUT_CONTRACTS: dict[str, dict[str, str]] = {
         "version": "1",
         "artifact": "resolved.rag_runtime",
         "consumer": "obsidian-rag service runtime and Compose env generation",
-        "status": "typed runtime values mirrored into .env.services.generated for compatibility",
+        "status": "typed runtime values mirrored into .env.services.generated during transition",
     },
     "symbiont_runtime": {
         "contract": "ai-local.symbiont-runtime.v1",
         "version": "1",
         "artifact": "resolved.symbiont_runtime",
         "consumer": "orchestrator runtime, dispatch and agentic service wiring",
-        "status": "typed runtime values mirrored into .env.services.generated for compatibility",
+        "status": "typed runtime values mirrored into .env.services.generated during transition",
     },
     "command_runtime": {
         "contract": "ai-local.command-runtime.v1",
         "version": "1",
         "artifact": "resolved.command_runtime",
         "consumer": "agentic command sandbox/runtime tooling",
-        "status": "typed runtime values mirrored into .env.services.generated for compatibility",
+        "status": "typed runtime values mirrored into .env.services.generated during transition",
     },
     "docker_resources": {
         "contract": "ai-local.docker-resources.v1",
         "version": "1",
         "artifact": "resolved.docker_resources",
         "consumer": "Docker Compose resource env generation and governance checks",
-        "status": "typed resource envelope mirrored into .env.docker.resources.generated for compatibility",
+        "status": "typed resource envelope mirrored into .env.docker.resources.generated during transition",
     },
     "resource_governor_policy": {
         "contract": "resource-governor.v1",
@@ -126,6 +125,13 @@ RUNTIME_OUTPUT_CONTRACTS: dict[str, dict[str, str]] = {
         "artifact": ".local/generated/resource_governor_policy.json",
         "consumer": "orchestrator Resource Governor and runtime pressure gates",
         "status": "typed policy snapshot generated from central config and Resource Governor rules",
+    },
+    "runtime_hygiene": {
+        "contract": "runtime-hygiene.v1",
+        "version": "1",
+        "artifact": "resolved.runtime_hygiene",
+        "consumer": "diagnostics and owner-safe cleanup surfaces",
+        "status": "diagnostic owner map; config never performs cleanup directly",
     },
     "autotuning_effective": {
         "contract": "ai-local.autotuning-effective.v1",
@@ -149,19 +155,19 @@ RUNTIME_OUTPUT_CONTRACTS: dict[str, dict[str, str]] = {
         "status": "short typed status report derived from resolver validation and runtime probes",
     },
 }
-COMPATIBILITY_SURFACES: dict[str, dict[str, str]] = {
+TRANSITION_SURFACES: dict[str, dict[str, str]] = {
     "config/orc/*.toml": {
-        "status": "compatibility input",
+        "status": "transition input",
         "consumer": "orchestrator runtime loaders while they migrate to typed resolver output",
         "sunset": "reduce as orchestrator loaders consume resolved contracts directly",
     },
     "config/rag/*.toml": {
-        "status": "compatibility input",
+        "status": "transition input",
         "consumer": "RAG runtime loaders while they migrate to typed resolver output",
         "sunset": "reduce as RAG loaders consume resolved contracts directly",
     },
     "config/models/*.json": {
-        "status": "compatibility input",
+        "status": "transition input",
         "consumer": "model role/prompt loaders; runtime URLs stay in generated resolver env",
         "sunset": "keep model intent here, but remove runtime wiring once all consumers read typed resolver output",
     },
@@ -169,6 +175,7 @@ COMPATIBILITY_SURFACES: dict[str, dict[str, str]] = {
 STORAGE_ENV_KEYS = (
     "AI_LOCAL_UID",
     "AI_LOCAL_GID",
+    "AI_LOCAL_DOCKER_GID",
     "AI_LOCAL_STORAGE_MODE",
     "AI_LOCAL_PROJECT_SCRATCH_ROOT",
     "AI_LOCAL_AGENT_TEMP_ROOT",
@@ -301,7 +308,7 @@ def _generated_env_contract_header(kind: str) -> list[str]:
         "# Do not put secrets in this file.",
         f"# Contract: {contract['contract']}",
         f"# Expected consumer: {contract['consumer']}",
-        f"# Compatibility status: {contract['status']}; sunset before contract v2.",
+        f"# Transition status: {contract['status']}; sunset before contract v2.",
     ]
 
 
@@ -329,8 +336,8 @@ def _runtime_output_contract_summary() -> dict[str, dict[str, str]]:
     }
 
 
-def _compatibility_surface_summary() -> dict[str, dict[str, str]]:
-    return {name: dict(surface) for name, surface in COMPATIBILITY_SURFACES.items()}
+def _transition_surface_summary() -> dict[str, dict[str, str]]:
+    return {name: dict(surface) for name, surface in TRANSITION_SURFACES.items()}
 
 
 def _decision_id(field: str) -> str:
@@ -435,7 +442,7 @@ def build_config_health_report(resolved: dict[str, Any], errors: list[str] | Non
     """Return a short typed status object suitable for orchestrator health surfaces."""
 
     errors = errors or []
-    config_path = Path(resolved.get("compatibility", {}).get("config_path") or DEFAULT_CONFIG_PATH)
+    config_path = Path(resolved.get("source_paths", {}).get("config_path") or DEFAULT_CONFIG_PATH)
     storage_mode = str(resolved.get("storage_paths", {}).get("AI_LOCAL_STORAGE_MODE") or "unknown")
     outputs = {
         kind: {
@@ -452,7 +459,20 @@ def build_config_health_report(resolved: dict[str, Any], errors: list[str] | Non
         for warning in resolved.get("warnings", [])
         if warning and "GPU services should stay disabled" not in warning
     ]
+    runtime_hygiene = dict(
+        resolved.get("runtime_hygiene")
+        or (resolved.get("resource_governor_policy") or {}).get("runtime_hygiene")
+        or {}
+    )
+    hygiene_status = str(runtime_hygiene.get("status") or "ready")
+    if hygiene_status in {"degraded", "blocked"}:
+        warning_items.append(
+            "runtime hygiene reports "
+            f"{runtime_hygiene.get('orphan_count', 0)} owner-declared orphan resource(s)"
+        )
     if errors:
+        status = "blocked"
+    elif hygiene_status == "blocked":
         status = "blocked"
     elif storage_mode == "external_missing":
         status = "external_missing"
@@ -460,6 +480,8 @@ def build_config_health_report(resolved: dict[str, Any], errors: list[str] | Non
         status = "stale"
     elif storage_mode == "local_fallback":
         status = "local_fallback"
+    elif hygiene_status == "degraded":
+        status = "degraded"
     elif warning_items:
         status = "degraded"
     else:
@@ -480,8 +502,10 @@ def build_config_health_report(resolved: dict[str, Any], errors: list[str] | Non
             "cpu_threads": resolved.get("runtime", {}).get("cpu_threads"),
             "ram_available_gb": resolved.get("runtime", {}).get("ram_available_gb"),
         },
+        "runtime_hygiene": runtime_hygiene,
         "downstream": {
             "resource_governor_policy": (resolved.get("resource_governor_policy") or {}).get("contract_version"),
+            "runtime_hygiene": runtime_hygiene.get("contract"),
             "orchestrator_health": "embed this object as the config component status; do not reinterpret service behavior here",
         },
     }
@@ -494,11 +518,17 @@ def _bool_env(value: bool) -> str:
 def _host_identity_env() -> dict[str, str]:
     uid = os.environ.get("AI_LOCAL_UID")
     gid = os.environ.get("AI_LOCAL_GID")
+    docker_gid = os.environ.get("AI_LOCAL_DOCKER_GID")
     if uid is None:
         uid = str(os.getuid()) if hasattr(os, "getuid") else "1000"
     if gid is None:
         gid = str(os.getgid()) if hasattr(os, "getgid") else "1000"
-    return {"AI_LOCAL_UID": uid, "AI_LOCAL_GID": gid}
+    if docker_gid is None:
+        try:
+            docker_gid = str(Path("/var/run/docker.sock").stat().st_gid)
+        except OSError:
+            docker_gid = gid
+    return {"AI_LOCAL_UID": uid, "AI_LOCAL_GID": gid, "AI_LOCAL_DOCKER_GID": docker_gid}
 
 
 def _external_mount_parent(root: Path | None) -> str:
@@ -779,7 +809,6 @@ def resolve_config(config_path: Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
     )
     conflicts = port_conflicts(ports)
     storage_mode = next((str(d.value) for d in decisions if d.field == "storage.mode"), "unknown")
-    compat_storage = read_env_file(ENV_STORAGE_PATH) if config.compatibility.read_env_storage_generated else {}
 
     warnings = [d.warning for d in decisions if d.warning]
     warnings.extend(p.warning for p in ports if p.warning)
@@ -801,7 +830,7 @@ def resolve_config(config_path: Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
         "contracts": {
             "generated_env": _generated_env_contract_summary(),
             "runtime_outputs": _runtime_output_contract_summary(),
-            "compatibility_surfaces": _compatibility_surface_summary(),
+            "transition_surfaces": _transition_surface_summary(),
         },
         "runtime": plain_runtime,
         "decisions": plain_decisions,
@@ -828,8 +857,7 @@ def resolve_config(config_path: Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
             "decisions": plain_decisions,
         })],
         "storage_paths": _storage_paths(config, storage_mode),
-        "compatibility": {
-            "env_storage_generated": sanitized_env(compat_storage),
+        "source_paths": {
             "config_path": str(config_path),
             "profiles_path": str(PROFILES_PATH),
             "resource_governor_config_path": str(RESOURCE_GOVERNOR_CONFIG_PATH),
@@ -842,9 +870,16 @@ def resolve_config(config_path: Path = DEFAULT_CONFIG_PATH) -> dict[str, Any]:
     resolved["ollama_host"] = resolve_ollama_host_config(resolved)
     try:
         resolved["resource_governor_policy"] = _apply_autotuning_effective(_build_resource_governor_policy(resolved))
+        resolved["rag_runtime"] = [asdict(r) for r in resolve_rag_runtime({
+            "config": plain_config,
+            "runtime": plain_runtime,
+            "decisions": plain_decisions,
+            "resource_governor_policy": resolved["resource_governor_policy"],
+        })]
     except Exception as exc:
         resolved["resource_governor_policy"] = {}
         resolved["warnings"].append(f"resource_governor_policy could not be generated: {exc}")
+    resolved["runtime_hygiene"] = dict((resolved.get("resource_governor_policy") or {}).get("runtime_hygiene") or {})
     resolved["config_health"] = build_config_health_report(resolved, validate_resolved(resolved))
     resolved["operational_self_model"] = build_operational_self_model(
         resolved,
@@ -1071,6 +1106,15 @@ def _format_services_env(resolved: dict[str, Any]) -> str:
         lines.append("# Agentic command runtime values inferred by config.command_runtime")
         for item in resolved["command_runtime"]:
             lines.append(f"{item['env']}={item['value']}")
+        lines.append("")
+    telemetry_authority = (resolved.get("resource_governor_policy") or {}).get("telemetry_authority") or {}
+    if telemetry_authority:
+        lines.append("# Resource Governor telemetry authority inferred by config.resource_governor")
+        lines.append(f"AI_TELEMETRY_AUTHORITY_URL={telemetry_authority.get('url') or ''}")
+        if telemetry_authority.get("ca_bundle_file"):
+            lines.append(f"AI_TELEMETRY_AUTHORITY_CA_BUNDLE_PATH={telemetry_authority['ca_bundle_file']}")
+        lines.append(f"AI_TELEMETRY_AUTHORITY_CACHE_TTL_SECONDS={telemetry_authority.get('cache_ttl_seconds', 1.5)}")
+        lines.append(f"AI_TELEMETRY_AUTHORITY_TIMEOUT_SECONDS={telemetry_authority.get('timeout_seconds', 2.0)}")
         lines.append("")
     lines.append("# Translation runtime values inferred by central LLM timeout policy")
     lines.append(f"TRANSLATION_OLLAMA_TIMEOUT_SECONDS={llm_request_timeout}")

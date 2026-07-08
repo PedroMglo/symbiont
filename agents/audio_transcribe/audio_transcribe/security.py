@@ -174,7 +174,7 @@ def sanitize_filename(filename: str) -> str:
         stem = Path(name).stem[:180]
         suffix = Path(name).suffix[:20]
         name = stem + suffix
-    # Fallback if empty
+    # Use a deterministic placeholder if sanitization removes every character.
     if not name:
         name = "unnamed_file"
     return name

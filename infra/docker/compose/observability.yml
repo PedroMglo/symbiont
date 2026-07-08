@@ -209,7 +209,7 @@ services:
       - observability
   langfuse:
     !!merge <<: *secure-service
-    image: langfuse/langfuse:latest
+    image: langfuse/langfuse:${LANGFUSE_IMAGE_TAG:-3}
     container_name: orc-langfuse
     logging: *logging
     labels:

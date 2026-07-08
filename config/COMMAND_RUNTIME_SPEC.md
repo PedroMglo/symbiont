@@ -50,10 +50,10 @@ Command execution evidence must include:
 - user;
 - resource limits.
 
-## Legacy Removal Rule
+## Retired Runner Rule
 
 `workspace_execution` owns the configured runtime path. The orchestrator command
 tool must reject non-`workspace_execution` backends instead of keeping local
-process or Docker runners as compatibility paths. Runner semantics, sandbox
-runtime selection, copies, diffs, artefacts, and VM gating live in
+process or direct Docker runners as alternate execution paths. Runner semantics,
+sandbox runtime selection, copies, diffs, artefacts, and VM gating live in
 `features/workspace_execution`.

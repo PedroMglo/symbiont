@@ -12,8 +12,25 @@ Autenticacao: `Authorization: Bearer <service-token>` em `/v1/research/search` e
 | --- | --- | --- |
 | GET | `/health` | Healthcheck e reachability do RAG |
 | GET | `/v1/research/capabilities` | Capacidades anunciadas |
+| POST | `/v1/research/sources/prepare` | Regista fontes locais pedidas pelo user e pede reprocessamento ao RAG |
 | POST | `/v1/research/search` | Pesquisa notas/codigo + CAG |
 | GET | `/v1/research/cag?intent=code&budget=2000` | Packs CAG precomputados |
+
+Preparar uma fonte local pedida em runtime:
+
+```bash
+curl -sS https://research:8000/v1/research/sources/prepare \
+  -H "Authorization: Bearer $INTERNAL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"sources":[{"path":"/home/user/Documents/course","source_type":"auto"}],"target":"sources","wait_seconds":60}'
+```
+
+Depois de preparada, uma pesquisa pode restringir-se a essa fonte pelo
+`namespace` devolvido pelo RAG, normalmente o nome da pasta:
+
+```json
+{"query":"principais temas desta pasta","namespace":"course","budget_tokens":2000,"include_code":true,"intent":"broad"}
+```
 
 Exemplo:
 

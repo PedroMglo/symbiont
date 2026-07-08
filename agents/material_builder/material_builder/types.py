@@ -245,7 +245,7 @@ class MaterialPlanResponse(MaterialBuilderModel):
     schema_version: Literal["material_plan_response.v3.2"] = "material_plan_response.v3.2"
     plan: MaterialPlan
     generation_backend: Literal["llm", "contract_blueprint"] = "llm"
-    static_fallback_used: Literal[False] = False
+    static_generation_shortcut_used: Literal[False] = False
     file_contents: dict[RelativePath, str] = Field(default_factory=dict, max_length=512)
     notes: list[str] = Field(default_factory=list, max_length=32)
     model_route: dict[str, Any] = Field(default_factory=dict, max_length=32)
@@ -280,7 +280,7 @@ class MaterialPlanRepairResponse(MaterialBuilderModel):
     )
     plan: MaterialPlan
     generation_backend: Literal["llm", "contract_blueprint"] = "llm"
-    static_fallback_used: Literal[False] = False
+    static_generation_shortcut_used: Literal[False] = False
     notes: list[str] = Field(default_factory=list, max_length=32)
     model_route: dict[str, Any] = Field(default_factory=dict, max_length=32)
     lane_metrics: dict[str, Any] = Field(default_factory=dict, max_length=64)
@@ -347,7 +347,7 @@ class MaterialFileGenerationResponse(MaterialBuilderModel):
     )
     files: list[GeneratedFileProposal] = Field(default_factory=list, max_length=512)
     generation_backend: Literal["llm", "contract_blueprint"] = "llm"
-    static_fallback_used: Literal[False] = False
+    static_generation_shortcut_used: Literal[False] = False
     model_route: dict[str, Any] = Field(default_factory=dict, max_length=32)
     lane_metrics: dict[str, Any] = Field(default_factory=dict, max_length=64)
 
@@ -376,7 +376,7 @@ class CapabilitiesResponse(MaterialBuilderModel):
             "llm_lane_metrics": True,
             "llm_no_progress_watchdog": True,
             "contract_blueprint_mode": True,
-            "static_fallback": False,
+            "static_generation_shortcut": False,
             "side_effects": False,
         }
     )
@@ -389,7 +389,7 @@ class CapabilitiesResponse(MaterialBuilderModel):
             "docker_access",
             "artifact_publish",
             "task_completion",
-            "static_fallback_project",
+            "static_generation_shortcut",
             "scenario_hardcoding",
         ]
     )
@@ -426,7 +426,7 @@ class PatchProposal(MaterialBuilderModel):
     schema_version: Literal["material_patch.v3.2"] = "material_patch.v3.2"
     issue_id: Identifier
     target_path: RelativePath
-    expected_old_sha256: Sha256
+    expected_current_sha256: Sha256
     unified_diff: str = Field(min_length=1, max_length=200000)
     requirement_refs: list[Identifier] = Field(default_factory=list, min_length=1, max_length=64)
     contract_refs: list[Identifier] = Field(default_factory=list, min_length=1, max_length=64)
@@ -457,7 +457,7 @@ class ReplacementProposal(MaterialBuilderModel):
     schema_version: Literal["material_replacement.v3.2"] = "material_replacement.v3.2"
     issue_id: Identifier
     target_path: RelativePath
-    expected_old_sha256: Sha256
+    expected_current_sha256: Sha256
     replacement_content: str = Field(min_length=1, max_length=500000)
     replacement_sha256: Sha256
     requirement_refs: list[Identifier] = Field(default_factory=list, min_length=1, max_length=64)
@@ -542,13 +542,13 @@ class MaterialPatchGenerationRequest(MaterialBuilderModel):
     issue_id: Identifier
     issue: IssueContract
     target_path: RelativePath
-    expected_old_sha256: Sha256
+    expected_current_sha256: Sha256
     current_content: str = Field(max_length=500000)
     current_context: dict[str, Any] = Field(default_factory=dict, max_length=64)
     target_resolution: RepairTargetResolution | None = None
     validation_profile: str | None = Field(default=None, max_length=128)
     command_evidence: dict[str, Any] = Field(default_factory=dict)
-    previous_patch_rejections: list[PatchRejectionEvidence] = Field(default_factory=list, max_length=32)
+    prior_patch_rejections: list[PatchRejectionEvidence] = Field(default_factory=list, max_length=32)
     patch_blueprints: list[PatchProposal] = Field(default_factory=list, max_length=32)
     patch_set_blueprints: list[PatchSetProposal] = Field(default_factory=list, max_length=16)
     replacement_blueprints: list[ReplacementProposal] = Field(default_factory=list, max_length=16)
@@ -569,7 +569,7 @@ class MaterialPatchGenerationResponse(MaterialBuilderModel):
     replacement: ReplacementProposal | None = None
     regeneration: RegenerateFromContractProposal | None = None
     generation_backend: Literal["llm", "contract_blueprint"] = "llm"
-    static_fallback_used: Literal[False] = False
+    static_generation_shortcut_used: Literal[False] = False
     model_route: dict[str, Any] = Field(default_factory=dict, max_length=32)
     lane_metrics: dict[str, Any] = Field(default_factory=dict, max_length=64)
 
@@ -596,7 +596,7 @@ class MaterialRepairCriticRequest(MaterialBuilderModel):
     current_content: str = Field(max_length=500000)
     current_context: dict[str, Any] = Field(default_factory=dict, max_length=64)
     command_evidence: dict[str, Any] = Field(default_factory=dict)
-    previous_patch_rejections: list[PatchRejectionEvidence] = Field(default_factory=list, max_length=32)
+    prior_patch_rejections: list[PatchRejectionEvidence] = Field(default_factory=list, max_length=32)
     repair_arbiter: dict[str, Any] = Field(default_factory=dict, max_length=64)
 
 

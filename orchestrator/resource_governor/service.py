@@ -22,6 +22,7 @@ from orchestrator.resource_governor.schemas import (
     LeaseRequest,
     ResourceSnapshot,
 )
+from orchestrator.resource_governor.telemetry import TelemetryAuthority, TelemetrySnapshot
 
 
 class ResourceGovernorService:
@@ -29,7 +30,11 @@ class ResourceGovernorService:
         self.policy = policy or build_effective_policy()
         self.leases = LeaseRegistry()
         self.activities = ActivityRegistry()
-        self.monitor = PressureMonitor(thresholds=self.policy.thresholds)
+        self.telemetry_authority = TelemetryAuthority.from_env()
+        self.monitor = PressureMonitor(
+            thresholds=self.policy.thresholds,
+            telemetry_authority=self.telemetry_authority,
+        )
         self.decision_engine = DecisionEngine(self.policy)
         self.metrics = ResourceGovernorMetrics()
         self.model_lifecycle = ModelLifecycleManager()
@@ -59,6 +64,9 @@ class ResourceGovernorService:
             active_activities=len(self.activities.active_records()),
             active_leases=len(self.leases.active_records()),
         )
+
+    def telemetry_snapshot(self) -> TelemetrySnapshot:
+        return self.telemetry_authority.snapshot()
 
     def request_lease(self, request: LeaseRequest) -> LeaseDecision:
         snapshot = self.snapshot()
@@ -118,6 +126,28 @@ class ResourceGovernorService:
     def recent_decisions(self, *, limit: int = 50) -> list[dict[str, Any]]:
         limit = max(1, min(limit, 200))
         return list(self._recent_decisions)[-limit:]
+
+    def active_leases_summary(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        limit = max(1, min(limit, 200))
+        items: list[dict[str, Any]] = []
+        for record in self.leases.active_records()[-limit:]:
+            items.append(
+                {
+                    "lease_id": record.lease_id,
+                    "requester": record.request.requester,
+                    "component": record.request.component,
+                    "lane": str(record.request.lane),
+                    "capability": str(record.request.capability),
+                    "resource_class": str(record.request.resource_class),
+                    "created_at": record.created_at,
+                    "updated_at": record.updated_at,
+                    "expires_at": record.expires_at,
+                    "decision": str(record.decision.decision),
+                    "reason": record.decision.reason,
+                    "ttl_seconds": record.decision.ttl_seconds,
+                }
+            )
+        return items
 
 
 _SERVICE: ResourceGovernorService | None = None

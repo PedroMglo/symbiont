@@ -14,7 +14,7 @@
       "ollama": {
         "priority": 20,
         "enabled": true,
-        "models": ["qwen3:0.6b", "qwen3:1.7b", "qwen3.5:4b-q4_K_M", "qwen3:8b", "qwen2.5-coder:7b", "gemma3:4b", "deepseek-r1:8b", "atla/selene-mini:latest"],
+        "models": ["qwen3:0.6b", "qwen3:1.7b", "qwen3.5:4b-q4_K_M", "qwen3:8b", "qwen2.5-coder:7b", "gemma3:4b", "deepseek-r1:8b", "atla/selene-mini:q4_k_m"],
         "capabilities": ["chat", "stream", "local", "private"],
         "privacy_level": "local",
         "api_key_env": "OLLAMA_API_KEY"
@@ -42,7 +42,7 @@
       }
     },
     "admission": {
-      "description": "Admission fallback and task routing policy. Profiles are resolved through orchestration.routing.profiles so model names stay centralized.",
+      "description": "Admission downgrade and task routing policy. Profiles are resolved through orchestration.routing.profiles so model names stay centralized.",
       "downgrade": {
         "profile": "fast",
         "backend": "ollama"
@@ -107,8 +107,8 @@
           "description": "Focused repair of generated files after validation failures"
         },
         "material_critic": {
-          "model": "atla/selene-mini:latest",
-          "preferred_models": ["atla/selene-mini:latest", "qwen3:8b"],
+          "model": "atla/selene-mini:q4_k_m",
+          "preferred_models": ["atla/selene-mini:q4_k_m", "qwen3:8b"],
           "required_capabilities": ["chat"],
           "fallback_model": "qwen3:8b",
           "description": "Quality critique for generated artifacts when local gates are insufficient"
@@ -128,8 +128,8 @@
           "description": "Explicit reasoning profile for tasks that ask for deeper analysis"
         },
         "critic": {
-          "model": "atla/selene-mini:latest",
-          "preferred_models": ["atla/selene-mini:latest", "qwen3:8b"],
+          "model": "atla/selene-mini:q4_k_m",
+          "preferred_models": ["atla/selene-mini:q4_k_m", "qwen3:8b"],
           "required_capabilities": ["chat"],
           "fallback_model": "qwen3:8b",
           "description": "Specialized critique/evaluation profile for quality review"

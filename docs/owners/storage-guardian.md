@@ -98,8 +98,8 @@ flowchart LR
 | Profile | `storage` |
 | Config | `config/storage_guardian.yaml` |
 | Capability manifest | `storage_guardian/service_capabilities.toml` |
-| Main package | `storage_guardian/src/storage_guardian` |
-| CLI | `python -m storage_guardian.cli --config config/storage_guardian.yaml ...` |
+| Main package | `storage_guardian` |
+| CLI | `./.venv/bin/python -m storage_guardian.cli --config config/storage_guardian.yaml ...` |
 | Health | `GET /health` |
 | Metrics | `GET /metrics` |
 | Codex skill | `storage_guardian/.agents/skills/storage-guardian/SKILL.md` |
@@ -322,13 +322,13 @@ sequenceDiagram
 ## Operator Commands
 
 ```bash
-python -m storage_guardian.cli --config config/storage_guardian.yaml status
-python -m storage_guardian.cli --config config/storage_guardian.yaml effective-config
-python -m storage_guardian.cli --config config/storage_guardian.yaml scan
-python -m storage_guardian.cli --config config/storage_guardian.yaml plan
-python -m storage_guardian.cli --config config/storage_guardian.yaml run-cycle
-python -m storage_guardian.cli --config config/storage_guardian.yaml storage-policies
-python -m storage_guardian.cli --config config/storage_guardian.yaml storage-schema
+./.venv/bin/python -m storage_guardian.cli --config config/storage_guardian.yaml status
+./.venv/bin/python -m storage_guardian.cli --config config/storage_guardian.yaml effective-config
+./.venv/bin/python -m storage_guardian.cli --config config/storage_guardian.yaml scan
+./.venv/bin/python -m storage_guardian.cli --config config/storage_guardian.yaml plan
+./.venv/bin/python -m storage_guardian.cli --config config/storage_guardian.yaml run-cycle
+./.venv/bin/python -m storage_guardian.cli --config config/storage_guardian.yaml storage-policies
+./.venv/bin/python -m storage_guardian.cli --config config/storage_guardian.yaml storage-schema
 make storage-guardian-up
 ```
 
@@ -336,7 +336,7 @@ make storage-guardian-up
 
 | Area | Path | Notes |
 | --- | --- | --- |
-| Source | `storage_guardian/src/storage_guardian` | runtime implementation |
+| Source | `storage_guardian` | runtime implementation |
 | README | `storage_guardian/README.md` | operational source summary |
 | Config | `config/storage_guardian.yaml` | immutable storage schema |
 | Capability manifest | `storage_guardian/service_capabilities.toml` | runtime metadata |
@@ -356,7 +356,7 @@ make storage-guardian-up
 | --- | --- | --- | --- |
 | Source review | `storage_guardian/README.md` | API/lifecycle behavior documented | 2026-06-29 |
 | Manifest review | `storage_guardian/service_capabilities.toml` | owner metadata exists | 2026-06-29 |
-| Storage CLI smoke | `python -m storage_guardian.cli --config config/storage_guardian.yaml status` | ready/degraded status | not-run for docs-only update |
+| Storage CLI smoke | `./.venv/bin/python -m storage_guardian.cli --config config/storage_guardian.yaml status` | ready/degraded status | not-run for docs-only update |
 | Owner tests | targeted `pytest storage_guardian` | pass | not-run for docs-only update |
 | Skill presence | `storage_guardian/.agents/skills/storage-guardian/SKILL.md` | owner skill exists | 2026-06-29 |
 

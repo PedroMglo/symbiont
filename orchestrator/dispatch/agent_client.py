@@ -154,6 +154,8 @@ class AgentClient:
             transport_retries = self._transport_retries(request.metadata)
             if transport_retries is not None:
                 kwargs["retries"] = transport_retries
+            if not self._record_circuit_failures(request.metadata):
+                kwargs["record_circuit_failures"] = False
             headers = self._headers_with_context()
             if headers:
                 kwargs["headers"] = headers
@@ -237,6 +239,7 @@ class AgentClient:
         timeout = timeout if timeout is not None else self._timeout_for(agent_name)
         request_metadata = dict(metadata or {})
         request_metadata["provider_mode"] = "critique"
+        request_metadata.setdefault("circuit_breaker_on_failure", False)
         if risk_level:
             request_metadata["risk_level"] = risk_level
         request_metadata.update({k: v for k, v in extra_metadata.items() if v is not None})
@@ -382,6 +385,14 @@ class AgentClient:
             return max(0, int(metadata.get("transport_retries")))
         except (TypeError, ValueError):
             return None
+
+    def _record_circuit_failures(self, metadata: dict[str, Any] | None) -> bool:
+        if not metadata or "circuit_breaker_on_failure" not in metadata:
+            return True
+        value = metadata.get("circuit_breaker_on_failure")
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() not in {"0", "false", "no", "off"}
 
     def _build_payload(self, agent_name: str, request: AgentInvokeRequest) -> dict[str, Any]:
         """Build HTTP payload using the configured agent payload profile.

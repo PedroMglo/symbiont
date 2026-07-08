@@ -187,8 +187,6 @@ def _find_log_files(root: Path) -> list[Path]:
         if not path.is_file():
             continue
         name = path.name.lower()
-        if any(part in path.parts for part in ("GROUND_TRUTH.md", "EVALUATION.md")):
-            continue
         if (
             ".log" in name
             or name.endswith(".jsonl")
@@ -327,8 +325,6 @@ def _support_evidence(root: Path) -> list[dict[str, Any]]:
         if len(evidence) >= 80:
             break
         if not path.is_file() or path.suffix.lower() not in _SUPPORT_SUFFIXES:
-            continue
-        if path.name in {"GROUND_TRUTH.md", "EVALUATION.md"}:
             continue
         rel = path.relative_to(root).as_posix()
         try:

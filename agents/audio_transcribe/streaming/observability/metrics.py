@@ -5,7 +5,6 @@ Tracks:
 - GPU utilization and RTF
 - Chunk throughput
 - VAD activation rate
-- Dedup hit rate
 - Session duration and count
 """
 
@@ -34,11 +33,6 @@ class PlatformMetrics:
     avg_latency_ms: float = 0.0
     p95_latency_ms: float = 0.0
 
-    # Dedup
-    dedup_checks: int = 0
-    dedup_hits: int = 0
-    dedup_hit_rate: float = 0.0
-
     # GPU
     gpu_busy_seconds: float = 0.0
     avg_rtf: float = 0.0
@@ -64,11 +58,6 @@ class PlatformMetrics:
                 "avg_ms": round(self.avg_latency_ms, 1),
                 "p95_ms": round(self.p95_latency_ms, 1),
                 "samples": len(self.latency_samples),
-            },
-            "dedup": {
-                "checks": self.dedup_checks,
-                "hits": self.dedup_hits,
-                "hit_rate": round(self.dedup_hit_rate, 3),
             },
             "gpu": {
                 "busy_seconds": round(self.gpu_busy_seconds, 1),
@@ -122,13 +111,6 @@ class MetricsCollector:
         sorted_samples = sorted(samples)
         p95_idx = int(len(sorted_samples) * 0.95)
         self._metrics.p95_latency_ms = sorted_samples[min(p95_idx, len(sorted_samples) - 1)]
-
-    def record_dedup_check(self, is_hit: bool) -> None:
-        self._metrics.dedup_checks += 1
-        if is_hit:
-            self._metrics.dedup_hits += 1
-        if self._metrics.dedup_checks > 0:
-            self._metrics.dedup_hit_rate = self._metrics.dedup_hits / self._metrics.dedup_checks
 
     def record_vad_frame(self, is_speech: bool) -> None:
         self._metrics.vad_total_frames += 1

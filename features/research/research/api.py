@@ -10,7 +10,7 @@ from research.autonomy import build_miss_review, build_retrieval_traces
 from research.cag import get_packs
 from research.config import get_settings
 from research.planning import build_query_plan
-from research.rag import check_health as rag_health, rag_status, search_code, search_notes
+from research.rag import check_health as rag_health, prepare_sources, rag_status, search_code, search_notes
 from research.reasoning import build_reasoning_context
 from research.types import (
     CapabilitiesResponse,
@@ -19,6 +19,8 @@ from research.types import (
     ResearchMissReview,
     ResearchQueryPlan,
     ResearchRetrievalTrace,
+    ResearchSourcePrepareRequest,
+    ResearchSourcePrepareResponse,
     SearchRequest,
     SearchResponse,
     SearchResult,
@@ -55,6 +57,19 @@ def capabilities() -> CapabilitiesResponse:
 def status() -> dict[str, object]:
     """Return read-only RAG status through the research feature contract."""
     return rag_status()
+
+
+@app.post("/v1/research/sources/prepare", dependencies=[Depends(require_service_token)])
+def prepare_research_sources(request: ResearchSourcePrepareRequest) -> ResearchSourcePrepareResponse:
+    """Prepare user-requested local sources through the RAG owner."""
+    result = prepare_sources(
+        [source.model_dump(mode="json") for source in request.sources],
+        target=request.target,
+        force=request.force,
+        wait_seconds=request.wait_seconds,
+        poll_interval_seconds=request.poll_interval_seconds,
+    )
+    return ResearchSourcePrepareResponse(**result)
 
 
 @app.post("/v1/research/search", dependencies=[Depends(require_service_token)])
@@ -111,22 +126,35 @@ def search(request: SearchRequest) -> SearchResponse:
             )
         )
 
-    # Add CAG packs
-    packs, packs_status = get_packs(
-        intent=query_plan.pack_selection,
-        budget_tokens=query_plan.cag_budget_tokens,
-    )
+    # Add CAG packs only when the request is not restricted to explicit local sources.
+    if query_plan.include_cag and query_plan.source_namespace:
+        packs, packs_status = get_packs(
+            intent=query_plan.pack_selection,
+            budget_tokens=query_plan.cag_budget_tokens,
+            scope=query_plan.source_namespace,
+        )
+    elif query_plan.include_cag:
+        packs, packs_status = get_packs(
+            intent=query_plan.pack_selection,
+            budget_tokens=query_plan.cag_budget_tokens,
+        )
+    else:
+        packs = []
+        packs_status = SearchStatus.SKIPPED
     all_results.extend(packs)
+    cag_limits: dict[str, str | int | float | bool | None] = {
+        "budget_tokens": query_plan.cag_budget_tokens,
+        "intent": query_plan.pack_selection,
+    }
+    if query_plan.source_namespace:
+        cag_limits["scope"] = query_plan.source_namespace
     source_statuses.append(
         _source_status(
             source="cag",
             source_type="cag",
             status=packs_status,
             results=packs,
-            limits={
-                "budget_tokens": query_plan.cag_budget_tokens,
-                "intent": query_plan.pack_selection,
-            },
+            limits=cag_limits,
             reason=query_plan.pack_selection_reason,
         )
     )

@@ -192,7 +192,7 @@ Full local-first voice is a sibling runtime, not an expansion of STT ownership.
 Targeted audio suite:
 
 ```bash
-env PYTHONPATH=agents/audio_transcribe:agents/audio_transcribe/streaming:storage_guardian/src \
+env PYTHONPATH=agents/audio_transcribe:agents/audio_transcribe/streaming:. \
   PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
   pytest -p pytest_asyncio.plugin --import-mode=importlib tests/agents/audio_transcribe -q
 ```

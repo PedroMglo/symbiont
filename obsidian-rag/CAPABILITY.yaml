@@ -1,0 +1,26 @@
+schema_version: owner-capability.v1
+component: obsidian-rag
+owner: obsidian-rag
+description: RAG ingestion, retrieval, graph enrichment, Graphify builds, and RAG API behavior.
+routing:
+  terms:
+    - obsidian-rag
+    - obsidian rag
+    - rag ingestion
+    - graphify
+    - graphify checkpoint
+    - graphify background
+    - graphify update
+    - graphify extract
+    - rag_query
+    - embedding_batch
+  context_sources:
+    - graph
+    - repo
+evidence_policy:
+  local_evidence_required: true
+  generic_answer_allowed: false
+public_surfaces:
+  docs:
+    - obsidian-rag/docs/graphify.md
+    - obsidian-rag/workflows/SPEC.md

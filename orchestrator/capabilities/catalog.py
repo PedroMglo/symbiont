@@ -160,7 +160,7 @@ SERVICE_CATALOG: tuple[ServiceCatalogEntry, ...] = (
             "material_file_generation",
             "material_patch_proposal",
             "chunk_protocol",
-            "no_static_fallback",
+            "no_static_generation_shortcut",
         ),
         description="Material proposal agent for structured plans, files, chunks and patches",
         timeout=120.0,

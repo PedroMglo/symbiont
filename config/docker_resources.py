@@ -93,12 +93,12 @@ def _mem_limit(ram_gb: float, fraction: float, minimum: float, maximum: float) -
     return _mem(_clamp(ram_gb * fraction, minimum, maximum))
 
 
-def _mem_reservation(limit: str, fallback_mb: int = 128) -> str:
+def _mem_reservation(limit: str, minimum_mb: int = 128) -> str:
     if limit.endswith("m"):
         raw_mb = int(limit.removesuffix("m"))
     else:
         raw_mb = int(float(limit.removesuffix("g")) * 1024)
-    reservation = max(fallback_mb, int(raw_mb * 0.25 / 64) * 64)
+    reservation = max(minimum_mb, int(raw_mb * 0.25 / 64) * 64)
     return f"{reservation}m"
 
 
@@ -200,8 +200,11 @@ def resolve_docker_resources(resolved: dict[str, Any]) -> list[DockerResourceVal
         ),
         _resource(
             "AI_LOCAL_DOCKER_REMOVE_ORPHANS",
-            _bool_env(bool(docker_config.get("remove_orphans", False))),
-            reason="Orphan removal is explicit because it can stop containers outside the selected profile set.",
+            _bool_env(bool(docker_config.get("remove_orphans", True))),
+            reason=(
+                "Selected-profile startup converges the persistent stack by removing "
+                "containers no longer owned by the active profile set."
+            ),
             formula="config.docker.remove_orphans",
             origin="config",
         ),

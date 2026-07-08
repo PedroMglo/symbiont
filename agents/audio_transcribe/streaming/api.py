@@ -49,7 +49,7 @@ class _RealtimeResultTracker:
             self._all_seen.clear()
 
     def track_result(self, result: dict[str, Any]) -> None:
-        if result.get("type") != "final_transcript":
+        if result.get("type") not in {"final_transcript", "stream_error"}:
             return
         segment_key = self._segment_key(result)
         if segment_key:
@@ -89,35 +89,33 @@ async def lifespan(app: FastAPI):
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    # Initialize event bus
     from streaming.event_bus.redis_streams import get_event_bus
     event_bus = get_event_bus()
+    gpu_worker = None
     try:
         await event_bus.initialize()
         logger.info("Event bus connected (Redis Streams)")
-    except Exception as e:
-        logger.warning(f"Event bus initialization failed (non-critical): {e}")
 
-    # Start GPU worker (if configured and model available)
-    gpu_worker = None
-    if cfg.gpu.max_workers > 0:
-        try:
+        if cfg.gpu.max_workers > 0:
             from streaming.workers.gpu_pool import GPUWorker
+
             gpu_worker = GPUWorker(worker_id="gpu-worker-0")
             await gpu_worker.start()
-        except Exception as e:
-            logger.warning(f"GPU worker start failed (batch-only mode): {e}")
-            gpu_worker = None
+            logger.info("GPU worker started")
 
-    app.state.gpu_worker = gpu_worker
+        app.state.gpu_worker = gpu_worker
 
-    yield
-
-    # Shutdown
-    if gpu_worker:
-        await gpu_worker.stop()
-    await event_bus.close()
-    logger.info("Unified Audio Platform shutting down")
+        yield
+    except Exception:
+        if gpu_worker:
+            await gpu_worker.stop()
+        await event_bus.close()
+        raise
+    else:
+        if gpu_worker:
+            await gpu_worker.stop()
+        await event_bus.close()
+        logger.info("Unified Audio Platform shutting down")
 
 
 app = FastAPI(
@@ -330,6 +328,20 @@ async def _forward_results(
         pass
     except Exception as e:
         logger.warning(f"Result forwarding error for {session_id[:8]}: {e}")
+        try:
+            await websocket.send_json(
+                RealtimeTranscriptEvent(
+                    type="stream_error",
+                    session_id=session_id,
+                    message="Result subscription failed",
+                    metadata={
+                        "code": "result_subscription_failed",
+                        "detail": str(e)[:200],
+                    },
+                ).model_dump(exclude_none=True)
+            )
+        except Exception as send_error:
+            logger.debug(f"Failed to send result subscription error for {session_id[:8]}: {send_error}")
 
 
 # =============================================================================

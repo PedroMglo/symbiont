@@ -36,7 +36,7 @@ actuator_escalation_policy_router_enabled = true
 actuator_escalation_create_proposals = true
 actuator_escalation_policy_router_create_proposals = true
 preapproval_windows_enabled = true
-preapproval_window_allowed_actions = "agentic.actuator.set_runtime_flag,model.prewarm,storage.scan,storage.plan,rag.admin.reprocess.local,rag.admin.reprocess.cag"
+preapproval_window_allowed_actions = "agentic.actuator.set_runtime_flag,model.prewarm,storage.scan,storage.plan,rag.admin.prepare_sources,rag.admin.reprocess.local,rag.admin.reprocess.cag"
 command_tool_enabled = true
 command_tool_backend = "workspace_execution"
 command_tool_default_context_profile = "project_context"
@@ -79,7 +79,6 @@ anaphora_patterns = [
 mode = "dynamic"          # "static" | "dynamic" | "ab_test"
 routing_model = ""        # Model for routing decisions (empty = use fast)
 synthesis_model = ""      # Model for result synthesis (empty = use default)
-fallback_on_error = true
 decomposition_enabled = true
 negotiation_enabled = true
 peer_review_enabled = false

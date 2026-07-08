@@ -429,7 +429,6 @@ class DynamicRoutingConfig:
     max_agents_per_request: int
     per_agent_timeout: float
     total_budget_tokens: int
-    fallback_on_error: bool
     decomposition_enabled: bool
     negotiation_enabled: bool
     peer_review_enabled: bool
@@ -941,6 +940,9 @@ class ContainerLifecycleConfig:
     start_timeout: int
     health_poll_interval: float
     idle_check_interval: int
+    pressure_reap_enabled: bool
+    pressure_reap_min_idle_seconds: int
+    pressure_reap_max_per_cycle: int
     docker_host: str
     compose_project: str
     compose_file: str
@@ -1109,7 +1111,7 @@ _DERIVED_AGENTIC_DEFAULTS = {
     "max_iterations": 10,
     "max_tool_calls": 30,
     "timeout": 1200,
-    "token_budget": 32000,
+    "token_budget": 32000,  # nosec B105 - numeric token budget, not a secret.
 }
 
 _DERIVED_CLASSIFY_DEFAULTS = {
@@ -1202,7 +1204,7 @@ _DERIVED_SECURITY_DEFAULTS = {
 }
 
 _DERIVED_CONTEXT_DEFAULTS = {
-    "token_budget": 6000,
+    "token_budget": 6000,  # nosec B105 - numeric token budget, not a secret.
     "provider_timeout": 10,
 }
 
@@ -1326,25 +1328,25 @@ _DERIVED_HARDWARE_RAM_PROFILE_DEFAULTS = {
     "high": {
         "response_cache_max_size": 10000,
         "metrics_ring_buffer_size": 5000,
-        "context_token_budget": 8000,
+        "context_token_budget": 8000,  # nosec B105 - numeric token budget, not a secret.
         "context_budget_multiplier": 1.3,
     },
     "standard": {
         "response_cache_max_size": 5000,
         "metrics_ring_buffer_size": 2000,
-        "context_token_budget": 6000,
+        "context_token_budget": 6000,  # nosec B105 - numeric token budget, not a secret.
         "context_budget_multiplier": 1.0,
     },
     "low": {
         "response_cache_max_size": 2000,
         "metrics_ring_buffer_size": 1000,
-        "context_token_budget": 4000,
+        "context_token_budget": 4000,  # nosec B105 - numeric token budget, not a secret.
         "context_budget_multiplier": 0.8,
     },
     "minimal": {
         "response_cache_max_size": 500,
         "metrics_ring_buffer_size": 500,
-        "context_token_budget": 2500,
+        "context_token_budget": 2500,  # nosec B105 - numeric token budget, not a secret.
         "context_budget_multiplier": 0.5,
     },
 }
@@ -1373,6 +1375,9 @@ _DERIVED_LIFECYCLE_DEFAULTS = {
     "start_timeout": 30,
     "health_poll_interval": 0.5,
     "idle_check_interval": 15,
+    "pressure_reap_enabled": True,
+    "pressure_reap_min_idle_seconds": 60,
+    "pressure_reap_max_per_cycle": 3,
     "docker_host": "https://docker-proxy:2375",
     "compose_project": "ai-local",
     "compose_file": "/project/compose.yml",
@@ -1602,9 +1607,10 @@ def _derived_lifecycle_override(
     *,
     session_idle_timeout: int | None = None,
 ) -> dict[str, Any]:
+    service_overrides = raw_overrides.get(service_name, {})
     merged = {
         **_DERIVED_LIFECYCLE_OVERRIDE_DEFAULTS.get(service_name, {}),
-        **raw_overrides.get(service_name, {}),
+        **service_overrides,
     }
     if (
         service_name in _SESSION_PRESERVING_LIFECYCLE_SERVICES
@@ -1613,10 +1619,18 @@ def _derived_lifecycle_override(
     ):
         merged["idle_timeout"] = session_idle_timeout
     env_prefix = f"LIFECYCLE_OVERRIDES_{service_name.upper()}"
-    return {
+    for key in ("idle_timeout", "start_timeout"):
+        env_key = f"ORC_{env_prefix}_{key.upper()}"
+        if key not in merged and env_key in os.environ:
+            merged[key] = _DERIVED_LIFECYCLE_DEFAULTS[key]
+    resolved = {
         key: _derived_env_value(env_prefix, merged, merged, key)
         for key in merged
     }
+    idle_timeout_env = f"ORC_{env_prefix}_IDLE_TIMEOUT"
+    if "idle_timeout" in service_overrides or idle_timeout_env in os.environ:
+        resolved["_idle_timeout_explicit"] = True
+    return resolved
 
 
 def _derived_backend_timeout(backend_name: str, backend: dict, llm_raw: dict, key: str):
@@ -2774,6 +2788,15 @@ def load_settings() -> Settings:
         idle_check_interval=_derived_section_value(
             lc_raw, "idle_check_interval", _DERIVED_LIFECYCLE_DEFAULTS, "lifecycle"
         ),
+        pressure_reap_enabled=_derived_section_value(
+            lc_raw, "pressure_reap_enabled", _DERIVED_LIFECYCLE_DEFAULTS, "lifecycle"
+        ),
+        pressure_reap_min_idle_seconds=_derived_section_value(
+            lc_raw, "pressure_reap_min_idle_seconds", _DERIVED_LIFECYCLE_DEFAULTS, "lifecycle"
+        ),
+        pressure_reap_max_per_cycle=_derived_section_value(
+            lc_raw, "pressure_reap_max_per_cycle", _DERIVED_LIFECYCLE_DEFAULTS, "lifecycle"
+        ),
         docker_host=_derived_section_value(lc_raw, "docker_host", _DERIVED_LIFECYCLE_DEFAULTS, "lifecycle"),
         compose_project=_derived_section_value(lc_raw, "compose_project", _DERIVED_LIFECYCLE_DEFAULTS, "lifecycle"),
         compose_file=_derived_section_value(lc_raw, "compose_file", _DERIVED_LIFECYCLE_DEFAULTS, "lifecycle"),
@@ -3151,7 +3174,6 @@ def load_settings() -> Settings:
                 _DERIVED_DYNAMIC_ROUTING_DEFAULTS,
                 "dynamic_routing",
             ),
-            fallback_on_error=_env("dynamic_routing", "fallback_on_error", _require(dr_raw, "fallback_on_error", "dynamic_routing")),
             decomposition_enabled=_env("dynamic_routing", "decomposition_enabled", _require(dr_raw, "decomposition_enabled", "dynamic_routing")),
             negotiation_enabled=_env("dynamic_routing", "negotiation_enabled", _require(dr_raw, "negotiation_enabled", "dynamic_routing")),
             peer_review_enabled=_env("dynamic_routing", "peer_review_enabled", _require(dr_raw, "peer_review_enabled", "dynamic_routing")),

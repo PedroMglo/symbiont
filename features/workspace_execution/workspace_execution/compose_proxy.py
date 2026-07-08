@@ -20,6 +20,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from workspace_execution.errors import WorkspaceExecutionError
 from workspace_execution.materialization import safe_child, safe_relative_path
@@ -71,7 +72,7 @@ class ComposeRuntimeProxyClient:
             )
         try:
             payload = self._request_json("GET", "/v1/compose-runtime/capabilities")
-        except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        except (OSError, urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
             return ComposeRuntimeProxyPreflight(
                 ready=False,
                 status="unavailable",
@@ -223,17 +224,25 @@ class ComposeRuntimeProxyClient:
     def _request_json(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         data = None if payload is None else json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
-            self.base_url + path,
+            self._validated_url(path),
             data=data,
             method=method,
             headers=self._headers(payload is not None),
         )
-        with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+        with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:  # nosec B310  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected - URL scheme is validated by _validated_url.
             raw = response.read().decode("utf-8")
         parsed = json.loads(raw or "{}")
         if not isinstance(parsed, dict):
             raise ValueError("compose runtime proxy response must be a JSON object")
         return parsed
+
+    def _validated_url(self, path: str) -> str:
+        parsed = urlparse(self.base_url)
+        if parsed.scheme != "https" or not parsed.netloc:
+            raise ValueError("compose runtime proxy URL must be an https:// service URL")
+        if not path.startswith("/"):
+            raise ValueError("compose runtime proxy path must be absolute")
+        return self.base_url + path
 
     def _headers(self, json_body: bool) -> dict[str, str]:
         headers = {"Accept": "application/json"}

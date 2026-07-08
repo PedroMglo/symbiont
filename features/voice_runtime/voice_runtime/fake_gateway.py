@@ -31,7 +31,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sample-rate", default=16000, type=int)
     parser.add_argument("--chunk-bytes", default=PCM16_16KHZ_30MS_FRAME_BYTES, type=int)
     parser.add_argument("--target", help="Optional PipeWire target node name or serial for --record-seconds")
-    parser.add_argument("--tls-verify", action="store_true")
+    parser.add_argument("--tls-verify", dest="tls_verify", action="store_true", default=True)
+    parser.add_argument("--tls-no-verify", dest="tls_verify", action="store_false")
     return parser
 
 

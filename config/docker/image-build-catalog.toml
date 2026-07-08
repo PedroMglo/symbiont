@@ -40,6 +40,28 @@ target = ""
 build_args = []
 
 [[direct_targets]]
+name = "ai-local-docker-socket-proxy"
+owner = "infra/docker"
+reason = "Hardened local Docker socket proxy image built from the current upstream tag with Alpine security updates applied."
+mandatory = true
+image = "ai-local-docker-socket-proxy:{tag}"
+context = "."
+dockerfile = "infra/docker/images/docker-socket-proxy/Dockerfile"
+target = ""
+build_args = ["DOCKER_SOCKET_PROXY_UPSTREAM_TAG"]
+
+[[direct_targets]]
+name = "ai-local-qdrant"
+owner = "obsidian-rag"
+reason = "Hardened local Qdrant image built from the current upstream tag with Debian security updates applied."
+mandatory = true
+image = "ai-local-qdrant:{tag}"
+context = "."
+dockerfile = "infra/docker/images/obsidian-rag/qdrant/Dockerfile"
+target = ""
+build_args = ["QDRANT_UPSTREAM_TAG"]
+
+[[direct_targets]]
 name = "ai-local-extrator-core"
 owner = "features/extrator"
 reason = "Lightweight document ETL runtime for core parsers and API startup."

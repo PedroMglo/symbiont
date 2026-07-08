@@ -36,6 +36,7 @@ ValidationProfile = Literal[
 ]
 SessionStatus = Literal["created", "active", "closing", "closed", "expired", "failed"]
 CommandStatus = Literal["queued", "running", "completed", "failed", "timed_out", "blocked"]
+GitRemoteAcquireStatus = Literal["completed", "blocked"]
 ArtifactOrigin = Literal["command", "input", "diff", "system"]
 PublishStatus = Literal["published", "already_published", "blocked", "failed"]
 WorkspaceWriteStatus = Literal["completed", "blocked"]
@@ -87,6 +88,12 @@ class WorkspaceSource(WorkspaceExecutionModel):
     state_hash: str | None = None
 
 
+class EmptySource(WorkspaceExecutionModel):
+    kind: Literal["empty"] = "empty"
+    purpose: str = Field(default="generated_workspace", min_length=1, max_length=128)
+    state_hash: str | None = None
+
+
 class HostPathSource(WorkspaceExecutionModel):
     kind: Literal["host_path"] = "host_path"
     path: str = Field(min_length=1, max_length=4096)
@@ -118,7 +125,7 @@ class StorageObjectSource(WorkspaceExecutionModel):
 
 
 MaterializationSource = Annotated[
-    WorkspaceSource | HostPathSource | UploadSource | StorageObjectSource,
+    EmptySource | WorkspaceSource | HostPathSource | UploadSource | StorageObjectSource,
     Field(discriminator="kind"),
 ]
 
@@ -300,6 +307,56 @@ class InputAttachResponse(WorkspaceExecutionModel):
     state_hash: str = Field(min_length=16, max_length=128)
     attached_count: int = Field(default=0, ge=0)
     success: bool = True
+
+
+class GitRemoteSourceAcquireRequest(WorkspaceExecutionModel):
+    idempotency_key: Identifier
+    url: str = Field(min_length=1, max_length=4096)
+    destination: RelativePath | None = None
+    depth: int = Field(default=1, ge=1, le=1000)
+    timeout_seconds: int = Field(default=300, ge=5, le=7200)
+    vm_session_id: Identifier | None = None
+    material_session_id: Identifier | None = None
+    requires_vm_backed_sandbox: bool = True
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("url")
+    @classmethod
+    def url_must_be_git_remote(cls, value: str) -> str:
+        cleaned = str(value or "").strip().strip(".,;:)】]}>'\"`")
+        if not cleaned or "\x00" in cleaned or any(char.isspace() for char in cleaned):
+            raise ValueError("git remote URL cannot be empty or contain whitespace/control characters")
+        patterns = (
+            r"^git@[A-Za-z0-9.-]+:[^\s`'\"<>]+?\.git$",
+            r"^ssh://[^\s`'\"<>]+?\.git$",
+            r"^https?://[A-Za-z0-9.-]+/[^\s`'\"<>]+/[^\s`'\"<>]+?(?:\.git)?$",
+        )
+        if not any(re.fullmatch(pattern, cleaned, flags=re.IGNORECASE) for pattern in patterns):
+            raise ValueError("source URL must be a supported Git remote URL")
+        return cleaned
+
+
+class GitRemoteCloneAttempt(WorkspaceExecutionModel):
+    url: str
+    run_id: Identifier | None = None
+    status: CommandStatus
+    exit_code: int | None = None
+    stdout_preview: str = ""
+    stderr_preview: str = ""
+    error: ErrorDetail | None = None
+
+
+class GitRemoteSourceAcquireResponse(WorkspaceExecutionModel):
+    session_id: Identifier
+    status: GitRemoteAcquireStatus
+    source_url: str
+    effective_url: str | None = None
+    destination: RelativePath
+    state_hash: str = Field(min_length=16, max_length=128)
+    clone_attempts: list[GitRemoteCloneAttempt] = Field(default_factory=list)
+    evidence_context: dict[str, Any] = Field(default_factory=dict)
+    error: ErrorDetail | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 def _normalize_sha256(value: str) -> str:

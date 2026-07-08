@@ -82,7 +82,7 @@ class LocalTranslator:
                 inter_threads=self.config.inter_threads,
                 intra_threads=self.config.intra_threads,
             )
-            self._tokenizer = AutoTokenizer.from_pretrained(
+            self._tokenizer = AutoTokenizer.from_pretrained(  # nosec B615 - model_path is a local path and local_files_only prevents Hub downloads.
                 str(self.config.model_path),
                 local_files_only=True,
             )

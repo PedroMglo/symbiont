@@ -8,6 +8,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from sharedai.llm.http_client import call_chat_completion
+from sharedai.llm.tokens import estimate_tokens as _estimate_tokens
+
 from context_governor.contracts import (
     ContextBudget,
     ContextGovernorPolicy,
@@ -15,15 +18,6 @@ from context_governor.contracts import (
     ContextPackage,
     ContextRequest,
 )
-
-try:
-    from sharedai.llm.http_client import call_chat_completion
-    from sharedai.llm.tokens import estimate_tokens as _estimate_tokens
-except Exception:  # pragma: no cover - defensive import fallback
-    call_chat_completion = None
-
-    def _estimate_tokens(text: str) -> int:
-        return max(1, len(text) // 4) if text else 0
 
 
 class ContextGovernorBlocked(RuntimeError):
@@ -136,8 +130,6 @@ def govern_chat_completion(
             timeout=timeout,
             post=post,
         )
-    if call_chat_completion is None:
-        raise RuntimeError("sharedai.llm.http_client.call_chat_completion is unavailable")
     return call_chat_completion(
         model=model,
         messages=package.messages,

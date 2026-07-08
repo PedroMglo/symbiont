@@ -62,7 +62,7 @@ requires_approval = false
 [[domains]]
 name = "rag"
 low_actions = ["rag.status", "rag.query", "cag.explain"]
-medium_actions = ["rag.admin.reprocess.local", "rag.admin.reprocess.cag"]
+medium_actions = ["rag.admin.prepare_sources", "rag.admin.reprocess.local", "rag.admin.reprocess.cag"]
 high_actions = ["rag.admin.reprocess.all"]
 
 [[domains.recommendations]]

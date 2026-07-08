@@ -43,7 +43,7 @@ def _vram_pressure_warning(
             "Free VRAM is below the generic new-task estimate, but a GPU path remains "
             "available; prefer reusing loaded GPU models and keep GPU work serialized."
         )
-    return "No free VRAM remains for a new GPU task; queue GPU work or use CPU fallback."
+    return "No free VRAM remains for a new GPU task; queue GPU work or use a CPU-capable route."
 
 
 def infer_vram(config: AppConfig, runtime: RuntimeInfo) -> list[Decision]:
@@ -205,7 +205,7 @@ def infer_backend(config: AppConfig, runtime: RuntimeInfo) -> Decision:
         reason = "GPU was detected and backend preference is auto."
     else:
         value = "llama_cpp"
-        reason = "No GPU was detected; choose CPU-capable llama.cpp before Ollama fallback."
+        reason = "No GPU was detected; choose CPU-capable llama.cpp before the Ollama route."
     return Decision(
         field="llm.backend.effective",
         value=value,

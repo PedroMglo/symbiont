@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from typing import Any
 
 from reasoning_and_response.config import get_settings
@@ -48,17 +47,15 @@ def classify(
     messages = [{"role": "system", "content": system}, {"role": "user", "content": query}]
     try:
         raw = _call_governed_llm(messages, model, base_url, temperature, max_tokens, timeout)
-        parsed = _parse_classification(raw, agents, max_agents)
-        if parsed.agents:
-            return parsed
+        return _parse_classification(raw, agents, max_agents)
     except Exception as exc:
         log.warning("classification: LLM failed: %s", exc)
 
-    selected = _heuristic_route(query, agents)[:max_agents]
+    reasoning = "classification_backend_unavailable: no routing decision produced"
     return ClassifyResponse(
-        agents=selected,
-        reasoning="Fallback routing after classification provider failure",
-        response=json.dumps({"agents": selected, "reasoning": "fallback"}, ensure_ascii=True),
+        agents=[],
+        reasoning=reasoning,
+        response=json.dumps({"agents": [], "reasoning": reasoning, "degraded": True}, ensure_ascii=True),
     )
 
 
@@ -78,31 +75,3 @@ def _parse_classification(raw: str, available_agents: list[str], max_agents: int
         reasoning=reasoning,
         response=json.dumps({"agents": agents, "reasoning": reasoning}, ensure_ascii=True),
     )
-
-
-def _heuristic_route(query: str, available_agents: list[str]) -> list[str]:
-    q = query.lower()
-    available = set(available_agents)
-    selected: list[str] = []
-
-    def add(*names: str) -> None:
-        for name in names:
-            if name in available and name not in selected:
-                selected.append(name)
-
-    if re.search(r"\b(code|codigo|c[oó]digo|repo|ficheiro|arquivo|fun[cç][aã]o|bug)\b", q):
-        add("code", "local_evidence_operator")
-    if re.search(r"\b(email|mail|calend[aá]rio|rss|agenda|evento)\b", q):
-        add("personal", "personal_context")
-    if re.search(r"\b(rag|cag|pesquisa|research|nota|documento|conhecimento)\b", q):
-        add("research")
-    if re.search(r"\b(cr[ií]tica|critic|qualidade|avaliar|risco|precis[aã]o)\b", q):
-        add("reasoning_and_response")
-    if re.search(r"\b(sintetiza|s[ií]ntese|combina|resume|resumo)\b", q):
-        add("reasoning_and_response")
-    if re.search(r"\b(decomp[oõ]e|decompose|plano|passos|tarefas)\b", q):
-        add("reasoning_and_response")
-
-    if not selected:
-        add("reasoning_and_response", "research")
-    return selected

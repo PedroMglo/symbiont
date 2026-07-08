@@ -1,0 +1,25 @@
+schema_version: owner-capability.v1
+component: lifecycle
+owner: orchestrator/lifecycle
+description: Container lifecycle status, start/stop policy, idle TTLs, and production lifecycle invariants.
+routing:
+  terms:
+    - lifecycle
+    - idle timeout
+    - idle_timeout
+    - ttl
+    - production ttl
+    - container lifecycle
+    - /lifecycle
+  context_sources:
+    - system
+    - graph
+    - repo
+evidence_policy:
+  local_evidence_required: true
+  generic_answer_allowed: false
+public_surfaces:
+  endpoints:
+    - GET /lifecycle
+    - POST /lifecycle/{service_name}/start
+    - POST /lifecycle/{service_name}/stop

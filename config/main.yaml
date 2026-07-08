@@ -4,7 +4,7 @@
 # timeouts, and hardware choices are resolved by `python -m config.resolver`.
 
 version: 1
-mode: dev
+mode: prod
 
 hardware:
   profile: auto
@@ -17,7 +17,7 @@ storage:
 
 llm:
   preferred_backend: auto
-  quality_latency: balanced
+  quality_latency: fast
   privacy_policy: local_only
 
 limits:
@@ -46,7 +46,7 @@ docker:
   up_no_build: true
   up_wait: true
   up_wait_timeout_seconds: 120
-  remove_orphans: false
+  remove_orphans: true
 
 material:
   dependency_policy:
@@ -55,6 +55,3 @@ material:
     lockfile_required: false
     native_builds: deny
     dependency_cache_profile: null
-
-compatibility:
-  read_env_storage_generated: true

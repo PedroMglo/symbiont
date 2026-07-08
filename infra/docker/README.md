@@ -23,7 +23,7 @@ make rollback
 ```
 
 `make infra` and `make up` intentionally stay separate. `make infra` generates
-config, validates the Docker contract, and builds the mandatory image catalog.
+config, builds the mandatory image catalog, and validates the Docker contract.
 That build is intentionally complete: profiles do not decide which images exist.
 Profiles only decide which already-built containers are started later. `make up`
 starts the selected stack without rebuilding images, waits for services to

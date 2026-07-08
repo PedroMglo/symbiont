@@ -66,15 +66,15 @@ This component does not own:
 ## User-Facing Behavior
 
 Operators use infra through root commands such as `make infra`, `make up` and
-`make rollback`. `make infra` prepares config, validates Docker/Compose and
-builds mandatory images. `make up` starts the selected profile without
+`make rollback`. `make infra` prepares config, builds mandatory images and
+then validates Docker/Compose. `make up` starts the selected profile without
 rebuilding by default, waits for health and records runtime evidence.
 
 ### Common Use Cases
 
 | Use case | Input | Output | Success evidence |
 | --- | --- | --- | --- |
-| Prepare machine | `make infra` | generated envs, validated Compose, built images | docker inventory/report |
+| Prepare machine | `make infra` | generated envs, built images, validated Compose | docker inventory/report |
 | Start stack | `make up` | running selected profiles | runtime smoke report |
 | Roll back | `make rollback` | restored snapshot/previous state | rollback snapshot path |
 | Inspect logs | `make logs FOLLOW=1 TAIL=80` | service logs | owner error context |
@@ -106,7 +106,7 @@ Infra has no application API contract. Its contract is root-level lifecycle
 behavior:
 
 ```text
-make infra -> generate config + validate policy + build mandatory images
+make infra -> generate config + build mandatory images + validate policy
 make up -> start selected profiles with --no-build + health/smoke/evidence
 make rollback -> restore from recorded rollback snapshot
 ```

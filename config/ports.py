@@ -28,7 +28,7 @@ SERVICE_OFFSETS: dict[str, int] = {
 
 STABLE_PORTS: dict[str, int] = {
     "symbiont": 8586,
-    "rag": 8486,
+    "rag": 8484,
     "llama_cpp_aux": 8090,
     "llama_cpp_fast": 8091,
     "vllm": 8092,
@@ -166,9 +166,9 @@ def resolve_ports(base_port: int, *, preserve_existing: bool = True) -> list[Por
             PortDecision(
                 service=service,
                 port=port,
-                origin="compatibility" if preserve_existing else "inferred",
+                origin="stable_registry" if preserve_existing else "inferred",
                 reason=(
-                    "Preserve existing published ports while Compose consumers are migrated."
+                    "Use the stable published port registry for host-facing endpoints."
                     if preserve_existing
                     else "Derived from base_port + service_offset."
                 ),

@@ -10,12 +10,14 @@ USER root
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends libmagic1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --chown=ailoc:ailoc features/extrator/ /app/
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install /app
+    pip install /app \
+    && pip install --upgrade "setuptools>=83.0.0" "wheel>=0.46.2" "jaraco.context>=6.1.0"
 
 RUN mkdir -p /data /projects /home/ailoc/.cache \
     && chown -R ailoc:ailoc /data /projects /home/ailoc /app
@@ -35,6 +37,7 @@ USER root
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
         pandoc \
         libreoffice \
@@ -47,6 +50,7 @@ USER root
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
         tesseract-ocr \
         poppler-utils \
@@ -61,7 +65,8 @@ USER ailoc
 FROM extrator-core AS extrator-docling
 USER root
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-build-isolation "/app[docling]"
+    pip install --no-build-isolation "/app[docling]" \
+    && pip install --upgrade "setuptools>=83.0.0" "wheel>=0.46.2" "jaraco.context>=6.1.0"
 RUN if [ -d /usr/local/lib/python3.11/site-packages/rapidocr ]; then \
         chown -R ailoc:ailoc /usr/local/lib/python3.11/site-packages/rapidocr; \
     fi
@@ -71,7 +76,8 @@ USER ailoc
 FROM extrator-core AS extrator-unstructured
 USER root
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-build-isolation "/app[unstructured]"
+    pip install --no-build-isolation "/app[unstructured]" \
+    && pip install --upgrade "setuptools>=83.0.0" "wheel>=0.46.2" "jaraco.context>=6.1.0"
 USER ailoc
 
 
@@ -80,6 +86,7 @@ USER root
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
     && apt-get install -y --no-install-recommends \
         pandoc \
         texlive-latex-base \
@@ -97,7 +104,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && rm -rf /var/lib/apt/lists/*
 
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --no-build-isolation "/app[docling,unstructured]"
+    pip install --no-build-isolation "/app[docling,unstructured]" \
+    && pip install --upgrade "setuptools>=83.0.0" "wheel>=0.46.2" "jaraco.context>=6.1.0"
 RUN if [ -d /usr/local/lib/python3.11/site-packages/rapidocr ]; then \
         chown -R ailoc:ailoc /usr/local/lib/python3.11/site-packages/rapidocr; \
     fi

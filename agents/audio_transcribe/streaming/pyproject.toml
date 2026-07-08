@@ -5,7 +5,6 @@ description = "Unified real-time + batch audio transcription platform"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.100",
-    "sharedai @ git+https://github.com/PedroMglo/sharedai.git@3bc5aed169e8da9d5297e6ae10a50cc906e2d27",
     "uvicorn[standard]>=0.20",
     "websockets>=12.0",
     "redis[hiredis]>=5.0",
@@ -15,5 +14,3 @@ dependencies = [
 
 [project.optional-dependencies]
 gpu = ["nvidia-ml-py>=12.0"]
-fingerprint = ["pyacoustid>=1.2"]
-vad = ["torch>=2.0", "onnxruntime>=1.16"]

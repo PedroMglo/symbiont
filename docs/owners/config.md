@@ -2,7 +2,7 @@
 
 Status: enabled-by-default
 Owner: `config/`
-Last verified: 2026-06-29
+Last verified: 2026-07-05
 Applies to: `config/`, generated env outputs, resolver consumers
 Audience: developer, operator, maintainer
 
@@ -30,7 +30,7 @@ Template: `templates/owners/config-doc-template.md`
 ## Purpose
 
 `config/` is the intelligent configuration center for the mono-repo. It owns
-user-facing runtime intent, machine/profile inference, generated compatibility
+user-facing runtime intent, machine/profile inference, generated transition
 envs, model/resource defaults, storage path resolution, service endpoints,
 Docker operator limits, RAG/orchestrator runtime budgets and operational self
 model output.
@@ -42,7 +42,7 @@ generated-env and resolver contracts are documented in
 ## Ownership Boundary
 
 `config/` owns source-of-truth settings, resolution, validation, generated
-compatibility artifacts and operator-facing explanations.
+transition artifacts and operator-facing explanations.
 
 `config/` does not own:
 
@@ -62,7 +62,7 @@ flowchart LR
     Env[AI_* env\noverrides]
     Probes[runtime probes]
     Resolver[config.resolver\nmerge validate explain]
-    Generated[.env.*.generated\ncompatibility]
+    Generated[.env.*.generated\ntransition]
     Typed[typed resolved object]
     Consumers[orchestrator infra\nagents features RAG storage]
 
@@ -103,7 +103,6 @@ safe internal defaults
 + config/main.yaml
 + selected profile from config/profiles.yaml
 + runtime probes
-+ .env.storage.generated transition read
 + AI_* environment overrides
 + final validation
 ```
@@ -114,7 +113,6 @@ flowchart TD
     Main[config/main.yaml]
     Profile[selected profile]
     Probes[runtime probes]
-    GeneratedRead[generated env transition read]
     Env[AI_* overrides]
     Validate[final validation]
     Output[resolved typed output]
@@ -122,8 +120,7 @@ flowchart TD
     Defaults --> Main
     Main --> Profile
     Profile --> Probes
-    Probes --> GeneratedRead
-    GeneratedRead --> Env
+    Probes --> Env
     Env --> Validate
     Validate --> Output
 ```
@@ -134,9 +131,8 @@ flowchart TD
 | 2 | `config/main.yaml` | defaults | secrets |
 | 3 | selected profile | profile-scoped values | unrelated owner settings |
 | 4 | runtime probes | auto values | explicit fixed values unless documented |
-| 5 | generated transition read | migration compatibility | source-of-truth settings |
-| 6 | `AI_*` env | explicit operator override | schema and safety validation |
-| 7 | final validation | invalid values | valid explicit intent |
+| 5 | `AI_*` env | explicit operator override | schema and safety validation |
+| 6 | final validation | invalid values | valid explicit intent |
 
 ## Schema And Validation
 
@@ -177,12 +173,19 @@ sequenceDiagram
 
 | Artifact | Contract id/version | Producer command | Consumers | Source inputs | Sunset condition |
 | --- | --- | --- | --- | --- | --- |
-| `.env.storage.generated` | `ai-local.storage-env.v1` | `python -m config.resolver --write-storage-env` | Docker binds, `storage_guardian`, storage reconcile | config, probes, overrides | consumers read typed resolver output |
-| `.env.llm.generated` | `ai-local.llm-env.v1` | `python -m config.resolver --write-llm-env` | LLM serving, orchestrator, RAG, agents | config/models, probes, overrides | LLM consumers read typed resolver output |
-| `.env.services.generated` | `ai-local.services-env.v1` | `python -m config.resolver --write-services-env` | Compose service wiring, orchestrator, agents, features, RAG | service/runtime config | service consumers read typed resolver output |
-| `.env.docker.resources.generated` | `ai-local.docker-resources-env.v1` | `python -m config.resolver --write-docker-resources-env` | Compose resource limits and infra lifecycle | Docker config, probes | infra lifecycle reads typed resolver output |
-| `.local/generated/operational-self-model.json` | resolver self model | `python -m config.resolver --write-operational-self-model` | operators, status surfaces | resolved config and probes | active only while current |
-| `.local/generated/autotuning.effective.json` | autotuning overlay | `python -m config.autotuning --apply-approved` | resolver/resource policy | approved proposals | rollback or superseded overlay |
+| `.env.storage.generated` | `ai-local.storage-env.v1` | `./.venv/bin/python -m config.resolver --write-storage-env` | Docker binds, `storage_guardian`, storage reconcile | config, probes, overrides | consumers read typed resolver output |
+| `.env.llm.generated` | `ai-local.llm-env.v1` | `./.venv/bin/python -m config.resolver --write-llm-env` | LLM serving, orchestrator, RAG, agents | config/models, probes, overrides | LLM consumers read typed resolver output |
+| `.env.services.generated` | `ai-local.services-env.v1` | `./.venv/bin/python -m config.resolver --write-services-env` | Compose service wiring, orchestrator, agents, features, RAG | service/runtime config | service consumers read typed resolver output |
+| `.env.docker.resources.generated` | `ai-local.docker-resources-env.v1` | `./.venv/bin/python -m config.resolver --write-docker-resources-env` | Compose resource limits and infra lifecycle | Docker config, probes | infra lifecycle reads typed resolver output |
+| `.local/generated/resource_governor_policy.json` | `resource-governor.v1` | `./.venv/bin/python -m config.resolver --write-resource-governor-policy` | orchestrator Resource Governor, RAG env mirrors, owner pressure gates | `config/resource_governor.yaml`, resolver probes | consumers read typed resolver output |
+| `.local/generated/operational-self-model.json` | resolver self model | `./.venv/bin/python -m config.resolver --write-operational-self-model` | operators, status surfaces | resolved config and probes | active only while current |
+| `.local/generated/autotuning.effective.json` | autotuning overlay | `./.venv/bin/python -m config.autotuning --apply-approved` | resolver/resource policy | approved proposals | rollback or superseded overlay |
+
+`resource_governor_policy.pressure_policy` is global. Swap percent alone is a
+reduce signal; pause/block decisions require active pressure such as swap growth,
+low RAM headroom or PSI memory/IO stalls. `runtime_hygiene` remains diagnostic:
+config can mark health as degraded/blocked and point at owner cleanup contracts,
+but mutable cleanup stays with the owner.
 
 ## Secrets Boundary
 
@@ -223,7 +226,7 @@ flowchart LR
 
 Consumer rules:
 
-- Consumers may read typed resolver output or generated compatibility artifacts.
+- Consumers may read typed resolver output or generated transition artifacts.
 - Consumers must not duplicate central inference logic.
 - Consumers must report stale or incompatible generated artifacts.
 
@@ -232,38 +235,38 @@ Consumer rules:
 ### Inspect
 
 ```bash
-python -m config.resolver --print
-python -m config.resolver --explain
-python -m config.resolver --validate
+./.venv/bin/python -m config.resolver --print
+./.venv/bin/python -m config.resolver --explain
+./.venv/bin/python -m config.resolver --validate
 ```
 
 ### Generate
 
 ```bash
-python -m config.resolver --write-storage-env
-python -m config.resolver --write-llm-env
-python -m config.resolver --write-services-env
-python -m config.resolver --write-docker-resources-env
-python -m config.resolver --write-ollama-host-config
+./.venv/bin/python -m config.resolver --write-storage-env
+./.venv/bin/python -m config.resolver --write-llm-env
+./.venv/bin/python -m config.resolver --write-services-env
+./.venv/bin/python -m config.resolver --write-docker-resources-env
+./.venv/bin/python -m config.resolver --write-ollama-host-config
 ```
 
 ### Health And Self Model
 
 ```bash
-python -m config.resolver --health-report
-python -m config.resolver --self-model
-python -m config.resolver --write-operational-self-model
+./.venv/bin/python -m config.resolver --health-report
+./.venv/bin/python -m config.resolver --self-model
+./.venv/bin/python -m config.resolver --write-operational-self-model
 ```
 
 ### Area-Specific Commands
 
 ```bash
-python -m config.autotuning --json
-python -m config.autotuning --simulate
-python -m config.autotuning --write
-python -m config.autotuning --approve all --approver "$USER" --approval-reason "reviewed"
-python -m config.autotuning --apply-approved
-python -m config.autotuning --rollback
+./.venv/bin/python -m config.autotuning --json
+./.venv/bin/python -m config.autotuning --simulate
+./.venv/bin/python -m config.autotuning --write
+./.venv/bin/python -m config.autotuning --approve all --approver "$USER" --approval-reason "reviewed"
+./.venv/bin/python -m config.autotuning --apply-approved
+./.venv/bin/python -m config.autotuning --rollback
 ```
 
 ## Runtime States
@@ -283,7 +286,7 @@ python -m config.autotuning --rollback
 | --- | --- | --- |
 | Consumer has private default | tests/static search | move default to `config/` or generated contract |
 | Generated env stale | contract/version/hash/status | regenerate |
-| Schema changed without migration | contract tests | add compatibility or migration |
+| Schema changed without migration | contract tests | add transition plan or migration |
 | Secret leaked into config/logs | tests/review/log scan | move to secret ref and redact |
 | Profile diverges from source | resolver explain/diff | update profile or source |
 | Service URL hardcoded in owner | review/static search | move to generated service env/typed config |
@@ -293,10 +296,13 @@ python -m config.autotuning --rollback
 - User-facing runtime knobs belong in `config/main.yaml` or typed files under
   `config/`.
 - Machine-specific values should be inferred whenever possible.
-- Generated envs are compatibility outputs, not manual service ownership.
+- Generated envs are transition outputs, not manual service ownership.
 - Secrets must remain secret refs/files, never normal config values.
 - Central config may describe runtime capacity; it must not execute repair or
   service-specific behavior.
+- Config may require process-local cleanup through owner contracts. It must not
+  run global cleanup actions such as `swapoff`, `drop_caches`, unknown process
+  kills or Docker prune.
 
 ## Implementation Map
 
@@ -324,7 +330,7 @@ python -m config.autotuning --rollback
 | Check | Command or source | Expected result | Last run |
 | --- | --- | --- | --- |
 | Config source review | `config/README.md` | resolver behavior documented here | 2026-06-29 |
-| Resolver validation | `python -m config.resolver --validate` | pass | not-run for docs-only update |
+| Resolver validation | `./.venv/bin/python -m config.resolver --validate` | pass | not-run for docs-only update |
 | Generated contract review | `config/RESOLVER_CONTRACTS.md` | contract ids match docs | 2026-06-29 |
 | Skill presence | `config/.agents/skills/config-center/SKILL.md` | owner skill exists | 2026-06-29 |
 

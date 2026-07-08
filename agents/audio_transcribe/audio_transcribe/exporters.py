@@ -159,7 +159,7 @@ def _projection_segment_for_record(record: JobRecord) -> str:
     timestamp = _record_timestamp(record)
     date_segment = timestamp.strftime("%Y-%m-%d")
     time_segment = timestamp.strftime("%H%M%S%fZ")
-    file_segment = _safe_projection_segment(f"{filename}__{time_segment}", fallback=f"audio__{time_segment}")
+    file_segment = _safe_projection_segment(f"{filename}__{time_segment}", empty_value=f"audio__{time_segment}")
     return f"{date_segment}/{file_segment}"
 
 
@@ -176,9 +176,9 @@ def _record_timestamp(record: JobRecord) -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _safe_projection_segment(value: str, *, fallback: str) -> str:
+def _safe_projection_segment(value: str, *, empty_value: str) -> str:
     cleaned = "".join(char if char.isalnum() or char in "._-" else "_" for char in str(value).strip()).strip("._-")
-    return cleaned[:220] or fallback
+    return cleaned[:220] or empty_value
 
 
 def _export_raw_json(job_id: str, result: TranscriptionResult) -> str:

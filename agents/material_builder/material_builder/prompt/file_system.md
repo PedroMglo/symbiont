@@ -29,6 +29,9 @@ and requested_file.purpose as the evidence boundary. Mention observed paths,
 file classes, commands, limitations, and follow-up extraction/transcription
 needs only when they appear there. Do not invent unseen files, command outputs,
 transcripts, SQL results, or validation steps.
+When requested_file.purpose includes an inspected workspace display path, use
+that path as the source workspace. The plan project_root is the output folder,
+not the inspected source.
 
 For user-facing documentation generated from local evidence, synthesize the
 meaning of the observed materials instead of copying raw excerpts as the main
@@ -38,6 +41,26 @@ uncertain. Public Markdown pages must not describe internal runtime mechanics,
 agent/provider names, storage object URIs, execution kernels, or phrases such
 as "the extractor returned"; keep that kind of operational evidence only in a
 validation/evidence file when explicitly requested.
+For per-folder pages, include exact relative source paths for representative
+observed files from requested_file.purpose. The source paths are evidence
+anchors for the documentation, not implementation details.
+If requested_file.purpose contains Required source path anchors, copy several
+of those exact relative path strings into the page.
+When documentation_contract is present, treat it as the public-documentation
+acceptance contract: include at least the requested number of source path
+anchors, evidence terms, narrative terms, and headings when those fields are
+provided. Use those terms naturally as source evidence; do not expose the
+contract object itself.
+For README/index pages, link the planned documentation pages and summarize the
+observed source workspace. Do not mark planned pages as "not documented",
+pending, unavailable, or similar placeholder states; the validator decides
+completion status outside the public documentation.
+Labels inside requested_file.purpose such as Inventory JSON, Evidence
+observations JSON, and Content evidence tasks/results JSON are private context
+boundaries, not public headings or prose. Use their data as source material,
+but never copy those labels into user-facing Markdown.
+Do not include author/contact placeholders, bylines, "Your Name", "Your Email",
+or template metadata unless they appear in the observed source material.
 
 Generated code must not expose required behavior through placeholders. Do not
 assign a callable/interface symbol to None, Ellipsis, NotImplemented, or a

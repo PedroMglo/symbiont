@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import re
 import subprocess
-import zlib
 from dataclasses import dataclass
 from difflib import unified_diff
 from pathlib import Path
@@ -27,6 +26,10 @@ class CommitInfo:
     subject: str
     body: str = ""
     parents: tuple[str, ...] = ()
+
+
+class GitHistoryUnavailable(RuntimeError):
+    """Raised when the canonical Git history reader cannot inspect the repo."""
 
 
 def resolve_git_workspace(path: str | None, *, host_home_prefix: str | None = None) -> Path | None:
@@ -79,7 +82,17 @@ def build_git_regression_report(workspace: Path, query: str) -> dict[str, Any]:
         }
 
     terms = _query_terms(query)
-    commits = _commits(repo)
+    try:
+        commits = _commits(repo)
+    except GitHistoryUnavailable as exc:
+        return {
+            "workspace": str(workspace.resolve()),
+            "repo": str(repo),
+            "error": "git_history_unavailable",
+            "detail": str(exc),
+            "candidates": [],
+            "report": [],
+        }
     candidates = [_score_commit(repo, commit, terms) for commit in commits]
     candidates.sort(key=lambda item: item["score"], reverse=True)
     likely = candidates[0] if candidates else None
@@ -185,12 +198,6 @@ def _query_terms(query: str) -> list[str]:
         "for", "not", "git", "cover", "covers", "only", "should", "would",
     }
     terms: list[str] = []
-    for extra in (
-        "duplicate", "duplicated", "double", "twice", "email", "notify", "notification",
-        "upgrade", "billing", "annual", "regression", "side-effect", "dispatcher", "event",
-    ):
-        if extra in (query or "").lower() and extra not in terms:
-            terms.append(extra)
     for word in words:
         if word not in stop and word not in terms:
             terms.append(word)
@@ -226,21 +233,21 @@ _DUPLICATE_TERMS = frozenset({"duplicate", "duplicated", "double", "twice", "aga
 
 def _commits(repo: Path) -> list[CommitInfo]:
     result = _git(repo, "log", "--all", "--format=%H%x1f%P%x1f%s%x1f%b%x1e")
-    if result.returncode == 0 and result.stdout.strip():
-        commits: list[CommitInfo] = []
-        for record in result.stdout.split("\x1e"):
-            record = record.strip("\n")
-            if not record:
-                continue
-            parts = record.split("\x1f", 3)
-            if len(parts) < 3:
-                continue
-            commit, parents, subject = parts[:3]
-            body = parts[3] if len(parts) == 4 else ""
-            commits.append(CommitInfo(commit=commit, subject=subject, body=body, parents=tuple(parents.split())))
-        if commits:
-            return commits
-    return _commits_from_loose_objects(repo)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or f"git log failed with status {result.returncode}"
+        raise GitHistoryUnavailable(detail)
+    commits: list[CommitInfo] = []
+    for record in result.stdout.split("\x1e"):
+        record = record.strip("\n")
+        if not record:
+            continue
+        parts = record.split("\x1f", 3)
+        if len(parts) < 3:
+            continue
+        commit, parents, subject = parts[:3]
+        body = parts[3] if len(parts) == 4 else ""
+        commits.append(CommitInfo(commit=commit, subject=subject, body=body, parents=tuple(parents.split())))
+    return commits
 
 
 def _score_commit(repo: Path, info: CommitInfo, terms: list[str]) -> dict[str, Any]:
@@ -456,7 +463,7 @@ def _show_commit_patch(repo: Path, info: CommitInfo) -> str:
     result = _git(repo, "show", "--stat", "--patch", "--find-renames", "--find-copies", info.commit)
     if result.returncode == 0 and result.stdout:
         return result.stdout
-    return _loose_commit_patch(repo, info)
+    return ""
 
 
 def _changed_paths(patch: str) -> list[str]:
@@ -587,30 +594,25 @@ def _python_test_body_from_repo(
         "expected_literal_source": "none",
     }
 
-    entity_factory = "object()"
-    plan_factory = "object()"
-    if "Account" in imported_names:
-        entity_factory = 'Account("regression-id", "regression@example.test", "current")'
-    if "Plan" in imported_names:
-        period = _choose_literal(branch_literals, preferred=("annual", "yearly", "monthly"))
-        name = "regression-plan" if not period else f"regression-{period}"
-        plan_factory = f'Plan("{name}", "{period}")' if period else 'Plan("regression-plan")'
+    positional_params = _target_positional_params(repo, target)
 
     cycle_literal = None
     if any("cycle_position" in str(item.get("text") or "") for item in evidence):
         cycle_literal = _choose_literal(branch_literals, preferred=("mid_cycle", "mid-cycle", "midcycle", "start"))
 
-    body.append(f"{indent}subject = {entity_factory}")
-    if plan_factory != "object()":
-        body.append(f"{indent}target_state = {plan_factory}")
-        call_args = ["subject", "target_state"]
-    else:
-        call_args = ["subject"]
+    body.append(f"{indent}subject = object()")
+    call_args = ["subject"]
+    for position, param in enumerate(positional_params[1:], 1):
+        if "=" in param or param.startswith("*"):
+            continue
+        name = _safe_identifier(param) or f"arg_{position}"
+        body.append(f"{indent}{name} = object()")
+        call_args.append(name)
     if cycle_literal and cycle_literal != "start":
         call_args.append(f'cycle_position="{cycle_literal}"')
     body.append(f"{indent}result = {target}({', '.join(call_args)})")
 
-    expected_literal = _result_literal_evidence(repo, branch_literals)
+    expected_literal = _result_literal_evidence(repo)
     if expected_literal:
         metadata["assertion_mode"] = "proven_literal_and_side_effect"
         metadata["expected_literal_source"] = expected_literal["source"]
@@ -622,7 +624,7 @@ def _python_test_body_from_repo(
         else:
             body.append(f'{indent}{assertion} result.get("{result_key}") == "{expected_literal["value"]}"')
     else:
-        body.append(f"{indent}# TODO: assert the business result with a literal proven by existing tests, fixtures, or contract.")
+        body.append(f"{indent}# Assert the business result only with a literal proven by existing tests, fixtures, or contract.")
 
     side_effect_name = _side_effect_counter_name(imported_names)
     assertion = "self.assertEqual" if has_unittest else "assert"
@@ -653,6 +655,29 @@ def _imported_names(path: Path) -> set[str]:
     return names
 
 
+def _target_positional_params(repo: Path, target: str) -> list[str]:
+    for path in _iter_text_files(repo):
+        rel = path.relative_to(repo).as_posix()
+        if not _is_runtime_path(rel):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        match = re.search(rf"def\s+{re.escape(target)}\s*\(([^)]*)\)", text)
+        if not match:
+            continue
+        params: list[str] = []
+        for raw in match.group(1).split(","):
+            raw_param = raw.strip()
+            name = raw_param.split("=", 1)[0].split(":", 1)[0].strip()
+            if not name or name in {"self", "cls"}:
+                continue
+            params.append(f"{name}=..." if "=" in raw_param else name)
+        return params
+    return []
+
+
 def _branch_literals(evidence: list[dict[str, Any]]) -> list[str]:
     values: list[str] = []
     seen: set[str] = set()
@@ -681,9 +706,9 @@ def _side_effect_counter_name(imported_names: set[str]) -> str | None:
     return None
 
 
-def _result_literal_evidence(repo: Path, fallback_values: list[str]) -> dict[str, Any] | None:
+def _result_literal_evidence(repo: Path) -> dict[str, Any] | None:
     candidates: dict[str, dict[str, Any]] = {}
-    eventish = {"email", "plan_name", "send_email", "template", "id", "event", "handler"}
+    eventish = {"email", "template", "id", "event", "handler"}
     for path in _iter_text_files(repo):
         rel = path.relative_to(repo).as_posix()
         is_runtime = _is_runtime_path(rel)
@@ -755,7 +780,7 @@ def _runtime_result_literal_context(lines: list[str], index: int, result_key: st
     Runtime branch literals are often inputs, labels or event names. They are
     only safe as expected output values when the same function returns the
     literal directly, or returns the assigned variable through a response
-    dictionary. Plain test setup like ``result = call(Plan("x"))`` is therefore
+    dictionary. Plain test setup like ``result = call(DomainObject("x"))`` is therefore
     excluded elsewhere by requiring assertions/expectations for test files.
     """
 
@@ -894,209 +919,6 @@ def _is_observable_action_line(line: str) -> bool:
         if not re.search(r"[A-Za-z_][A-Za-z0-9_.]*\s*\(", rhs):
             return False
     return True
-
-
-def _git_dir(repo: Path) -> Path | None:
-    dot_git = repo / ".git"
-    if dot_git.is_dir():
-        return dot_git
-    if dot_git.is_file():
-        try:
-            content = dot_git.read_text(encoding="utf-8", errors="replace").strip()
-        except OSError:
-            return None
-        if content.startswith("gitdir:"):
-            raw = content.split(":", 1)[1].strip()
-            path = Path(raw)
-            if not path.is_absolute():
-                path = repo / path
-            return path.resolve()
-    return None
-
-
-def _commits_from_loose_objects(repo: Path) -> list[CommitInfo]:
-    git_dir = _git_dir(repo)
-    if git_dir is None:
-        return []
-    starts = _all_ref_shas(git_dir)
-    commits: list[CommitInfo] = []
-    seen: set[str] = set()
-    stack = list(starts)
-    while stack:
-        sha = stack.pop(0)
-        if sha in seen:
-            continue
-        seen.add(sha)
-        info = _read_commit_info(git_dir, sha)
-        if info is None:
-            continue
-        commits.append(info)
-        stack.extend(parent for parent in info.parents if parent not in seen)
-    return commits
-
-
-def _all_ref_shas(git_dir: Path) -> list[str]:
-    shas: list[str] = []
-    head = _resolve_ref(git_dir, "HEAD")
-    if head:
-        shas.append(head)
-    refs_dir = git_dir / "refs"
-    if refs_dir.is_dir():
-        for ref in refs_dir.rglob("*"):
-            if not ref.is_file():
-                continue
-            try:
-                value = ref.read_text(encoding="utf-8", errors="replace").strip()
-            except OSError:
-                continue
-            if re.fullmatch(r"[0-9a-fA-F]{40}", value):
-                shas.append(value.lower())
-    packed = git_dir / "packed-refs"
-    if packed.is_file():
-        for line in packed.read_text(encoding="utf-8", errors="replace").splitlines():
-            if not line or line.startswith(("#", "^")):
-                continue
-            parts = line.split()
-            if parts and re.fullmatch(r"[0-9a-fA-F]{40}", parts[0]):
-                shas.append(parts[0].lower())
-    deduped = []
-    seen: set[str] = set()
-    for sha in shas:
-        if sha not in seen:
-            seen.add(sha)
-            deduped.append(sha)
-    return deduped
-
-
-def _resolve_ref(git_dir: Path, ref: str) -> str | None:
-    path = git_dir / ref
-    try:
-        raw = path.read_text(encoding="utf-8", errors="replace").strip()
-    except OSError:
-        return None
-    if raw.startswith("ref:"):
-        target = raw.split(":", 1)[1].strip()
-        try:
-            value = (git_dir / target).read_text(encoding="utf-8", errors="replace").strip()
-        except OSError:
-            value = ""
-        if re.fullmatch(r"[0-9a-fA-F]{40}", value):
-            return value.lower()
-        packed = git_dir / "packed-refs"
-        if packed.is_file():
-            for line in packed.read_text(encoding="utf-8", errors="replace").splitlines():
-                if line.endswith(f" {target}"):
-                    return line.split()[0].lower()
-        return None
-    if re.fullmatch(r"[0-9a-fA-F]{40}", raw):
-        return raw.lower()
-    return None
-
-
-def _read_git_object(git_dir: Path, sha: str) -> tuple[str, bytes] | None:
-    if not re.fullmatch(r"[0-9a-fA-F]{40}", sha or ""):
-        return None
-    object_path = git_dir / "objects" / sha[:2] / sha[2:]
-    try:
-        raw = zlib.decompress(object_path.read_bytes())
-    except (OSError, zlib.error):
-        return None
-    header, _, body = raw.partition(b"\x00")
-    kind = header.split(b" ", 1)[0].decode("ascii", errors="replace")
-    return kind, body
-
-
-def _read_commit_info(git_dir: Path, sha: str) -> CommitInfo | None:
-    obj = _read_git_object(git_dir, sha)
-    if obj is None or obj[0] != "commit":
-        return None
-    text = obj[1].decode("utf-8", errors="replace")
-    header, _, message = text.partition("\n\n")
-    parents = tuple(line.split(" ", 1)[1] for line in header.splitlines() if line.startswith("parent "))
-    subject, _, body = message.partition("\n")
-    return CommitInfo(commit=sha.lower(), subject=subject.strip(), body=body.strip(), parents=parents)
-
-
-def _commit_tree_sha(git_dir: Path, sha: str) -> str | None:
-    obj = _read_git_object(git_dir, sha)
-    if obj is None or obj[0] != "commit":
-        return None
-    text = obj[1].decode("utf-8", errors="replace")
-    match = re.search(r"^tree ([0-9a-fA-F]{40})$", text, re.M)
-    return match.group(1).lower() if match else None
-
-
-def _loose_commit_patch(repo: Path, info: CommitInfo) -> str:
-    git_dir = _git_dir(repo)
-    if git_dir is None:
-        return ""
-    tree = _commit_tree_sha(git_dir, info.commit)
-    if tree is None:
-        return ""
-    parent_tree = _commit_tree_sha(git_dir, info.parents[0]) if info.parents else None
-    new_files = _tree_blobs(git_dir, tree)
-    old_files = _tree_blobs(git_dir, parent_tree) if parent_tree else {}
-    chunks = [
-        f"commit {info.commit}",
-        f"Subject: {info.subject}",
-        "",
-    ]
-    for path in sorted(set(new_files) | set(old_files)):
-        if new_files.get(path) == old_files.get(path):
-            continue
-        old_text = _blob_text(git_dir, old_files.get(path))
-        new_text = _blob_text(git_dir, new_files.get(path))
-        if old_text is None and new_text is None:
-            continue
-        chunks.append(f"diff --git a/{path} b/{path}")
-        diff = unified_diff(
-            (old_text or "").splitlines(),
-            (new_text or "").splitlines(),
-            fromfile=f"a/{path}",
-            tofile=f"b/{path}",
-            lineterm="",
-        )
-        chunks.extend(diff)
-        chunks.append("")
-    return "\n".join(chunks)
-
-
-def _tree_blobs(git_dir: Path, tree_sha: str | None, prefix: str = "") -> dict[str, str]:
-    if not tree_sha:
-        return {}
-    obj = _read_git_object(git_dir, tree_sha)
-    if obj is None or obj[0] != "tree":
-        return {}
-    body = obj[1]
-    result: dict[str, str] = {}
-    index = 0
-    while index < len(body):
-        mode_end = body.find(b" ", index)
-        name_end = body.find(b"\x00", mode_end + 1)
-        if mode_end < 0 or name_end < 0 or name_end + 21 > len(body):
-            break
-        mode = body[index:mode_end].decode("ascii", errors="replace")
-        name = body[mode_end + 1:name_end].decode("utf-8", errors="replace")
-        sha = body[name_end + 1:name_end + 21].hex()
-        index = name_end + 21
-        path = f"{prefix}{name}"
-        if mode == "40000" or mode.startswith("04"):
-            result.update(_tree_blobs(git_dir, sha, f"{path}/"))
-        else:
-            result[path] = sha
-    return result
-
-
-def _blob_text(git_dir: Path, sha: str | None) -> str | None:
-    if sha is None:
-        return ""
-    obj = _read_git_object(git_dir, sha)
-    if obj is None or obj[0] != "blob":
-        return None
-    data = obj[1]
-    if b"\x00" in data[:4096]:
-        return None
-    return data.decode("utf-8", errors="replace")
 
 
 def _git(repo: Path, *args: str) -> GitCommandResult:

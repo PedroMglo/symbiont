@@ -89,7 +89,6 @@ without opening historical roadmap folders.
 
 ```bash
 find docs/owners -maxdepth 1 -type f | sort
-make check-doc-targets
 ```
 
 ### API Or Contract
@@ -238,7 +237,7 @@ No runtime process is owned by this documentation directory.
 ### Health
 
 ```bash
-make check-doc-targets
+find docs/owners -maxdepth 1 -type f | sort
 ```
 
 ### Debug
@@ -275,7 +274,7 @@ find docs/owners -maxdepth 1 -type f | sort
 | --- | --- | --- | --- |
 | Source review | owner README/SPEC/manifest files | pages cite live source paths | 2026-06-29 |
 | Template shape | `templates/owners/component-doc-template.md` | required sections present | 2026-06-29 |
-| Docs target guard | `make check-doc-targets` | pass | not-run after this edit |
+| Docs target guard | source repo docs target guard | pass | not-run after this edit |
 | Link scan | local docs link checker | pass | not-run after this edit |
 
 ## Open Questions

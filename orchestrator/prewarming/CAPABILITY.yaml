@@ -1,0 +1,24 @@
+schema_version: owner-capability.v1
+component: prewarming
+owner: orchestrator/prewarming
+description: Prewarming targets, TTL synchronization, intent/catalog policy, and model/service warmup decisions.
+routing:
+  terms:
+    - prewarm
+    - prewarming
+    - warmup
+    - model warmup
+    - prewarm_gpu
+    - ttl sync
+    - catalog.toml
+  context_sources:
+    - system
+    - graph
+    - repo
+evidence_policy:
+  local_evidence_required: true
+  generic_answer_allowed: false
+public_surfaces:
+  files:
+    - orchestrator/prewarming/catalog.toml
+    - orchestrator/prewarming/SPEC.md

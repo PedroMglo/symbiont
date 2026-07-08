@@ -436,7 +436,8 @@ async def stream_via_pipeline(
         context_blocks = final_state.get("context_blocks", [])
         if context_blocks:
             direct_answer = (
-                _direct_task_specific_report_answer(context_blocks)
+                _direct_required_context_missing_answer(context_blocks)
+                or _direct_task_specific_report_answer(context_blocks)
                 or
                 _direct_system_metrics_answer(query, context_blocks)
                 or _direct_code_context_answer(query, context_blocks)
@@ -455,6 +456,29 @@ async def stream_via_pipeline(
         yield response
     else:
         yield "Não foi possível processar o pedido."
+
+
+def _direct_required_context_missing_answer(context_blocks: list) -> str | None:
+    """Refuse generic streaming answers when required repo-local evidence is absent."""
+    missing = [
+        block for block in context_blocks
+        if getattr(block, "source", "") == "required_context_missing"
+    ]
+    if not missing:
+        return None
+    requested: list[str] = []
+    for block in missing:
+        metadata = getattr(block, "metadata", {}) or {}
+        for source in metadata.get("requested_sources") or []:
+            value = str(source)
+            if value and value not in requested:
+                requested.append(value)
+    sources = ", ".join(requested) or "fontes locais/repo"
+    return (
+        "Não encontrei evidência local suficiente para responder com segurança.\n\n"
+        f"Fontes locais exigidas pela rota: {sources}.\n"
+        "Não vou substituir essa lacuna por resposta genérica, exemplos externos ou inferência sobre owners."
+    )
 
 
 def _direct_task_specific_report_answer(context_blocks: list) -> str | None:

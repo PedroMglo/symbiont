@@ -29,6 +29,7 @@ class RepoStatusResponse(BaseModel):
     untracked_files: list[str] = Field(default_factory=list)
     ahead: int = 0
     behind: int = 0
+    error: str | None = None
 
 
 class GitRegressionRequest(BaseModel):

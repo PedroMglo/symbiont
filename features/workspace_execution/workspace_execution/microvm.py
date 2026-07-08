@@ -9,6 +9,7 @@ import hashlib
 import inspect
 import io
 import json
+import lzma
 import os
 import platform
 import re
@@ -417,6 +418,7 @@ class QemuMicroVmBackend:
         env: dict[str, str],
         limits: RunnerLimits,
         redaction_terms: list[str],
+        network_mode: str = "none",
     ) -> MicroVmOperationResult:
         return self._run_operation(
             workspace_path=workspace_path,
@@ -433,6 +435,7 @@ class QemuMicroVmBackend:
             timeout_seconds=limits.timeout_seconds + self.config.boot_timeout_seconds,
             max_output_bytes=limits.max_output_bytes,
             redaction_terms=redaction_terms,
+            network_mode=network_mode,
         )
 
     def file_batch(
@@ -522,6 +525,7 @@ class QemuMicroVmBackend:
         timeout_seconds: int,
         max_output_bytes: int,
         redaction_terms: list[str],
+        network_mode: str = "none",
     ) -> MicroVmOperationResult:
         run_id = f"run:{uuid.uuid4().hex}"
         started = time.time()
@@ -545,8 +549,13 @@ class QemuMicroVmBackend:
                     workspace_path=workspace_path,
                     config=config,
                     initramfs_path=initramfs,
+                    network_mode=network_mode,
                 )
-                completed = self._boot(initramfs=initramfs, timeout_seconds=timeout_seconds)
+                completed = self._boot(
+                    initramfs=initramfs,
+                    timeout_seconds=timeout_seconds,
+                    network_mode=network_mode,
+                )
             duration_ms = int((time.time() - started) * 1000)
             if completed.timed_out:
                 return MicroVmOperationResult(
@@ -557,9 +566,35 @@ class QemuMicroVmBackend:
                     stderr=completed.stderr,
                     duration_ms=duration_ms,
                     error=f"timeout:{timeout_seconds}s",
-                    metadata=self._metadata(preflight.evidence),
+                    metadata=self._metadata(preflight.evidence, network_mode=network_mode),
                 )
-            result_tar = _extract_result_tar(completed.stdout)
+            try:
+                result_tar = _extract_result_tar(completed.stdout)
+            except Exception as exc:
+                stdout_excerpt, stdout_truncated = _redact_and_truncate(
+                    completed.stdout,
+                    min(max_output_bytes, 4_000),
+                    redaction_terms,
+                )
+                stderr_excerpt, stderr_truncated = _redact_and_truncate(
+                    completed.stderr,
+                    min(max_output_bytes, 4_000),
+                    redaction_terms,
+                )
+                return MicroVmOperationResult(
+                    run_id=run_id,
+                    status="failed",
+                    exit_code=None,
+                    stdout=stdout_excerpt,
+                    stderr=stderr_excerpt,
+                    duration_ms=duration_ms,
+                    error=str(exc)[:500],
+                    output_truncated=stdout_truncated or stderr_truncated,
+                    metadata={
+                        **self._metadata(preflight.evidence, network_mode=network_mode),
+                        "error_code": "microvm_result_missing",
+                    },
+                )
             meta = _restore_result(
                 result_tar,
                 workspace_path=workspace_path,
@@ -586,7 +621,7 @@ class QemuMicroVmBackend:
                 duration_ms=duration_ms,
                 error=None if status == "completed" else str(meta.get("error") or f"exit_code:{exit_code}"),
                 output_truncated=stdout_truncated or stderr_truncated,
-                metadata=self._metadata(preflight.evidence),
+                metadata=self._metadata(preflight.evidence, network_mode=network_mode),
                 operation_metadata=dict(meta.get("operation_metadata") or {}),
             )
         except Exception as exc:
@@ -597,10 +632,10 @@ class QemuMicroVmBackend:
                 exit_code=None,
                 duration_ms=duration_ms,
                 error=str(exc)[:500],
-                metadata={**self._metadata({}), "error_code": "microvm_operation_failed"},
+                metadata={**self._metadata({}, network_mode=network_mode), "error_code": "microvm_operation_failed"},
             )
 
-    def _boot(self, *, initramfs: Path, timeout_seconds: int) -> _BootResult:
+    def _boot(self, *, initramfs: Path, timeout_seconds: int, network_mode: str = "none") -> _BootResult:
         qemu = shutil.which(self.config.qemu_binary) or self.config.qemu_binary
         kernel = self.kernel_path()
         if kernel is None:
@@ -616,8 +651,6 @@ class QemuMicroVmBackend:
             "-no-reboot",
             "-serial",
             "stdio",
-            "-net",
-            "none",
             "-kernel",
             str(kernel),
             "-initrd",
@@ -625,6 +658,13 @@ class QemuMicroVmBackend:
             "-append",
             "console=ttyS0,115200 rdinit=/init panic=-1 quiet",
         ]
+        if network_mode == "vm-internal":
+            command[command.index("-kernel"):command.index("-kernel")] = [
+                "-netdev",
+                "user,id=net0",
+                "-device",
+                "e1000,netdev=net0",
+            ]
         if self.kvm_ready():
             command[1:1] = ["-enable-kvm", "-cpu", "host"]
         try:
@@ -705,15 +745,16 @@ class QemuMicroVmBackend:
                 container.remove(force=True)
         _safe_extract_rootfs(data, rootfs)
 
-    def _metadata(self, evidence: dict[str, Any]) -> dict[str, Any]:
+    def _metadata(self, evidence: dict[str, Any], *, network_mode: str = "none") -> dict[str, Any]:
         return {
+            **evidence,
             "backend": "microvm",
             "vm_backed": True,
             "host_execution_used": False,
             "host_docker_socket_exposed": False,
-            "network": "disabled",
+            "network": "vm-internal" if network_mode == "vm-internal" else "disabled",
+            "network_mode": network_mode,
             "rootfs_image": self.config.rootfs_image,
-            **evidence,
         }
 
 
@@ -773,6 +814,7 @@ def _build_initramfs(
     workspace_path: Path,
     config: dict[str, Any],
     initramfs_path: Path,
+    network_mode: str = "none",
 ) -> None:
     overlay = {
         "init": _init_script().encode("utf-8"),
@@ -786,6 +828,8 @@ def _build_initramfs(
         writer.add_bytes("init", overlay["init"], mode=0o100755)
         writer.add_bytes("ai_local_vm_runner.py", overlay["ai_local_vm_runner.py"], mode=0o100644)
         writer.add_bytes("ai_local_vm_config.json", overlay["ai_local_vm_config.json"], mode=0o100600)
+        if network_mode == "vm-internal":
+            _add_vm_network_modules(writer)
         writer.add_directory("workspace")
         writer.add_directory("workspace/project")
         writer.add_tree(workspace_path, prefix="workspace/project")
@@ -794,21 +838,71 @@ def _build_initramfs(
     initramfs_path.write_bytes(stream.getvalue())
 
 
+def _add_vm_network_modules(writer: "_CpioWriter") -> None:
+    release = os.uname().release
+    module_root = Path(os.environ.get("WORKSPACE_EXECUTION_VM_MODULES_CONTAINER_ROOT", "/host-modules"))
+    relative_module_dir = Path(release) / "kernel/drivers/net/ethernet/intel/e1000"
+    candidates = (
+        relative_module_dir / "e1000.ko",
+        relative_module_dir / "e1000.ko.xz",
+    )
+    for relative in candidates:
+        source = module_root / relative
+        if not source.is_file():
+            continue
+        data = source.read_bytes()
+        if source.suffix == ".xz":
+            data = lzma.decompress(data)
+        target = Path("usr/lib/modules") / relative_module_dir / "e1000.ko"
+        _add_cpio_parent_directories(writer, target.parent)
+        writer.add_bytes(str(target), data, mode=0o100644)
+        return
+
+
+def _add_cpio_parent_directories(writer: "_CpioWriter", path: Path) -> None:
+    current = Path()
+    for part in path.parts:
+        current = current / part
+        writer.add_directory(str(current), mode=0o40755)
+
+
 def _init_script() -> str:
     return textwrap.dedent(
-        """\
+        r"""
         #!/bin/sh
         mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
         mount -t proc proc /proc 2>/dev/null || true
         mount -t sysfs sysfs /sys 2>/dev/null || true
-        exec >/dev/console 2>&1
+        if [ -e /dev/console ]; then
+            exec >/dev/console 2>&1
+        elif [ -e /dev/ttyS0 ]; then
+            exec >/dev/ttyS0 2>&1
+        fi
+        printf '__AI_LOCAL_VM_INIT__:start\n'
         /usr/sbin/ip link set lo up 2>/dev/null || /sbin/ip link set lo up 2>/dev/null || true
+        for module in /lib/modules/*/kernel/drivers/net/ethernet/intel/e1000/e1000.ko /usr/lib/modules/*/kernel/drivers/net/ethernet/intel/e1000/e1000.ko; do
+            if [ -f "$module" ]; then
+                /usr/sbin/insmod "$module" 2>/dev/null || /sbin/insmod "$module" 2>/dev/null || true
+            fi
+        done
+        for iface in eth0 ens3 enp0s3; do
+            if [ -e "/sys/class/net/$iface" ]; then
+                /usr/sbin/ip link set "$iface" up 2>/dev/null || /sbin/ip link set "$iface" up 2>/dev/null || true
+                /usr/sbin/ip addr add 10.0.2.15/24 dev "$iface" 2>/dev/null || /sbin/ip addr add 10.0.2.15/24 dev "$iface" 2>/dev/null || true
+                /usr/sbin/ip route add default via 10.0.2.2 dev "$iface" 2>/dev/null || /sbin/ip route add default via 10.0.2.2 dev "$iface" 2>/dev/null || true
+                printf 'nameserver 10.0.2.3\n' > /etc/resolv.conf 2>/dev/null || true
+                break
+            fi
+        done
         mkdir -p /workspace/project /artifacts /run/ws /tmp
+        printf '__AI_LOCAL_VM_INIT__:runner_start\n'
         /usr/local/bin/python -u /ai_local_vm_runner.py
+        runner_status=$?
+        printf '__AI_LOCAL_VM_INIT__:runner_exit=%s\n' "$runner_status"
         sleep 1
         poweroff -f 2>/dev/null || exit 0
         """
-    )
+    ).lstrip()
 
 
 def _runner_script() -> str:

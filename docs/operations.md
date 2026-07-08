@@ -101,7 +101,7 @@ Maximum safe inferred profile:
 ```bash
 make profiles
 make up-auto
-make verify-max-live
+./.venv/bin/python scripts/verify_install.py --mode max --live --write-report
 ```
 
 ## API Or Worker Contract
@@ -118,13 +118,10 @@ make profiles
 make up-auto
 make verify
 make verify-live
-make verify-max
-make verify-max-live
 make doctor
 make check-gpu
 make logs
 make rollback
-make check-doc-targets
 ```
 
 Runtime HTTP/API contracts are owned by the individual services and their
@@ -186,9 +183,9 @@ sequenceDiagram
 
 | Item | Owner | Path/name | Durability | Notes |
 | --- | --- | --- | --- | --- |
-| generated storage env | `config/` | `.env.storage.generated` | generated compatibility artifact | do not edit manually |
-| generated LLM env | `config/` | `.env.llm.generated` | generated compatibility artifact | do not edit manually |
-| generated services env | `config/` | `.env.services.generated` | generated compatibility artifact | do not edit manually |
+| generated storage env | `config/` | `.env.storage.generated` | generated transition artifact | do not edit manually |
+| generated LLM env | `config/` | `.env.llm.generated` | generated transition artifact | do not edit manually |
+| generated services env | `config/` | `.env.services.generated` | generated transition artifact | do not edit manually |
 | Docker secrets | `infra/` | `infra/docker/secrets/*` | local secret files | ignored, should not be logged |
 | managed data | `storage_guardian` | resolved storage roots | persistent | use storage owner |
 | generated reports | runtime scripts | `docs/generated/*` | evidence artifacts | regenerate from owner scripts |
@@ -220,7 +217,7 @@ sequenceDiagram
 | --- | --- | --- | --- |
 | Compose config | `make infra` | valid generated config/build path | not-run |
 | Health | `docs/generated/docker-runtime-smoke.md` | generated status available | 2026-06-29 |
-| Runtime smoke | `make check-doc-targets` | operations command references are valid | 2026-06-29 |
+| Runtime smoke | Makefile/docs target guard in the source repo | operations command references are valid | 2026-06-29 |
 
 ## Open Questions
 

@@ -66,7 +66,7 @@ class TokenPolicy:
     rotation_days: int
     per_service_tokens: bool
     allow_shared_internal_token: bool
-    allow_env_fallback_in_prod: bool
+    allow_direct_env_token_in_prod: bool
 
 
 @dataclass(frozen=True)
@@ -278,9 +278,9 @@ def load_api_governance(
                     token.get("allow_shared_internal_token", True),
                     "security.token_policy.allow_shared_internal_token",
                 ),
-                allow_env_fallback_in_prod=_as_bool(
-                    token.get("allow_env_fallback_in_prod", False),
-                    "security.token_policy.allow_env_fallback_in_prod",
+                allow_direct_env_token_in_prod=_as_bool(
+                    token.get("allow_direct_env_token_in_prod", False),
+                    "security.token_policy.allow_direct_env_token_in_prod",
                 ),
             ),
             redact_headers=tuple(h.lower() for h in _as_tuple(security.get("redact_headers", []), "security.redact_headers")),
@@ -375,8 +375,8 @@ def validate_api_governance(config: ApiGovernanceConfig) -> list[str]:
             errors.append("prod requires https.enabled=true")
         if config.api.expose_docs_publicly or config.security.allow_anonymous_docs:
             errors.append("prod must not expose docs anonymously")
-        if config.security.token_policy.allow_env_fallback_in_prod:
-            errors.append("prod must not allow direct env token fallback")
+        if config.security.token_policy.allow_direct_env_token_in_prod:
+            errors.append("prod must not allow direct env token source")
         if config.https.gateway not in {"caddy", "traefik", "nginx"}:
             errors.append("prod https.gateway must be caddy, traefik, or nginx")
     return errors

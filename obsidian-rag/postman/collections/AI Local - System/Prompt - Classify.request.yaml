@@ -1,0 +1,52 @@
+$kind: http-request
+description: Classify the prompt through the gateway routing heuristics without calling the LLM. Edit `prompt_text` directly in Params.
+url: "{{system_base_url}}/classify?prompt_text=Mostra os recursos atuais do sistema."
+method: POST
+headers:
+  Authorization: Bearer {{system_api_key}}
+  Content-Type: application/json
+  X-AI-Service: postman
+  X-AI-Feature: system-prompt-test
+  X-AI-Origin-Kind: user
+  X-AI-Origin-Name: postman-system-api
+  X-AI-Origin-Machine: local-postman
+  X-Request-ID: "{{$guid}}"
+queryParams:
+  - key: prompt_text
+    value: Mostra os recursos atuais do sistema.
+    description: Prompt to classify without calling the LLM.
+body:
+  type: json
+  content: |-
+    {
+      "query": "Mostra os recursos atuais do sistema.",
+      "stream": false,
+      "agentic": false
+    }
+scripts:
+  - type: beforeRequest
+    code: |-
+      function queryValue(key, fallback) {
+        const query = pm.request.url.query && pm.request.url.query.all ? pm.request.url.query.all() : [];
+        for (let i = 0; i < query.length; i += 1) {
+          if (query[i].key === key && !query[i].disabled) {
+            return pm.variables.replaceIn(String(query[i].value || ''));
+          }
+        }
+        return fallback;
+      }
+
+      const promptText = queryValue('prompt_text', 'Mostra os recursos atuais do sistema.').trim();
+      pm.request.body.update(JSON.stringify({
+        query: promptText || 'Mostra os recursos atuais do sistema.',
+        stream: false,
+        agentic: false
+      }, null, 2));
+    language: text/javascript
+  - type: afterResponse
+    code: |-
+      pm.test('classified', function () {
+        pm.expect(pm.response.code).to.eql(200);
+      });
+    language: text/javascript
+order: 3000

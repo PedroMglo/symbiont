@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import shutil
 import tarfile
 import time
@@ -43,6 +44,9 @@ from workspace_execution.types import (
     CommandRunResponse,
     DiffResponse,
     ErrorDetail,
+    GitRemoteCloneAttempt,
+    GitRemoteSourceAcquireRequest,
+    GitRemoteSourceAcquireResponse,
     WorkspaceFileBatchWriteRequest,
     WorkspaceFileBatchWriteResponse,
     WorkspaceFileWriteResult,
@@ -75,6 +79,368 @@ def _now() -> datetime:
 def _stable_hash(payload: dict[str, Any]) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _git_remote_destination(request: GitRemoteSourceAcquireRequest) -> str:
+    raw = str(request.destination or "").strip().strip("/")
+    if raw:
+        return raw.replace("\\", "/")
+    return f".remote_sources/{_git_remote_repo_name(request.url)}"
+
+
+def _git_remote_repo_name(url: str) -> str:
+    value = str(url or "").strip().rstrip("/")
+    if value.startswith("git@") and ":" in value:
+        path = value.rsplit(":", 1)[-1].rstrip("/").rsplit("/", 1)[-1]
+    else:
+        path = value.rsplit("/", 1)[-1]
+    name = path.removesuffix(".git").strip() or "repository"
+    cleaned = re.sub(r"[^A-Za-z0-9_.:-]+", "-", name).strip(".-_:")
+    return cleaned[:96] or "repository"
+
+
+def _git_remote_transport_candidates(url: str) -> list[str]:
+    original = str(url or "").strip()
+    candidates = [original]
+    https = _git_remote_https_equivalent(original)
+    if https and https not in candidates:
+        candidates.append(https)
+    return candidates
+
+
+def _git_remote_https_equivalent(url: str) -> str:
+    scp = re.fullmatch(r"git@(?P<host>[A-Za-z0-9.-]+):(?P<path>[^`'\"<>]+?\.git)", url)
+    if scp:
+        return f"https://{scp.group('host')}/{scp.group('path').lstrip('/')}"
+    ssh = re.fullmatch(r"ssh://(?:[^@/]+@)?(?P<host>[A-Za-z0-9.-]+)/(?P<path>[^`'\"<>]+?\.git)", url)
+    if ssh:
+        return f"https://{ssh.group('host')}/{ssh.group('path').lstrip('/')}"
+    return ""
+
+
+def _git_remote_evidence_context(
+    workspace_path: Path,
+    *,
+    destination: str,
+    source_url: str,
+    effective_url: str,
+    clone_attempts: list[GitRemoteCloneAttempt],
+) -> dict[str, Any]:
+    repo_root = safe_child(workspace_path, destination)
+    top_level_entries = [
+        item.name
+        for item in _safe_list_dir(repo_root)[:150]
+        if item.name not in {".git", ".hg", ".svn"}
+    ]
+    files, skipped = _bounded_repo_files(repo_root)
+    observations = [_git_remote_file_observation(repo_root, path) for path in files[:50]]
+    observations = [item for item in observations if item is not None]
+    detected_docs: list[str] = []
+    detected_data: list[str] = []
+    detected_config: list[str] = []
+    detected_tests: list[str] = []
+    detected_code: list[str] = []
+    relevant_files: list[str] = []
+    for path in files:
+        relative = _repo_relative_path(repo_root, path)
+        category = _git_remote_file_category(path)
+        if category == "document":
+            detected_docs.append(relative)
+        elif category == "data":
+            detected_data.append(relative)
+        elif category == "config":
+            detected_config.append(relative)
+        elif category == "code":
+            detected_code.append(relative)
+        if _repo_path_looks_like_test(path, repo_root):
+            detected_tests.append(relative)
+        if category != "other" or _repo_path_looks_like_test(path, repo_root):
+            relevant_files.append(relative)
+
+    fingerprint = _stable_hash(
+        {
+            "source_url": source_url,
+            "effective_url": effective_url,
+            "destination": destination,
+            "files": [
+                {
+                    "path": _repo_relative_path(repo_root, path),
+                    "size": _safe_stat_size(path),
+                    "mtime_ns": _safe_stat_mtime_ns(path),
+                }
+                for path in files[:120]
+            ],
+            "skipped": skipped[:50],
+        }
+    )
+    commands = [
+        "git clone --depth <n> <remote> <workspace-relative-destination>",
+        "workspace_execution bounded repo map and text excerpt inspection",
+    ]
+    workspace_map = {
+        "root": destination,
+        "top_level_entries": top_level_entries,
+        "detected_languages": _repo_detected_languages(files),
+        "detected_frameworks": [],
+        "detected_services": [],
+        "detected_code_files": _dedupe_preserve_order(detected_code)[:120],
+        "detected_data_files": _dedupe_preserve_order(detected_data)[:120],
+        "detected_config_files": _dedupe_preserve_order(detected_config)[:120],
+        "detected_test_files": _dedupe_preserve_order(detected_tests)[:120],
+        "detected_docs": _dedupe_preserve_order(detected_docs)[:120],
+        "large_or_skipped_paths": skipped[:100],
+        "git_status_summary": "cloned",
+        "risk_notes": [],
+    }
+    missing_evidence: list[str] = []
+    if skipped:
+        missing_evidence.append("Some repository paths were skipped by bounded discovery limits or ignored directory rules.")
+    return {
+        "request_id": fingerprint[:16],
+        "workspace": destination,
+        "boundary_root": destination,
+        "resolution_source": "explicit_user_git_remote",
+        "remote_source": {
+            "kind": "git_remote",
+            "url": source_url,
+            "effective_url": effective_url,
+            "repo_name": _git_remote_repo_name(source_url),
+        },
+        "workspace_map": workspace_map,
+        "observations": [],
+        "file_observations": observations,
+        "relevant_files": _dedupe_preserve_order(relevant_files)[:160],
+        "relevant_commands": commands,
+        "commands": commands,
+        "constraints": {
+            "read_only": True,
+            "max_files": 160,
+            "max_excerpt_bytes": 6000,
+            "source_acquired_in_workspace_execution": True,
+        },
+        "enrichment_plan": [],
+        "evidence_summary": (
+            f"Cloned remote Git repository into workspace-relative path {destination}. "
+            f"Observed {len(top_level_entries)} top-level entries, {len(detected_code)} code files, "
+            f"{len(detected_docs)} docs, {len(detected_config)} config files and {len(observations)} text observations."
+        ),
+        "missing_evidence": missing_evidence,
+        "confidence": 0.82 if files else 0.5,
+        "cache_fingerprint": f"sha256:{fingerprint}",
+        "clone_attempts": [attempt.model_dump(mode="json") for attempt in clone_attempts],
+        "context_digest": {
+            "inspected": {
+                "workspace": destination,
+                "top_level_entries": top_level_entries[:40],
+                "files_sampled": len(observations),
+            },
+            "not_inspected": skipped[:40],
+            "most_relevant_files": _dedupe_preserve_order(relevant_files)[:40],
+            "key_evidence": [
+                item.get("path")
+                for item in observations[:20]
+                if isinstance(item, dict) and item.get("path")
+            ],
+            "uncertainties": missing_evidence,
+            "next_recommended_actions": [
+                "Generate documentation grounded in observed repository files and sampled excerpts."
+            ],
+        },
+    }
+
+
+def _safe_list_dir(path: Path) -> list[Path]:
+    try:
+        return sorted(path.iterdir(), key=lambda item: item.name.casefold())
+    except OSError:
+        return []
+
+
+def _bounded_repo_files(repo_root: Path, *, max_depth: int = 4, max_files: int = 160) -> tuple[list[Path], list[str]]:
+    files: list[Path] = []
+    skipped: list[str] = []
+    stack: list[tuple[Path, int]] = [(repo_root, 0)]
+    excluded_dirs = {
+        ".cache",
+        ".git",
+        ".hg",
+        ".local",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".svn",
+        ".tox",
+        ".venv",
+        "__pycache__",
+        "build",
+        "dist",
+        "node_modules",
+        "venv",
+    }
+    while stack and len(files) < max_files:
+        current, depth = stack.pop()
+        if depth > max_depth:
+            skipped.append(_repo_relative_path(repo_root, current))
+            continue
+        for entry in _safe_list_dir(current):
+            if entry.name in excluded_dirs or entry.is_symlink():
+                skipped.append(_repo_relative_path(repo_root, entry))
+                continue
+            if entry.is_dir():
+                if depth < max_depth:
+                    stack.append((entry, depth + 1))
+                else:
+                    skipped.append(_repo_relative_path(repo_root, entry))
+                continue
+            if entry.is_file():
+                files.append(entry)
+                if len(files) >= max_files:
+                    break
+    if stack:
+        skipped.append("file_limit_reached")
+    return sorted(files, key=lambda item: _repo_relative_path(repo_root, item)), skipped
+
+
+def _git_remote_file_observation(repo_root: Path, path: Path) -> dict[str, Any] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    relative = _repo_relative_path(repo_root, path)
+    suffix = path.suffix.casefold()
+    text_suffixes = {
+        ".cfg",
+        ".conf",
+        ".csv",
+        ".ini",
+        ".json",
+        ".jsonl",
+        ".md",
+        ".py",
+        ".rst",
+        ".sh",
+        ".sql",
+        ".toml",
+        ".tsv",
+        ".txt",
+        ".yaml",
+        ".yml",
+    }
+    excerpt = ""
+    line_count: int | None = None
+    warnings: list[str] = []
+    was_fully_read = False
+    was_sampled = False
+    if suffix in text_suffixes and stat.st_size <= 1_000_000:
+        raw = path.read_bytes()[:6000]
+        excerpt = raw.decode("utf-8", errors="replace").strip()
+        line_count = excerpt.count("\n") + (1 if excerpt else 0)
+        was_fully_read = stat.st_size <= 6000
+        was_sampled = stat.st_size > 6000
+        if was_sampled:
+            warnings.append("excerpt_truncated")
+    elif suffix in text_suffixes:
+        raw = path.read_bytes()[:6000]
+        excerpt = raw.decode("utf-8", errors="replace").strip()
+        line_count = excerpt.count("\n") + (1 if excerpt else 0)
+        was_sampled = True
+        warnings.append("file_too_large_sampled")
+    else:
+        warnings.append("binary_or_unsupported_text_type_not_read")
+    sha256 = ""
+    if stat.st_size <= 10_000_000:
+        sha256 = _sha256_file(path)
+    else:
+        warnings.append("sha256_skipped_due_to_size")
+    return {
+        "path": relative,
+        "file_type": suffix.lstrip(".") or path.name.casefold(),
+        "size_bytes": stat.st_size,
+        "line_count": line_count,
+        "sha256": f"sha256:{sha256}" if sha256 else "",
+        "excerpt": excerpt[:4000],
+        "relevance_reason": _git_remote_file_category(path),
+        "was_fully_read": was_fully_read,
+        "was_sampled": was_sampled,
+        "warnings": warnings,
+    }
+
+
+def _git_remote_file_category(path: Path) -> str:
+    suffix = path.suffix.casefold()
+    name = path.name.casefold()
+    if suffix in {".md", ".rst", ".txt", ".pdf", ".doc", ".docx", ".odt"}:
+        return "document"
+    if suffix in {".csv", ".db", ".json", ".jsonl", ".parquet", ".sqlite", ".sqlite3", ".tsv", ".xml"}:
+        return "data"
+    if suffix in {".cfg", ".conf", ".env", ".ini", ".sql", ".toml", ".yaml", ".yml"} or name in {"dockerfile", "compose.yml", "docker-compose.yml"}:
+        return "config"
+    if suffix in {".go", ".java", ".js", ".jsx", ".py", ".rs", ".sh", ".ts", ".tsx"}:
+        return "code"
+    return "other"
+
+
+def _repo_detected_languages(files: list[Path]) -> list[str]:
+    mapping = {
+        ".go": "go",
+        ".java": "java",
+        ".js": "javascript",
+        ".jsx": "javascript",
+        ".py": "python",
+        ".rs": "rust",
+        ".sh": "shell",
+        ".sql": "sql",
+        ".ts": "typescript",
+        ".tsx": "typescript",
+    }
+    return _dedupe_preserve_order([mapping[path.suffix.casefold()] for path in files if path.suffix.casefold() in mapping])
+
+
+def _repo_path_looks_like_test(path: Path, repo_root: Path) -> bool:
+    relative = _repo_relative_path(repo_root, path).casefold()
+    parts = relative.split("/")
+    return any(part in {"test", "tests"} for part in parts) or path.name.casefold().startswith("test_")
+
+
+def _repo_relative_path(repo_root: Path, path: Path) -> str:
+    try:
+        return path.relative_to(repo_root).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _safe_stat_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _safe_stat_mtime_ns(path: Path) -> int:
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return 0
+
+
+def _sha256_file(path: Path) -> str:
+    hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()
+
+
+def _dedupe_preserve_order(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
 
 
 def _microvm_command_error(error: str, request: CommandRunRequest) -> ErrorDetail:
@@ -738,6 +1104,146 @@ class SessionStore:
                 "workspace.input.attached",
                 session_id=session_id,
                 payload={"input_ids": input_ids, "attached_count": attached_count, "state_hash": state_hash},
+            )
+            return response
+
+    def acquire_git_remote_source(
+        self,
+        session_id: str,
+        request: GitRemoteSourceAcquireRequest,
+    ) -> GitRemoteSourceAcquireResponse:
+        with self._lock:
+            record = self._require_open_session(session_id)
+            destination = _git_remote_destination(request)
+            fingerprint = _stable_hash(
+                {
+                    "session_id": session_id,
+                    "url": request.url,
+                    "destination": destination,
+                    "depth": request.depth,
+                    "state_hash": record.response.state_hash,
+                    "requires_vm_backed_sandbox": request.requires_vm_backed_sandbox,
+                    "vm_session_id": request.vm_session_id,
+                }
+            )
+            key = f"git_remote:{session_id}:{request.idempotency_key}"
+            existing = self._idempotency.get(key)
+            if existing is not None:
+                previous_fingerprint, response = existing
+                if previous_fingerprint != fingerprint:
+                    raise WorkspaceExecutionError(
+                        "idempotency_conflict",
+                        "remote Git source idempotency key was reused with different state",
+                        status_code=HTTPStatus.CONFLICT,
+                        details={"idempotency_key": request.idempotency_key},
+                    )
+                return response
+
+            attempts: list[GitRemoteCloneAttempt] = []
+            effective_url = ""
+            clone_target = safe_child(record.workspace_path, destination)
+            for index, candidate_url in enumerate(_git_remote_transport_candidates(request.url)):
+                if clone_target.exists():
+                    shutil.rmtree(clone_target, ignore_errors=True)
+                command = CommandRunRequest(
+                    idempotency_key=f"{request.idempotency_key}:clone:{index}",
+                    cwd=".",
+                    argv=["git", "clone", "--depth", str(request.depth), candidate_url, destination],
+                    timeout_seconds=request.timeout_seconds,
+                    allow_profile="inspect",
+                    material_session_id=request.material_session_id,
+                    vm_session_id=request.vm_session_id,
+                    requires_vm_backed_sandbox=request.requires_vm_backed_sandbox,
+                    metadata={
+                        "operation": "git_remote_source_acquisition",
+                        "source_url": request.url,
+                        "candidate_index": index,
+                        "destination": destination,
+                    },
+                )
+                result = self.run_command(session_id, command)
+                attempt = GitRemoteCloneAttempt(
+                    url=candidate_url,
+                    run_id=result.run_id,
+                    status=result.status,
+                    exit_code=result.exit_code,
+                    stdout_preview=str(result.metadata.get("stdout_preview") or "")[:2000],
+                    stderr_preview=str(result.metadata.get("stderr_preview") or "")[:2000],
+                    error=result.error,
+                )
+                attempts.append(attempt)
+                if result.status == "completed" and result.exit_code == 0 and clone_target.exists():
+                    effective_url = candidate_url
+                    break
+
+            if not effective_url:
+                state_hash = record.response.state_hash
+                response = GitRemoteSourceAcquireResponse(
+                    session_id=session_id,
+                    status="blocked",
+                    source_url=request.url,
+                    destination=destination,
+                    state_hash=state_hash,
+                    clone_attempts=attempts,
+                    error=ErrorDetail(
+                        code="git_remote_clone_failed",
+                        message="remote Git source could not be cloned inside the workspace session",
+                        details={
+                            "destination": destination,
+                            "attempt_count": len(attempts),
+                            "vm_session_id": request.vm_session_id,
+                            "requires_vm_backed_sandbox": request.requires_vm_backed_sandbox,
+                        },
+                    ),
+                )
+                self._idempotency[key] = (fingerprint, response)
+                self._record_event(
+                    "workspace.remote_source.git.blocked",
+                    session_id=session_id,
+                    payload={
+                        "source_url": request.url,
+                        "destination": destination,
+                        "attempt_count": len(attempts),
+                    },
+                )
+                return response
+
+            current = file_manifest(record.workspace_path)
+            state_hash = manifest_hash(current)
+            record.response.state_hash = state_hash
+            evidence_context = _git_remote_evidence_context(
+                record.workspace_path,
+                destination=destination,
+                source_url=request.url,
+                effective_url=effective_url,
+                clone_attempts=attempts,
+            )
+            response = GitRemoteSourceAcquireResponse(
+                session_id=session_id,
+                status="completed",
+                source_url=request.url,
+                effective_url=effective_url,
+                destination=destination,
+                state_hash=state_hash,
+                clone_attempts=attempts,
+                evidence_context=evidence_context,
+                metadata={
+                    "operation": "git_remote_source_acquisition",
+                    "vm_session_id": request.vm_session_id,
+                    "material_session_id": request.material_session_id,
+                },
+            )
+            self._idempotency[key] = (fingerprint, response)
+            self._record_event(
+                "workspace.remote_source.git.acquired",
+                session_id=session_id,
+                payload={
+                    "source_url": request.url,
+                    "effective_url": effective_url,
+                    "destination": destination,
+                    "state_hash": state_hash,
+                    "attempt_count": len(attempts),
+                },
             )
             return response
 
@@ -1458,6 +1964,11 @@ class SessionStore:
                 "vm_session_id": request.vm_session_id,
             },
         )
+        network_mode = "none"
+        if request.vm_session_id:
+            vm_record = self._vm_sessions.get(request.vm_session_id)
+            if vm_record is not None:
+                network_mode = vm_record.response.network_mode
         result = microvm.run_command(
             argv=request.argv,
             cwd=Path(request.cwd),
@@ -1466,6 +1977,7 @@ class SessionStore:
             env=_command_env_for_validation(request),
             limits=limits,
             redaction_terms=self._redaction_terms(record),
+            network_mode=network_mode,
         )
         stdout_ref, stderr_ref = self._write_logs(record, result.run_id, result.stdout, result.stderr)
         diff = self.diff(record.response.session_id, record_event=False)

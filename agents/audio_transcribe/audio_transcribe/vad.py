@@ -1,13 +1,14 @@
-"""Voice Activity Detection using Silero VAD with fallback."""
+"""Voice Activity Detection using the configured Silero backend."""
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
+
+from audio_transcribe.errors import VADUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,9 @@ class SpeechSegment:
 class VADProcessor:
     """Voice Activity Detection using Silero VAD.
 
-    Falls back to simple energy-based detection if Silero unavailable.
+    VAD is fail-closed: when enabled, the Silero backend must be importable and
+    loadable. Window segmentation policy is owned by the segmenter, not hidden
+    inside this detector.
     """
 
     def __init__(
@@ -41,7 +44,7 @@ class VADProcessor:
         self._speech_pad_ms = speech_pad_ms
         self._sample_rate = sample_rate
         self._model = None
-        self._available: Optional[bool] = None
+        self._available: bool | None = None
 
     @property
     def available(self) -> bool:
@@ -53,10 +56,9 @@ class VADProcessor:
             self._available = True
         except ImportError:
             self._available = False
-            logger.warning("torch not available — VAD will use energy-based fallback")
         return self._available
 
-    def _load_model(self):
+    def _load_model(self) -> None:
         """Load Silero VAD model (lazy)."""
         if self._model is not None:
             return
@@ -72,8 +74,11 @@ class VADProcessor:
             self._get_speech_timestamps = vad_utils[0]  # get_speech_timestamps
             logger.info("Silero VAD model loaded")
         except Exception as e:
-            logger.warning(f"Failed to load Silero VAD: {e}")
             self._available = False
+            raise VADUnavailableError(
+                message="Silero VAD backend could not be loaded",
+                detail=str(e),
+            ) from e
 
     def detect_speech(self, audio_path: Path) -> list[SpeechSegment]:
         """Detect speech segments in audio file.
@@ -81,18 +86,15 @@ class VADProcessor:
         Returns list of SpeechSegment with timestamps in seconds.
         """
         audio = self._load_audio(audio_path)
-        if audio is None:
-            return []
+        if not self.available:
+            raise VADUnavailableError(
+                message="VAD is enabled but torch/Silero is not available",
+                detail="Install the configured Silero VAD backend or choose window segmentation.",
+            )
+        self._load_model()
+        return self._detect_silero(audio)
 
-        if self.available:
-            self._load_model()
-            if self._model is not None:
-                return self._detect_silero(audio)
-
-        # Fallback: energy-based detection
-        return self._detect_energy(audio)
-
-    def _load_audio(self, audio_path: Path) -> Optional[np.ndarray]:
+    def _load_audio(self, audio_path: Path) -> np.ndarray:
         """Load audio file as numpy array."""
         try:
             import wave
@@ -102,8 +104,10 @@ class VADProcessor:
                 audio = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
                 return audio
         except Exception as e:
-            logger.error(f"Failed to load audio for VAD: {e}")
-            return None
+            raise VADUnavailableError(
+                message="Failed to load audio for VAD",
+                detail=str(e),
+            ) from e
 
     def _detect_silero(self, audio: np.ndarray) -> list[SpeechSegment]:
         """Use Silero VAD model for detection."""
@@ -126,54 +130,4 @@ class VADProcessor:
             segments.append(SpeechSegment(start=start, end=end))
 
         logger.info(f"Silero VAD: detected {len(segments)} speech segments")
-        return segments
-
-    def _detect_energy(self, audio: np.ndarray) -> list[SpeechSegment]:
-        """Simple energy-based VAD fallback."""
-        frame_size = int(self._sample_rate * 0.03)  # 30ms frames
-        hop = frame_size // 2
-        threshold = 0.01  # Energy threshold
-
-        segments: list[SpeechSegment] = []
-        in_speech = False
-        speech_start = 0.0
-        min_speech_samples = int(self._min_speech_ms * self._sample_rate / 1000)
-        min_silence_samples = int(self._min_silence_ms * self._sample_rate / 1000)
-
-        silence_counter = 0
-        speech_counter = 0
-
-        for i in range(0, len(audio) - frame_size, hop):
-            frame = audio[i : i + frame_size]
-            energy = float(np.mean(frame ** 2))
-
-            if energy > threshold:
-                if not in_speech:
-                    speech_start = i / self._sample_rate
-                    in_speech = True
-                    silence_counter = 0
-                speech_counter += hop
-                silence_counter = 0
-            else:
-                if in_speech:
-                    silence_counter += hop
-                    if silence_counter >= min_silence_samples:
-                        speech_end = (i - silence_counter) / self._sample_rate
-                        if speech_counter >= min_speech_samples:
-                            segments.append(SpeechSegment(
-                                start=max(0, speech_start - self._speech_pad_ms / 1000),
-                                end=speech_end + self._speech_pad_ms / 1000,
-                            ))
-                        in_speech = False
-                        speech_counter = 0
-                        silence_counter = 0
-
-        # Handle trailing speech
-        if in_speech and speech_counter >= min_speech_samples:
-            segments.append(SpeechSegment(
-                start=max(0, speech_start - self._speech_pad_ms / 1000),
-                end=len(audio) / self._sample_rate,
-            ))
-
-        logger.info(f"Energy VAD fallback: detected {len(segments)} speech segments")
         return segments

@@ -18,7 +18,7 @@ security:
     rotation_days: 30
     per_service_tokens: true
     allow_shared_internal_token: true
-    allow_env_fallback_in_prod: false
+    allow_direct_env_token_in_prod: false
   authorization:
     require_scope_by_default: true
     default_internal_scope: service:invoke

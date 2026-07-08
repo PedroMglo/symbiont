@@ -1,0 +1,12 @@
+$kind: collection
+description: |-
+  Operational Postman collection for managing ai-local Obsidian RAG. Variables are reserved for infrastructure/auth only: rag_host_base_url and rag_api_key. Request values such as target, force, limit and job_id live directly in each request.
+
+  Local shell helpers:
+  export RAG_API_KEY="$(tr -d '\n' < infra/docker/secrets/rag_api_key)"
+  export RAG_HOST_PORT="$(awk -F= '$1=="ORC_PORT_RAG"{print $2}' .env.services.generated)"
+
+  Valid reprocess targets: all, local (RAG), sources, cag, graph. Container logs are not exposed over HTTP. Use: docker logs -f --tail=120 orc-rag
+variables:
+  rag_host_base_url: https://127.0.0.1:8486
+  rag_api_key: ""

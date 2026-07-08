@@ -8,6 +8,7 @@ USER root
 COPY features/translation/ /app/
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir "/app[neural]" \
+    && pip install --upgrade "setuptools>=83.0.0" "wheel>=0.46.2" "jaraco.context>=6.1.0" \
     && chown -R ailoc:ailoc /app
 COPY context_governor/ /app/context_governor/
 RUN chown -R ailoc:ailoc /app/context_governor

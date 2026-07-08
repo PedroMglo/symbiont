@@ -20,6 +20,7 @@ from orchestrator.routing.context_requirements import (
     context_sources_for_query,
     needs_system_context,
     requires_context_gather,
+    requires_local_evidence,
 )
 from orchestrator.routing.context_router import ConfigContextRouter
 from orchestrator.routing.model_router import ConfigModelRouter
@@ -400,6 +401,7 @@ def route_node(state: SymbiontState) -> dict:
         context_sources = []
     else:
         context_sources = context_sources_for_query(query, _context_router.route(intent, complexity))
+    local_evidence_required = requires_local_evidence(query)
 
     # Agent selection — preserve the decomposition provider's choice when a dynamic
     # execution plan exists; otherwise use the deterministic intent mapping.
@@ -445,6 +447,7 @@ def route_node(state: SymbiontState) -> dict:
         selected_agents=selected_agents,
         dropped_agents=dropped_agents,
         context_sources=context_sources,
+        local_evidence_required=local_evidence_required,
         model_used=model_used,
         profile_key=profile_key,
         agent_source=agent_source,
@@ -455,12 +458,14 @@ def route_node(state: SymbiontState) -> dict:
         "query": query,
         "selected_agents": selected_agents,
         "context_sources": context_sources,
+        "local_evidence_required": local_evidence_required,
         "model_used": model_used,
         "profile_key": profile_key,
         "fallback_used": False,
         "execution_trace": (
             [f"route:{agent_source}->{selected_agents}"]
             + (["route:standalone_code_generation_context_skipped"] if _is_standalone_code_generation_request(query, intent) else [])
+            + (["route:local_evidence_required"] if local_evidence_required else [])
         )
         + ([f"route:dropped_non_dispatchable->{dropped_agents}"] if dropped_agents else []),
     }

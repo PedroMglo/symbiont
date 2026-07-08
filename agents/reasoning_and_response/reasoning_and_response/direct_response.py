@@ -207,11 +207,15 @@ def respond(
         )
     except Exception as exc:
         log.warning("direct_response: LLM failed: %s", exc)
-        fallback = compact_context.strip() or "Nao foi possivel gerar uma resposta neste momento."
         return RespondResponse(
-            response=_strip_think(fallback),
+            response="Direct response provider unavailable; no answer generated.",
             model_used=str(model),
-            metadata={"provider_mode": "respond", "fallback_reason": "llm_unavailable", **metadata},
+            metadata={"provider_mode": "respond", "degraded_reason": "llm_unavailable", **metadata},
+            agent_decision={
+                "status": "degraded",
+                "reason": "llm_unavailable",
+                "response_generated": False,
+            },
         )
 
 

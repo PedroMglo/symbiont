@@ -1,0 +1,74 @@
+$kind: http-request
+description: OpenAI-compatible prompt path exposed by ai-local. Edit `prompt_text` directly in Params.
+url: "{{system_base_url}}/v1/chat/completions?prompt_text=Mostra os recursos atuais do sistema.&stream=false"
+method: POST
+headers:
+  Authorization: Bearer {{system_api_key}}
+  Content-Type: application/json
+  X-AI-Service: postman
+  X-AI-Feature: system-prompt-test
+  X-AI-Origin-Kind: user
+  X-AI-Origin-Name: postman-system-api
+  X-AI-Origin-Machine: local-postman
+  X-Request-ID: "{{$guid}}"
+queryParams:
+  - key: prompt_text
+    value: Mostra os recursos atuais do sistema.
+    description: Prompt to send as the user message.
+  - key: stream
+    value: "false"
+    description: true | false
+  - key: openai_model
+    value: symbiont
+    disabled: true
+    description: Optional OpenAI-compatible model alias.
+body:
+  type: json
+  content: |-
+    {
+      "model": "symbiont",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Mostra os recursos atuais do sistema."
+        }
+      ],
+      "stream": false
+    }
+scripts:
+  - type: beforeRequest
+    code: |-
+      function queryValue(key, fallback) {
+        const query = pm.request.url.query && pm.request.url.query.all ? pm.request.url.query.all() : [];
+        for (let i = 0; i < query.length; i += 1) {
+          if (query[i].key === key && !query[i].disabled) {
+            return pm.variables.replaceIn(String(query[i].value || ''));
+          }
+        }
+        return fallback;
+      }
+
+      function asBool(value, fallback) {
+        const raw = String(value === undefined || value === null ? fallback : value).trim().toLowerCase();
+        return ['true', '1', 'yes', 'sim'].includes(raw);
+      }
+
+      const payload = {
+        model: queryValue('openai_model', 'symbiont').trim() || 'symbiont',
+        messages: [
+          {
+            role: 'user',
+            content: queryValue('prompt_text', 'Mostra os recursos atuais do sistema.').trim() || 'Mostra os recursos atuais do sistema.'
+          }
+        ],
+        stream: asBool(queryValue('stream', 'false'), false)
+      };
+      pm.request.body.update(JSON.stringify(payload, null, 2));
+    language: text/javascript
+  - type: afterResponse
+    code: |-
+      pm.test('chat completion accepted', function () {
+        pm.expect(pm.response.code).to.be.oneOf([200, 202]);
+      });
+    language: text/javascript
+order: 2000

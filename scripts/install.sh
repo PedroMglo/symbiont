@@ -21,23 +21,35 @@ warn() { printf "${YELLOW}WARN${NC} %s\n" "$1"; }
 echo "ai-local user install"
 echo
 
-if ! command -v python3 >/dev/null 2>&1; then
-    fail "python3 not found. Install Python 3.11+."
+PYTHON_BIN="${PYTHON:-}"
+if [ -z "$PYTHON_BIN" ]; then
+    for candidate in python3.13 python3.12 python3.11 python3 python; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)' >/dev/null 2>&1; then
+                PYTHON_BIN="$(command -v "$candidate")"
+                break
+            fi
+        fi
+    done
+fi
+
+if [ -z "$PYTHON_BIN" ]; then
+    fail "Python 3.11+ not found. Install a supported Python runtime, then rerun make setup."
     exit 1
 fi
 
-PY_VERSION="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-PY_MAJOR="$(python3 -c 'import sys; print(sys.version_info.major)')"
-PY_MINOR="$(python3 -c 'import sys; print(sys.version_info.minor)')"
+PY_VERSION="$("$PYTHON_BIN" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+PY_MAJOR="$("$PYTHON_BIN" -c 'import sys; print(sys.version_info.major)')"
+PY_MINOR="$("$PYTHON_BIN" -c 'import sys; print(sys.version_info.minor)')"
 
 if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 11 ]; }; then
-    fail "Python $PY_VERSION found; Python 3.11+ is required."
+    fail "Python $PY_VERSION found at $PYTHON_BIN; Python 3.11+ is required."
     exit 1
 fi
-ok "Python $PY_VERSION"
+ok "Python $PY_VERSION ($PYTHON_BIN)"
 
-if ! python3 -m venv --help >/dev/null 2>&1; then
-    fail "python3 venv module is unavailable. Install your distro's python venv package."
+if ! "$PYTHON_BIN" -m venv --help >/dev/null 2>&1; then
+    fail "Python venv module is unavailable for $PYTHON_BIN. Install your distro's Python 3.11+ venv package."
     exit 1
 fi
 ok "python venv module"
@@ -50,7 +62,7 @@ ok "$(git --version)"
 
 VENV_DIR=".venv"
 if [ ! -d "$VENV_DIR" ]; then
-    python3 -m venv "$VENV_DIR"
+    "$PYTHON_BIN" -m venv "$VENV_DIR"
     ok "Created $VENV_DIR"
 else
     ok "$VENV_DIR already exists"
@@ -63,7 +75,7 @@ python -m pip install --upgrade pip --quiet
 python -m pip install -e . -e storage_guardian/ --quiet
 ok "Installed ai-local and storage_guardian"
 
-if [ -d obsidian-rag/obsidian_rag ]; then
+if [ -f obsidian-rag/pyproject.toml ]; then
     python -m pip install -e obsidian-rag/ --quiet
     ok "Installed obsidian-rag"
 else
