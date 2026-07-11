@@ -1,0 +1,43 @@
+name: public-merge-gate
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-merge-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  allow-generated-public-merge:
+    name: allow-generated-public-merge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Allow only same-repository generated export branches
+        env:
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          if [ "$HEAD_REPOSITORY" != "$BASE_REPOSITORY" ]; then
+            echo "::error::External public PRs are intake-only and cannot pass the generated merge gate."
+            exit 1
+          fi
+          case "$HEAD_REF" in
+            public-export/*)
+              echo "Generated public export branch accepted."
+              ;;
+            *)
+              echo "::error::Only same-repository public-export/* branches may pass this merge gate."
+              exit 1
+              ;;
+          esac
