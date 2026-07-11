@@ -15,36 +15,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  allow-generated-public-merge:
-    name: allow-generated-public-merge
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Allow only generated public export PRs
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
-          REPOSITORY: ${{ github.repository }}
-          HEAD_REF: ${{ github.head_ref }}
-        run: |
-          if [ "$EVENT_NAME" != "pull_request" ]; then
-            echo "Direct generated public main validation."
-            exit 0
-          fi
-          if [ "$HEAD_REPOSITORY" != "$REPOSITORY" ]; then
-            echo "::error::External public PRs are intake-only and cannot pass the generated merge gate."
-            exit 1
-          fi
-          case "$HEAD_REF" in
-            public-export/*)
-              echo "Generated public export branch accepted."
-              ;;
-            *)
-              echo "::error::Only generated public-export/* branches may pass this merge gate."
-              exit 1
-              ;;
-          esac
-
   validate-public-tree:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -78,7 +48,9 @@ jobs:
               "logs/", "node_modules/", "reports/",
           )
           generated = {
-              ".github/workflows/public-ci.yml", ".env.example", "Makefile",
+              ".github/workflows/public-ci.yml",
+              ".github/workflows/public-merge-gate.yml",
+              ".env.example", "Makefile",
               "scripts/bootstrap.sh", "scripts/doctor.sh", "scripts/install.sh",
           }
           dangerous = (
