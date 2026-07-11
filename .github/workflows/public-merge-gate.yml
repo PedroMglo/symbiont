@@ -10,34 +10,47 @@ on:
 
 permissions:
   contents: read
+  statuses: write
 
 concurrency:
   group: public-merge-gate-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  allow-generated-public-merge:
-    name: allow-generated-public-merge
+  publish-generated-public-merge-status:
+    name: publish-generated-public-merge-status
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Allow only same-repository generated export branches
+      - name: Publish protected generated-export authority status
         env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
           HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
           BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          STATUS_CONTEXT: ai-local/generated-public-merge-authority
         run: |
           set -euo pipefail
+          state=failure
+          description="External and non-generated public PRs are intake-only"
           if [ "$HEAD_REPOSITORY" != "$BASE_REPOSITORY" ]; then
             echo "::error::External public PRs are intake-only and cannot pass the generated merge gate."
+          else
+            case "$HEAD_REF" in
+              public-export/*)
+                state=success
+                description="Trusted same-repository generated public export"
+                echo "Generated public export branch accepted."
+                ;;
+              *)
+                echo "::error::Only same-repository public-export/* branches may pass this merge gate."
+                ;;
+            esac
+          fi
+          gh api --method POST "repos/${REPOSITORY}/statuses/${HEAD_SHA}"             -f state="$state"             -f context="$STATUS_CONTEXT"             -f description="$description"             -f target_url="$RUN_URL" >/dev/null
+          if [ "$state" != "success" ]; then
             exit 1
           fi
-          case "$HEAD_REF" in
-            public-export/*)
-              echo "Generated public export branch accepted."
-              ;;
-            *)
-              echo "::error::Only same-repository public-export/* branches may pass this merge gate."
-              exit 1
-              ;;
-          esac
