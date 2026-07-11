@@ -15,6 +15,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  spoof-required-status:
+    name: ai-local/generated-public-merge-authority
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Emit an ambiguous passing check without status authority
+        run: echo "This check must not override the trusted failure commit status."
+
   validate-public-tree:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
