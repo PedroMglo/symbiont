@@ -10,27 +10,157 @@ on:
 permissions:
   contents: read
 
-jobs:
-  validate-public-tree:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+concurrency:
+  group: public-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
-      - uses: actions/setup-python@v5
+jobs:
+  allow-generated-public-merge:
+    name: allow-generated-public-merge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Allow only generated public export PRs
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+          REPOSITORY: ${{ github.repository }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "Direct generated public main validation."
+            exit 0
+          fi
+          if [ "$HEAD_REPOSITORY" != "$REPOSITORY" ]; then
+            echo "::error::External public PRs are intake-only and cannot pass the generated merge gate."
+            exit 1
+          fi
+          case "$HEAD_REF" in
+            public-export/*)
+              echo "Generated public export branch accepted."
+              ;;
+            *)
+              echo "::error::Only generated public-export/* branches may pass this merge gate."
+              exit 1
+              ;;
+          esac
+
+  validate-public-tree:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.11"
 
+      - name: Validate public PR contribution surface
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          git fetch --no-tags origin "$BASE_SHA" "pull/${PR_NUMBER}/head:public-pr-head"
+          python3 - <<'PY'
+          import re
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          deny_prefixes = (
+              ".github/", ".agents/", ".codex/", ".local/", ".tmp/", "data/",
+              "docs/generated/", "docs/internal/", "graphify-out/", "labs/",
+              "logs/", "node_modules/", "reports/",
+          )
+          generated = {
+              ".github/workflows/public-ci.yml", ".env.example", "Makefile",
+              "scripts/bootstrap.sh", "scripts/doctor.sh", "scripts/install.sh",
+          }
+          dangerous = (
+              ("github-secrets-context", re.compile(r"\bsecrets\.")),
+              ("github-token-reference", re.compile(r"\b(GITHUB_TOKEN|ACTIONS_ID_TOKEN_REQUEST_TOKEN)\b")),
+              ("pull-request-target", re.compile(r"\bpull_request_target\b")),
+              ("curl-pipe-shell", re.compile(r"(?is)\b(curl|wget)\b[^\n|]*\|\s*(bash|sh)\b")),
+              ("docker-socket", re.compile(r"(/var/run/docker\.sock|docker\.sock)")),
+              ("privileged-container", re.compile(r"(?m)(^\s*privileged:\s*true\b|--privileged\b)")),
+              ("host-network", re.compile(r"(?m)(^\s*network_mode:\s*host\b|--network=host\b)")),
+          )
+
+          def git(*args: str) -> str:
+              result = subprocess.run(["git", *args], capture_output=True, text=True, check=False)
+              if result.returncode != 0:
+                  raise SystemExit((result.stderr or result.stdout).strip())
+              return result.stdout
+
+          base = os.environ["BASE_SHA"]
+          changed = [item for item in git("diff", "--name-only", "-z", f"{base}...public-pr-head").split("\0") if item]
+          errors = []
+          if len(changed) > 80:
+              errors.append(f"too many changed files: {len(changed)} > 80")
+          for path in changed:
+              candidate = Path(path)
+              if candidate.is_absolute() or ".." in candidate.parts:
+                  errors.append(f"{path}: invalid path")
+              if path in generated or path == "AGENTS.md" or Path(path).name.startswith("."):
+                  errors.append(f"{path}: generated, hidden or private path cannot be changed")
+              if path.startswith(deny_prefixes):
+                  errors.append(f"{path}: denied public contribution path")
+          head_paths = [item for item in git("diff", "--name-only", "--diff-filter=ACMRT", "-z", f"{base}...public-pr-head").split("\0") if item]
+          for path in head_paths:
+              meta = git("ls-tree", "-l", "public-pr-head", "--", path).strip().partition("\t")[0].split()
+              mode = meta[0] if meta else ""
+              size = 0 if len(meta) < 4 or meta[3] == "-" else int(meta[3])
+              if mode == "120000":
+                  errors.append(f"{path}: symlink is not accepted")
+                  continue
+              if size > 1_048_576:
+                  errors.append(f"{path}: file exceeds 1048576 bytes")
+                  continue
+              data = subprocess.run(["git", "show", f"public-pr-head:{path}"], capture_output=True, check=False).stdout
+              if b"\0" in data[:4096]:
+                  errors.append(f"{path}: binary file is not accepted")
+                  continue
+              text = data.decode("utf-8", errors="replace")
+              private_home = "/home/" + "pmglo"
+              private_repo = "PedroMglo/" + "local-ai-sys"
+              if private_home in text or private_repo in text:
+                  errors.append(f"{path}: private path or private repository reference")
+              for rule, pattern in dangerous:
+                  if pattern.search(text):
+                      errors.append(f"{path}: dangerous pattern {rule}")
+          if errors:
+              print("\n".join(errors))
+              sys.exit(1)
+          print(f"public contribution surface ok: {len(changed)} changed files")
+          PY
+
       - name: Validate public shell entrypoints
-        run: bash -n scripts/install.sh scripts/bootstrap.sh scripts/doctor.sh
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          bash -n scripts/install.sh scripts/bootstrap.sh scripts/doctor.sh
+          make --no-print-directory -n setup-system setup aliases infra infra-build infra-validate up verify-live use build-symbiont-tui
 
       - name: Validate bootstrap preflight
-        run: python scripts/new_user_bootstrap.py --print-install-command
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: make setup-system
 
       - name: Validate public tree hygiene
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: |
           forbidden='(^|/)(\.codex|\.agents|AGENTS\.md|graphify-out|\.pytest_cache|\.ruff_cache|\.mypy_cache)(/|$)'
           if git ls-files | grep -E "$forbidden"; then
             echo "private/generated path leaked into public tree"
+            exit 1
+          fi
+          unexpected_exec="$(git ls-files -s | awk '$1 == "100755" {print $4}' | grep -Ev '^(scripts/.*\.(sh|py)|scripts/runtime/.*\.py|infra/.*\.sh|.*/entrypoint\.sh)$' || true)"
+          if [ -n "$unexpected_exec" ]; then
+            echo "$unexpected_exec"
+            echo "unexpected executable bit in public tree"
             exit 1
           fi
           private_home="/home/${PRIVATE_USER_NAME:-pmglo}"
@@ -40,14 +170,34 @@ jobs:
             exit 1
           fi
 
+      - name: Validate user install path
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          make setup
+          .venv/bin/python scripts/local_doctor.py --section host --json >/tmp/ai-local-doctor-host.json
+
       - name: Validate Docker Compose syntax
-        run: docker compose config >/tmp/ai-local-compose.yml
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          make --no-print-directory -n infra
+          docker compose --profile core config >/tmp/ai-local-compose.yml
+          if grep -q '^services: {}$' /tmp/ai-local-compose.yml; then
+            echo "core profile resolved to no services"
+            exit 1
+          fi
+
+      - name: Validate public Docker inventory
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          .venv/bin/python scripts/docker_policy.py validate --mode baseline --json
+          .venv/bin/python scripts/docker_ci_inventory.py --tag-suffix public-ci --write
 
       - name: Run public smoke tests
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: |
           if [ -d tests/smoke ]; then
-            python -m pip install pytest
-            python -m pytest -q tests/smoke
+            .venv/bin/python -m pip install pytest
+            .venv/bin/python -m pytest -q tests/smoke
           else
             echo "No public smoke tests yet."
           fi
