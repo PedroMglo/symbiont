@@ -1,2 +1,0 @@
-SELECT COUNT(*) AS n
-FROM {0}

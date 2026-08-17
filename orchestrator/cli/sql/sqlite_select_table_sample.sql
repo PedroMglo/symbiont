@@ -1,3 +1,0 @@
-SELECT *
-FROM {0}
-LIMIT ?

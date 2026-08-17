@@ -1,1 +1,0 @@
-ALTER TABLE {0} ADD COLUMN {1} {2}

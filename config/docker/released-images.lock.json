@@ -1,0 +1,18 @@
+{
+  "canonical_registry": "ghcr.io",
+  "contract": "ai-local.released-image-lock.v3",
+  "generated_at": "2026-08-17T23:08:00+00:00",
+  "images": [
+    {
+      "digest": "sha256:026ea1f0cfe9f28851e66b25633cc4e9867916c36dc33b03cf53ddcb78f0dde2",
+      "env_var": "AI_LOCAL_SYMBIONT_IMAGE",
+      "ghcr_ref": "ghcr.io/pedromglo/ai-local-symbiont@sha256:026ea1f0cfe9f28851e66b25633cc4e9867916c36dc33b03cf53ddcb78f0dde2",
+      "name": "symbiont",
+      "repository_id": "symbiont",
+      "source_tag": "published-immutable"
+    }
+  ],
+  "resolution_proof": "operator-approved-existing-immutable-ghcr-digest",
+  "source_repo": "PedroMglo/ai-local-stack",
+  "source_sha": "a16f71037d7ae28db72b76fb93407e96250ff663"
+}

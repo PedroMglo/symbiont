@@ -1,0 +1,16 @@
+{
+  "schema_version": "ai-local.public-export.v1",
+  "source_repo": "PedroMglo/ai-local-stack",
+  "public_repo": "PedroMglo/symbiont",
+  "source_sha": "a16f71037d7ae28db72b76fb93407e96250ff663",
+  "release_lock_path": "config/docker/released-images.lock.json",
+  "files": [
+    {"path": "README.md", "git_blob_sha": "609a5e3eb8acbc20fcdb38bcd6e394e6bc386483"},
+    {"path": "SECURITY.md", "git_blob_sha": "a0fdb53b157e6f510e2badd92afa88f8f5acc2ef"},
+    {"path": "pyproject.toml", "git_blob_sha": "d6e6640591f97139f12b4acbdea866620c10f311"},
+    {"path": "compose.yml", "git_blob_sha": "a64d46772866c1d7509b88bab0b42b35fb7149ae"},
+    {"path": "config/connections.yml", "git_blob_sha": "88a3ecbaafc7f4b5a129d3798a0561524460607f"},
+    {"path": "config/docker/released-images.lock.json", "git_blob_sha": "9b2b11f2f63d07fa93564d1939716875a5d55126"},
+    {"path": "docs/.user_plan/EXTERNAL_POSTGRES.md", "git_blob_sha": "66569ec1d756903a3f25bb456921860f927c4324"}
+  ]
+}
