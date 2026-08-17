@@ -1,0 +1,104 @@
+[project]
+name = "ai-local"
+version = "1.0.0"
+description = "Standalone containerized AI Local Stack control plane for the decentralized multi-repository system"
+requires-python = ">=3.11"
+
+dependencies = [
+    "click==8.4.2",
+    "cryptography==49.0.0",
+    "docker==7.2.0",
+    "fastapi==0.139.0",
+    "httpx==0.28.1",
+    "opentelemetry-api==1.44.0",
+    "opentelemetry-exporter-otlp-proto-http==1.44.0",
+    "opentelemetry-sdk==1.44.0",
+    "psutil==7.2.2",
+    "pydantic==2.13.4",
+    "pydantic-settings==2.14.2",
+    "psycopg[binary]==3.3.4",
+    "psycopg-pool==3.3.1",
+    "python-dotenv==1.2.2",
+    "PyYAML==6.0.3",
+    "rich==15.0.0",
+    "sharedai @ https://github.com/PedroMglo/sharedai/archive/873961087fe633a7430cfb7b2722eb2b98fea44a.tar.gz#sha256=87c31be3dd889480a1fcb3138386b3a6fc309425d716ac56af58cc292fdf8fb1",
+    "uvicorn[standard]==0.51.0",
+    "websockets==16.0",
+]
+
+[project.scripts]
+ai-local-host-capabilities = "config.host_capabilities:main"
+
+[project.optional-dependencies]
+dev = [
+    "build==1.4.0",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
+    "pytest-timeout==2.4.0",
+    "coverage==7.15.0",
+    "httpx2==2.7.0",
+    "mypy==2.2.0",
+    "ruff==0.15.21",
+    "types-requests==2.33.0.20260518",
+    "pre-commit==4.6.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["config*", "postgres*"]
+exclude = ["tests*"]
+
+[tool.setuptools.package-data]
+"config" = ["orc/settings.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+exclude = ["tests/", "\\.venv/"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.coverage.run]
+source = ["config", "postgres"]
+omit = ["tests/*"]
+
+[tool.bandit]
+exclude_dirs = [
+  ".git",
+  ".venv",
+  "venv",
+  "env",
+  "__pycache__",
+  "tests",
+  "build",
+  "dist",
+  "data",
+  "models",
+  "storage",
+  "embeddings"
+]
+
+skips = [
+  "B101",   # assert used (expected in tests)
+  "B104",   # bind all interfaces — guarded by api_key check in code
+  "B108",   # hardcoded tmp — frozenset of dangerous paths, not a temp file
+  "B110",   # try/except/pass (intentional silent fallback patterns)
+  "B112",   # try/except/continue (intentional)
+  "B310",   # urllib.urlopen — URL is a controlled local endpoint
+  "B404",   # import subprocess (required for system commands)
+  "B603",   # subprocess without shell=True (safe — no user input)
+  "B607",   # partial executable path (controlled paths)
+  "B608"    # SQL string formatting — placeholders are parameterised, not user input
+]
