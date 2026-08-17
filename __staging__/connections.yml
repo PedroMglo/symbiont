@@ -1,0 +1,13 @@
+## PostgreSQL: external usa o teu; managed deixa o projeto criar um.
+mode: external
+
+host: postgres.localhost
+port: 5432
+
+# Cria somente as bases e utilizadores necessários ao ai-local.
+provision: true
+
+## Para managed mode (deixa o projeto criar um PostgreSQL local), troca para:
+# mode: managed
+# storage_root: /var/lib/ai-local/containers
+# docker_context: default
